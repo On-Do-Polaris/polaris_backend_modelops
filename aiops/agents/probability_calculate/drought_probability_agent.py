@@ -1,9 +1,11 @@
 '''
 파일명: drought_probability_agent.py
-최종 수정일: 2025-11-21
-버전: v1
+최종 수정일: 2025-11-22
+버전: v1.1
 파일 개요: 가뭄 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-11-22: v1.1 - flat list 데이터 형식 지원 추가
+		* spei12 (flat list) 또는 spei12_monthly (nested dict) 모두 처리
 	- 2025-11-21: v1 - AAL에서 확률 계산으로 분리
 		* 강도지표: X_drought(t,m) = SPEI12(t,m) (월별)
 		* bin: (>-1), [-1~-1.5), [-1.5~-2.0), (≤-2.0)
@@ -62,7 +64,8 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 		super().__init__(
 			risk_type='가뭄',
 			bins=bins,
-			dr_intensity=dr_intensity
+			dr_intensity=dr_intensity,
+			time_unit='monthly'
 		)
 
 	def calculate_intensity_indicator(self, collected_data: Dict[str, Any]) -> np.ndarray:
@@ -72,35 +75,38 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 
 		Args:
 			collected_data: 수집된 기후 데이터
-				- spei12_monthly: 연도별 월별 SPEI12 데이터 리스트
+				- spei12: 월별 SPEI12 flat list [v1, v2, ...] (권장)
+				- spei12_monthly: 연도별 월별 SPEI12 데이터 리스트 (레거시)
 					각 원소는 {'year': int, 'months': [spei12_values]}
 
 		Returns:
 			월별 SPEI12 값 배열 (전체 월을 평탄화하여 반환)
 		"""
 		climate_data = collected_data.get('climate_data', {})
-		spei12_data = climate_data.get('spei12_monthly', [])
 
-		if not spei12_data:
-			self.logger.warning("SPEI12 월별 데이터가 없습니다. 기본값 0으로 설정합니다.")
-			return np.array([0.0])
+		# 1. flat list 형식 (우선)
+		spei12_flat = climate_data.get('spei12', [])
+		if spei12_flat:
+			spei12_array = np.array(spei12_flat, dtype=float)
+			self.logger.info(f"SPEI12 데이터 (flat): {len(spei12_array)}개 월, 범위: {spei12_array.min():.2f} ~ {spei12_array.max():.2f}")
+			return spei12_array
 
-		all_monthly_spei12 = []
+		# 2. nested dict 형식 (레거시)
+		spei12_monthly = climate_data.get('spei12_monthly', [])
+		if spei12_monthly:
+			all_monthly_spei12 = []
+			for year_data in spei12_monthly:
+				monthly_values = year_data.get('months', [])
+				if monthly_values:
+					all_monthly_spei12.extend(monthly_values)
 
-		for year_data in spei12_data:
-			year = year_data.get('year')
-			monthly_values = year_data.get('months', [])
+			if all_monthly_spei12:
+				spei12_array = np.array(all_monthly_spei12, dtype=float)
+				self.logger.info(f"SPEI12 데이터 (nested): {len(spei12_array)}개 월, 범위: {spei12_array.min():.2f} ~ {spei12_array.max():.2f}")
+				return spei12_array
 
-			if not monthly_values:
-				continue
-
-			# 모든 월별 SPEI12 값 수집
-			all_monthly_spei12.extend(monthly_values)
-
-		spei12_array = np.array(all_monthly_spei12, dtype=float)
-		self.logger.info(f"SPEI12 데이터: {len(spei12_array)}개 월, 범위: {spei12_array.min():.2f} ~ {spei12_array.max():.2f}")
-
-		return spei12_array
+		self.logger.warning("SPEI12 데이터가 없습니다. 기본값 0으로 설정합니다.")
+		return np.array([0.0])
 
 	def _classify_into_bins(self, intensity_values: np.ndarray) -> np.ndarray:
 		"""

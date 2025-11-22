@@ -1,14 +1,17 @@
 '''
 파일명: wildfire_probability_agent.py
-최종 수정일: 2025-11-21
-버전: v1
+최종 수정일: 2025-11-22
+버전: v1.1
 파일 개요: 산불 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-11-22: v1.2 - bin 0~11.2 (Low) 추가
+		* bin: [0~11.2), [11.2~21.3), [21.3~38), [38~50), [50~)
+		* DR_intensity: [0.00, 0.01, 0.03, 0.10, 0.25]
+	- 2025-11-22: v1.1 - flat list 데이터 형식 지원 추가
+		* ta, rhm, ws, rn (flat lists) 또는 monthly_data (nested dict) 모두 처리
 	- 2025-11-21: v1 - AAL에서 확률 계산으로 분리
 		* 강도지표: X_fire(t,m) = FWI(t,m) (Fire Weather Index, 월별)
 		* FWI 계산식 적용
-		* bin: [11.2~21.3), [21.3~38), [38~50), [50~)
-		* DR_intensity: [0.01, 0.03, 0.10, 0.25]
 		* 월 기반 발생확률: P_fire[i] = (해당 bin에 속한 월 수) / (총 월 수)
 		* 취약성 스케일링 제거
 '''
@@ -33,22 +36,25 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 		WildfireProbabilityAgent 초기화
 
 		bin 구간 (EFFIS FWI 기준):
-			- bin1: 11.2 <= FWI < 21.3 (Moderate)
-			- bin2: 21.3 <= FWI < 38 (High)
-			- bin3: 38 <= FWI < 50 (Very High)
-			- bin4: FWI >= 50 (Extreme)
+			- bin1: 0 <= FWI < 11.2 (Low)
+			- bin2: 11.2 <= FWI < 21.3 (Moderate)
+			- bin3: 21.3 <= FWI < 38 (High)
+			- bin4: 38 <= FWI < 50 (Very High)
+			- bin5: FWI >= 50 (Extreme)
 
 		기본 손상률 (DR_intensity):
-			- bin1: 1%
-			- bin2: 3%
-			- bin3: 10%
-			- bin4: 25%
+			- bin1: 0%
+			- bin2: 1%
+			- bin3: 3%
+			- bin4: 10%
+			- bin5: 25%
 
 		참고:
 			- 월 기반 발생확률 사용
 			- P_fire[i] = (해당 bin에 속한 월 수) / (총 월 수)
 		"""
 		bins = [
+			(0, 11.2),
 			(11.2, 21.3),
 			(21.3, 38),
 			(38, 50),
@@ -56,16 +62,18 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		dr_intensity = [
-			0.01,   # 1%
-			0.03,   # 3%
-			0.10,   # 10%
-			0.25    # 25%
+			0.00,   # 0% (Low)
+			0.01,   # 1% (Moderate)
+			0.03,   # 3% (High)
+			0.10,   # 10% (Very High)
+			0.25    # 25% (Extreme)
 		]
 
 		super().__init__(
 			risk_type='산불',
 			bins=bins,
-			dr_intensity=dr_intensity
+			dr_intensity=dr_intensity,
+			time_unit='monthly'
 		)
 
 	def calculate_intensity_indicator(self, collected_data: Dict[str, Any]) -> np.ndarray:
@@ -78,42 +86,59 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 
 		Args:
 			collected_data: 수집된 기후 데이터
-				- monthly_data: 연도별 월별 데이터 리스트
+				- ta, rhm, ws, rn: 월별 데이터 flat lists (권장)
+				- monthly_data: 연도별 월별 데이터 리스트 (레거시)
 					각 원소는 {'year': int, 'months': [{'ta': float, 'rhm': float, 'ws': float, 'rn': float}, ...]}
 
 		Returns:
 			월별 FWI 값 배열 (전체 월을 평탄화하여 반환)
 		"""
 		climate_data = collected_data.get('climate_data', {})
-		monthly_data = climate_data.get('monthly_data', [])
 
-		if not monthly_data:
-			self.logger.warning("월별 기상 데이터가 없습니다. 기본값 0으로 설정합니다.")
-			return np.array([0.0])
+		# 1. flat list 형식 (우선)
+		ta_list = climate_data.get('ta', [])
+		rhm_list = climate_data.get('rhm', [])
+		ws_list = climate_data.get('ws', [])
+		rn_list = climate_data.get('rn', [])
 
-		all_monthly_fwi = []
+		if ta_list and rhm_list and ws_list and rn_list:
+			n_months = min(len(ta_list), len(rhm_list), len(ws_list), len(rn_list))
+			all_monthly_fwi = []
 
-		for year_data in monthly_data:
-			year = year_data.get('year')
-			months = year_data.get('months', [])
-
-			if not months:
-				continue
-
-			for month in months:
-				ta = month.get('ta', 10.0)    # 기온 (°C)
-				rhm = month.get('rhm', 50.0)  # 상대습도 (%)
-				ws = month.get('ws', 2.0)     # 풍속 (m/s)
-				rn = month.get('rn', 0.0)     # 강수량 (mm)
-
-				# FWI 계산
-				fwi = self._calculate_fwi(ta, rhm, ws, rn)
+			for i in range(n_months):
+				fwi = self._calculate_fwi(
+					ta_list[i],
+					rhm_list[i],
+					ws_list[i],
+					rn_list[i]
+				)
 				all_monthly_fwi.append(fwi)
 
-		fwi_array = np.array(all_monthly_fwi, dtype=float)
-		self.logger.info(f"FWI 데이터: {len(fwi_array)}개 월, 범위: {fwi_array.min():.2f} ~ {fwi_array.max():.2f}")
+			fwi_array = np.array(all_monthly_fwi, dtype=float)
+			self.logger.info(f"FWI 데이터 (flat): {len(fwi_array)}개 월, 범위: {fwi_array.min():.2f} ~ {fwi_array.max():.2f}")
+			return fwi_array
 
-		return fwi_array
+		# 2. nested dict 형식 (레거시)
+		monthly_data = climate_data.get('monthly_data', [])
+		if monthly_data:
+			all_monthly_fwi = []
+			for year_data in monthly_data:
+				months = year_data.get('months', [])
+				for month in months:
+					ta = month.get('ta', 10.0)
+					rhm = month.get('rhm', 50.0)
+					ws = month.get('ws', 2.0)
+					rn = month.get('rn', 0.0)
+					fwi = self._calculate_fwi(ta, rhm, ws, rn)
+					all_monthly_fwi.append(fwi)
+
+			if all_monthly_fwi:
+				fwi_array = np.array(all_monthly_fwi, dtype=float)
+				self.logger.info(f"FWI 데이터 (nested): {len(fwi_array)}개 월, 범위: {fwi_array.min():.2f} ~ {fwi_array.max():.2f}")
+				return fwi_array
+
+		self.logger.warning("월별 기상 데이터가 없습니다. 기본값 0으로 설정합니다.")
+		return np.array([0.0])
 
 	def _calculate_fwi(self, ta: float, rhm: float, ws: float, rn: float) -> float:
 		"""

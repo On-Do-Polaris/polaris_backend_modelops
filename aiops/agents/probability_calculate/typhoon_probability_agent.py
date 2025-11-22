@@ -1,9 +1,12 @@
 '''
 파일명: typhoon_probability_agent.py
-최종 수정일: 2025-11-21
-버전: v1
+최종 수정일: 2025-11-22
+버전: v1.1
 파일 개요: 열대성 태풍 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-11-22: v1.1 - 타원 영향권 계산 버그 수정
+		* 위경도(도) → km 단위 변환 추가
+		* 위도 1도 ≈ 111km, 경도 1도 ≈ 111km × cos(위도) 적용
 	- 2025-11-21: v1 - AAL에서 확률 계산으로 분리
 		* 강도지표: S_tc(t,j) = Σ w_tc[bin_inst(storm,τ,j)] (누적 노출 지수)
 		* bin_year(t,j): S_tc → 연도 bin 변환
@@ -144,9 +147,14 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		typhoon_lat = track_point.get('lat', 0.0)
 		grade = track_point.get('grade', 'TD')
 
-		# 태풍 중심과 사이트 사이 거리 계산
-		dx = site_lon - typhoon_lon
-		dy = site_lat - typhoon_lat
+		# 태풍 중심과 사이트 사이 거리 계산 (위경도 → km 변환)
+		# 위도 1도 ≈ 111km, 경도 1도 ≈ 111km × cos(위도)
+		avg_lat = (site_lat + typhoon_lat) / 2
+		km_per_deg_lon = 111.0 * math.cos(math.radians(avg_lat))
+		km_per_deg_lat = 111.0
+
+		dx_km = (site_lon - typhoon_lon) * km_per_deg_lon
+		dy_km = (site_lat - typhoon_lat) * km_per_deg_lat
 
 		# 폭풍(STORM) 타원 체크
 		storm_long = track_point.get('storm_long', 0.0)
@@ -154,7 +162,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		storm_dir = track_point.get('storm_dir', 0.0)
 
 		inside_storm = self._is_inside_ellipse(
-			dx, dy, storm_long, storm_short, storm_dir
+			dx_km, dy_km, storm_long, storm_short, storm_dir
 		)
 
 		if inside_storm:
@@ -169,7 +177,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		gale_dir = track_point.get('gale_dir', 0.0)
 
 		inside_gale = self._is_inside_ellipse(
-			dx, dy, gale_long, gale_short, gale_dir
+			dx_km, dy_km, gale_long, gale_short, gale_dir
 		)
 
 		if inside_gale:

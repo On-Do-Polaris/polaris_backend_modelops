@@ -53,13 +53,14 @@ login() {
 
 # Build Docker image
 build() {
-    local full_image="${REGISTRY}/${GITHUB_REPOSITORY:-local}/${IMAGE_NAME}:${TAG}"
+    local repo_lower=$(echo "${GITHUB_REPOSITORY:-local}" | tr '[:upper:]' '[:lower:]')
+    local full_image="${REGISTRY}/${repo_lower}/${IMAGE_NAME}:${TAG}"
 
     log_info "Building Docker image: ${full_image}"
 
     docker build \
         --tag "${full_image}" \
-        --tag "${REGISTRY}/${GITHUB_REPOSITORY:-local}/${IMAGE_NAME}:latest" \
+        --tag "${REGISTRY}/${repo_lower}/${IMAGE_NAME}:latest" \
         --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY:-local}" \
         --label "org.opencontainers.image.revision=${GITHUB_SHA:-unknown}" \
         .
@@ -69,13 +70,14 @@ build() {
 
 # Push to registry
 push() {
-    local full_image="${REGISTRY}/${GITHUB_REPOSITORY:-local}/${IMAGE_NAME}:${TAG}"
+    local repo_lower=$(echo "${GITHUB_REPOSITORY:-local}" | tr '[:upper:]' '[:lower:]')
+    local full_image="${REGISTRY}/${repo_lower}/${IMAGE_NAME}:${TAG}"
 
     log_info "Pushing image: ${full_image}"
     docker push "${full_image}"
 
     log_info "Pushing latest tag..."
-    docker push "${REGISTRY}/${GITHUB_REPOSITORY:-local}/${IMAGE_NAME}:latest"
+    docker push "${REGISTRY}/${repo_lower}/${IMAGE_NAME}:latest"
 
     log_info "Push completed"
 }

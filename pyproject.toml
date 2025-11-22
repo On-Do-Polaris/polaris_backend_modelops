@@ -1,0 +1,22 @@
+[project]
+name = "backend-aiops"
+version = "0.1.0"
+description = "AIops workflow for climate risk batch processing"
+requires-python = ">=3.11"
+dependencies = [
+    "apscheduler>=3.10.4",
+    "psycopg2-binary>=2.9.9",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.3",
+    "pytest-cov>=4.1.0",
+]

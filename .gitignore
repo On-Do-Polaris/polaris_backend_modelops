@@ -109,3 +109,10 @@ logs/
 # uv
 .uv/
 uv.lock
+
+# Large data files (exceed GitHub 100MB limit)
+scratch/KMA/*.nc
+scratch/wamis/*.json
+scratch/typhoon/*.csv
+*.nc
+*.NC

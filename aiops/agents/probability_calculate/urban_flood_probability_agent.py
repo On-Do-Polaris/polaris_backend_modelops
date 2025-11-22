@@ -1,14 +1,16 @@
 '''
 파일명: urban_flood_probability_agent.py
-최종 수정일: 2025-11-21
-버전: v1
+최종 수정일: 2025-11-22
+버전: v3
 파일 개요: 도시 집중 홍수 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-11-22: v3 - 순수 RAIN80 기반 (취약성 분리)
+		* 강도지표: X_pflood = RAIN80 (호우일수)
+		* bin: 호우일수 기준 [0~1), [1~3), [3~5), [≥5)
+		* DR_intensity: [0.00, 0.05, 0.15, 0.35]
+		* vulnerability_factor 제거 (취약성 에이전트에서 별도 처리)
+	- 2025-11-22: v2 - RAIN80 + vulnerability_factor 방식 (deprecated)
 	- 2025-11-21: v1 - AAL에서 확률 계산으로 분리
-		* 강도지표: X_pflood(t,j) = k_depth × max(0, R_peak - drain_capacity)
-		* bin: [0), [0~0.3m), [0.3~1.0m), [≥1.0m)
-		* DR_intensity: [0.00, 0.05, 0.25, 0.50]
-		* 취약성 스케일링 제거
 '''
 from typing import Dict, Any
 import numpy as np
@@ -19,39 +21,39 @@ class UrbanFloodProbabilityAgent(BaseProbabilityAgent):
 	"""
 	도시 집중 홍수 리스크 확률 P(H) 계산 Agent
 
-	사용 데이터: KMA RAIN80 (연 강한 단시간 강우)
-	강도지표: X_pflood(t,j) = k_depth × E_pflood(t,j)
-	E_pflood = max(0, R_peak - drain_capacity)
+	사용 데이터: KMA RAIN80 (연간 80mm 이상 호우일수)
+	강도지표: X_pflood(t) = RAIN80(t)
+	취약성은 별도 취약성 에이전트에서 처리
 	"""
 
 	def __init__(self):
 		"""
 		UrbanFloodProbabilityAgent 초기화
 
-		bin 구간 (침수 깊이):
-			- bin1: 0 m (침수 없음)
-			- bin2: 0 ~ 0.3 m (경미~중간 피해)
-			- bin3: 0.3 ~ 1.0 m (본격적 피해)
-			- bin4: >= 1.0 m (광범위·중대 피해)
+		bin 구간 (호우일수):
+			- bin1: < 1일 (호우 거의 없음)
+			- bin2: 1 ~ 3일 (낮은 빈도)
+			- bin3: 3 ~ 5일 (중간 빈도)
+			- bin4: >= 5일 (높은 빈도)
 
 		기본 손상률 (DR_intensity):
 			- bin1: 0%
 			- bin2: 5%
-			- bin3: 25%
-			- bin4: 50%
+			- bin3: 15%
+			- bin4: 35%
 		"""
 		bins = [
-			(0, 0),          # bin1: 침수 없음
-			(0, 0.3),        # bin2: 0 ~ 0.3m
-			(0.3, 1.0),      # bin3: 0.3 ~ 1.0m
-			(1.0, float('inf'))  # bin4: >= 1.0m
+			(0, 1),          # bin1: 호우 거의 없음
+			(1, 3),          # bin2: 낮은 빈도
+			(3, 5),          # bin3: 중간 빈도
+			(5, float('inf'))  # bin4: 높은 빈도
 		]
 
 		dr_intensity = [
 			0.00,   # 0%
 			0.05,   # 5%
-			0.25,   # 25%
-			0.50    # 50%
+			0.15,   # 15%
+			0.35    # 35%
 		]
 
 		super().__init__(
@@ -60,72 +62,33 @@ class UrbanFloodProbabilityAgent(BaseProbabilityAgent):
 			dr_intensity=dr_intensity
 		)
 
-		# 변환 계수 (튜닝 필요)
-		self.c_rain = 1.0      # RAIN80 → mm/h 변환 계수
-		self.k_depth = 0.01    # 초과강우 → 침수심 변환 계수
-
 	def calculate_intensity_indicator(self, collected_data: Dict[str, Any]) -> np.ndarray:
 		"""
-		도시 집중 홍수 강도지표 X_pflood(t,j) 계산
+		도시 집중 홍수 강도지표 X_pflood(t) 계산
+
+		X_pflood = RAIN80
+		- RAIN80: 연간 80mm 이상 호우일수 (일)
+		- 취약성은 별도 취약성 에이전트에서 처리
 
 		Args:
-			collected_data: 수집된 기후 및 지형 데이터
-				- rain80: 연도별 RAIN80 값 리스트
-				- drain_capacity: 배수능력 (mm/h) - 사이트별
+			collected_data: 수집된 기후 데이터
+				- climate_data.rain80: 연도별 RAIN80 값 리스트 (호우일수)
 
 		Returns:
-			연도별 침수 깊이 값 배열 (m)
+			연도별 호우일수 배열
 		"""
 		climate_data = collected_data.get('climate_data', {})
 		rain80_data = climate_data.get('rain80', [])
-		drain_capacity = climate_data.get('drain_capacity', 60.0)  # 기본값 60 mm/h
 
 		if not rain80_data:
 			self.logger.warning("RAIN80 데이터가 없습니다. 기본값 0으로 설정합니다.")
 			return np.array([0.0])
 
-		yearly_inundation_depth = []
+		rain80_array = np.array(rain80_data, dtype=float)
 
-		for rain80 in rain80_data:
-			# RAIN80 → mm/h 변환
-			r_peak_mmph = self.c_rain * rain80
-
-			# 강우 초과분 계산
-			e_pflood = max(0, r_peak_mmph - drain_capacity)
-
-			# 침수 깊이 변환 (m)
-			inundation_depth = self.k_depth * e_pflood
-
-			yearly_inundation_depth.append(inundation_depth)
-
-		depth_array = np.array(yearly_inundation_depth, dtype=float)
 		self.logger.info(
-			f"침수 깊이 데이터: {len(depth_array)}개 연도, "
-			f"범위: {depth_array.min():.3f}m ~ {depth_array.max():.3f}m"
+			f"도시홍수 강도지표: {len(rain80_array)}개 연도, "
+			f"RAIN80 범위: {rain80_array.min():.1f} ~ {rain80_array.max():.1f}일"
 		)
 
-		return depth_array
-
-	def _classify_into_bins(self, intensity_values: np.ndarray) -> np.ndarray:
-		"""
-		침수 깊이를 bin으로 분류 (도시 홍수 전용)
-
-		Args:
-			intensity_values: 연도별 침수 깊이 배열 (m)
-
-		Returns:
-			각 연도의 bin 인덱스 배열 (0-based)
-		"""
-		bin_indices = np.zeros(len(intensity_values), dtype=int)
-
-		for idx, depth in enumerate(intensity_values):
-			if depth == 0:
-				bin_indices[idx] = 0  # bin1: 침수 없음
-			elif depth < 0.3:
-				bin_indices[idx] = 1  # bin2: 0 ~ 0.3m
-			elif depth < 1.0:
-				bin_indices[idx] = 2  # bin3: 0.3 ~ 1.0m
-			else:
-				bin_indices[idx] = 3  # bin4: >= 1.0m
-
-		return bin_indices
+		return rain80_array

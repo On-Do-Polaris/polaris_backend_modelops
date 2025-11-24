@@ -123,6 +123,50 @@ else
     ((failed++))
 fi
 
+# 9. Weather stations
+((total++))
+if run_etl "load_weather_stations.py" "기상 관측소 데이터" <<< 'y'; then
+    ((success++))
+else
+    ((failed++))
+fi
+
+# 10. Grid-station mappings
+((total++))
+if run_etl "load_grid_station_mappings.py" "격자-관측소 매핑 데이터" <<< 'y'; then
+    ((success++))
+else
+    ((failed++))
+fi
+
+# 11. Water stress rankings
+((total++))
+if run_etl "load_water_stress_rankings.py" "물 스트레스 데이터" <<< 'y'; then
+    ((success++))
+else
+    ((failed++))
+fi
+
+# 12. Site DC power (requires SITE_ID)
+# Use test UUID for sample mode
+export PANGYO_DC_SITE_ID="00000000-0000-0000-0000-000000000001"
+((total++))
+if run_etl "load_site_dc_power_simple.py" "판교DC 전력 데이터" <<< 'y'; then
+    ((success++))
+else
+    ((failed++))
+fi
+
+# 13. Site campus energy (requires SITE_ID)
+# Use test UUID for sample mode
+export PANGYO_CAMPUS_SITE_ID="00000000-0000-0000-0000-000000000002"
+((total++))
+if run_etl "load_site_campus_energy_simple.py" "판교캠퍼스 에너지 데이터" <<< 'y'; then
+    ((success++))
+else
+    ((failed++))
+fi
+
 # Summary
 echo ""
 echo "========================================"

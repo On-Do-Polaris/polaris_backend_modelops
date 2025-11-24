@@ -6,8 +6,8 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
 [![PostGIS](https://img.shields.io/badge/PostGIS-3.4-green.svg)](https://postgis.net/)
 
-최종 수정일: 2025-11-22
-버전: v02
+최종 수정일: 2025-11-25
+버전: v03 (Wide Format 전환 - 기후 데이터 15개 테이블)
 
 ---
 
@@ -143,6 +143,13 @@ export SAMPLE_LIMIT=10
 │   ├── load_dem.py              # DEM 래스터 로드 (ASCII Grid)
 │   ├── load_drought.py          # 가뭄 데이터 로드 (HDF5)
 │   │
+│   ├── load_weather_stations.py        # 기상 관측소 로드 (JSON)
+│   ├── load_grid_station_mappings.py   # 격자-관측소 매핑 로드 (JSON)
+│   ├── load_water_stress_rankings.py   # WRI Aqueduct 물 스트레스 로드 (Excel)
+│   │
+│   ├── load_site_dc_power_simple.py      # 판교DC 전력 사용량 로드 (Excel)
+│   ├── load_site_campus_energy_simple.py # 판교캠퍼스 에너지 로드 (Excel)
+│   │
 │   ├── inspect_netcdf.py        # NetCDF 검사 유틸리티
 │   └── extract_monthly_nc.sh    # NetCDF 추출 헬퍼
 │
@@ -150,7 +157,8 @@ export SAMPLE_LIMIT=10
 │   ├── administrative_regions/
 │   ├── climate/
 │   ├── population/
-│   └── raster/
+│   ├── raster/
+│   └── site_energy/             # 사이트별 에너지 사용량 데이터
 │
 ├── logs/                        # 실행 로그
 │   └── *.log
@@ -191,9 +199,9 @@ python scripts/load_population.py
 python scripts/load_sea_level_netcdf.py
 ```
 - **입력**: `data/climate/sea_level/*.nc` (4개 SSP 시나리오)
-- **출력**: `sea_level_grid` (80개 지점), `sea_level_data` (~6,880행)
+- **출력**: `sea_level_grid` (80개 지점), `sea_level_data` (~1,720행)
 - **시간**: ~5분
-- **형식**: Long format (scenario_id, grid_id, year, value)
+- **형식**: Wide format (year, grid_id, ssp1, ssp2, ssp3, ssp5)
 
 **4. load_sgg261_data.py** - TAMAX/TAMIN 일별 데이터
 ```bash
@@ -211,9 +219,9 @@ python scripts/load_monthly_grid_data.py
 ```
 - **입력**: `data/climate/monthly_grid/*.nc`
 - **출력**: `ta_data`, `rn_data`, `ws_data`, `rhm_data`, `si_data`, `spei12_data`
-- **행**: 테이블당 ~433M (451,351 격자 × 960개월 × 4 SSP)
+- **행**: 테이블당 ~433M (451,351 격자 × 960개월) - Wide Format
 - **시간**: ~2-3시간
-- **형식**: Long format (scenario_id, grid_id, observation_date, value)
+- **형식**: Wide format (observation_date, grid_id, ssp1, ssp2, ssp3, ssp5)
 
 **6. load_yearly_grid_data.py** - 연별 기후 극값
 ```bash
@@ -221,8 +229,9 @@ python scripts/load_yearly_grid_data.py
 ```
 - **입력**: `data/climate/yearly_grid/*.nc`
 - **출력**: `csdi_data`, `wsdi_data`, `rx1day_data`, `rx5day_data`, `cdd_data`, `rain80_data`, `sdii_data`, `ta_yearly_data`
-- **행**: 테이블당 ~36M (451,351 격자 × 80년 × 4 SSP)
+- **행**: 테이블당 ~36M (451,351 격자 × 80년) - Wide Format
 - **시간**: ~1-2시간
+- **형식**: Wide format (year, grid_id, ssp1, ssp2, ssp3, ssp5)
 
 ### 래스터 데이터
 
@@ -257,6 +266,63 @@ python scripts/load_drought.py
 - **시간**: ~1시간
 - **도구**: GDAL `gdal_translate` + `raster2pgsql`
 
+### 참조 데이터 (Reference Data)
+
+**10. load_weather_stations.py** - 기상 관측소
+```bash
+python scripts/load_weather_stations.py
+```
+- **입력**: `data/stations_with_coordinates.json`
+- **출력**: `weather_stations` (~1,086개 관측소)
+- **시간**: ~5초
+- **형식**: 관측소 코드, 이름, 좌표 (위경도), 유역 정보
+- **특징**: PostGIS geometry 자동 생성, 좌표 없는 관측소 자동 스킵
+
+**11. load_grid_station_mappings.py** - 격자-관측소 매핑
+```bash
+python scripts/load_grid_station_mappings.py
+```
+- **입력**: `data/grid_to_nearest_stations.json`
+- **출력**: `grid_station_mappings` (~292,131개 매핑)
+- **시간**: ~30초
+- **형식**: 격자 좌표 → 최근접 관측소 3개 (거리, 순위 포함)
+- **특징**: AI 모델 학습용 격자-관측소 매핑 데이터
+
+**12. load_water_stress_rankings.py** - WRI Aqueduct 물 스트레스
+```bash
+python scripts/load_water_stress_rankings.py
+```
+- **입력**: `data/Aqueduct40_rankings_download_Y2023M07D05.xlsx`
+- **출력**: `water_stress_rankings` (~161,731개 순위)
+- **시간**: ~1분
+- **형식**: 국가/지역별 물 스트레스 지수 (WRI Aqueduct 4.0)
+- **특징**: 12개 물 리스크 지표, 미래 시나리오 포함
+
+### 사이트 에너지 데이터
+
+**13. load_site_dc_power_simple.py** - 판교DC 전력 사용량
+```bash
+export PANGYO_DC_SITE_ID="your-site-uuid"
+python scripts/load_site_dc_power_simple.py
+```
+- **입력**: `data/site_energy/판교DC 전력 사용량_2301-2510.xlsx`
+- **출력**: `site_dc_power_usage` (~24,792개 시간별 레코드)
+- **시간**: ~10초
+- **기간**: 2023-01-01 ~ 2025-10-29 (약 2년 10개월)
+- **형식**: IT전력, 냉방전력, 일반전력, 합계 (kWh)
+- **특징**: 시간별 데이터 저장, forward fill로 누락 날짜 보완, 중복 자동 제거
+
+**14. load_site_campus_energy_simple.py** - 판교캠퍼스 에너지 사용량
+```bash
+export PANGYO_CAMPUS_SITE_ID="your-site-uuid"
+python scripts/load_site_campus_energy_simple.py --year 2024
+```
+- **입력**: `data/site_energy/판교캠퍼스 에너지 사용량.xlsx`
+- **출력**: `site_campus_energy_usage` (12개 월별 레코드)
+- **시간**: ~5초
+- **형식**: 수도(ton), 지역난방(Gcal→kWh), 전력(kWh)
+- **특징**: 월별 컬럼을 행으로 변환, Gcal을 kWh로 자동 변환 (1 Gcal = 1,163 kWh)
+
 ---
 
 ## 데이터 로딩 모드
@@ -282,8 +348,8 @@ python scripts/load_monthly_grid_data.py
 - `location_admin`: 271행 (10개 읍면동 + 261개 자동 생성 시군구)
 - `location_grid`: 10행
 - `sea_level_grid`: 10행
-- `ta_data`, `rn_data` 등: 각 40행 (4 SSP × 10)
-- `tamax_data`, `tamin_data`: 각 10행
+- `ta_data`, `rn_data` 등: 각 10행 (Wide Format: 4 SSP 컬럼)
+- `tamax_data`, `tamin_data`: 각 10행 (Wide Format: 4 SSP 컬럼)
 
 ### 전체 로드 모드 (프로덕션)
 
@@ -312,9 +378,9 @@ python scripts/load_drought.py
 | 행정구역 | 5,259 | 2분 | ~50 MB |
 | 인구 | 17 | 1분 | <1 MB |
 | 해수면 | 6,880 | 5분 | ~10 MB |
-| TAMAX/TAMIN | 각 7.36M | 60분 | ~2 GB |
-| 월별 격자 (6개 테이블) | 각 433M | 3시간 | ~50 GB |
-| 연별 격자 (8개 테이블) | 각 36M | 2시간 | ~10 GB |
+| TAMAX/TAMIN (Wide) | 각 1.84M | 30분 | ~500 MB |
+| 월별 격자 (6개 테이블, Wide) | 각 433M | 3시간 | ~50 GB |
+| 연별 격자 (8개 테이블, Wide) | 각 36M | 2시간 | ~10 GB |
 | 토지피복 | 240개 파일 | 3시간 | ~500 GB |
 | DEM | 44개 파일 | 30분 | ~10 GB |
 | 가뭄 | 2개 파일 | 1시간 | ~5 GB |
@@ -348,28 +414,35 @@ cursor.execute("""
 """, (date, admin_id, ssp1_val, ssp2_val, ssp3_val, ssp5_val))
 ```
 
-### Long Format (월별/연별 격자)
+### Wide Format (월별/연별 격자)
 
-사용처: 기타 모든 기후 테이블
+사용처: 15개 기후 테이블 (월별 6개 + 연별 8개 + 해수면 1개)
 
 ```sql
 CREATE TABLE ta_data (
-    scenario_id SMALLINT NOT NULL,
-    grid_id INTEGER NOT NULL,
     observation_date DATE NOT NULL,
-    value REAL,
-    PRIMARY KEY (observation_date, grid_id, scenario_id)
+    grid_id INTEGER NOT NULL,
+    ssp1 REAL,  -- SSP1-2.6
+    ssp2 REAL,  -- SSP2-4.5
+    ssp3 REAL,  -- SSP3-7.0
+    ssp5 REAL,  -- SSP5-8.5
+    PRIMARY KEY (observation_date, grid_id)
 );
 ```
 
 **Python 로드 예시:**
 ```python
-for scenario_id in [1, 2, 3, 4]:  # SSP1-2.6, SSP2-4.5, SSP3-7.0, SSP5-8.5
-    cursor.execute("""
-        INSERT INTO ta_data (scenario_id, grid_id, observation_date, value)
-        VALUES (%s, %s, %s, %s)
-    """, (scenario_id, grid_id, date, value))
+cursor.execute("""
+    INSERT INTO ta_data (observation_date, grid_id, ssp1, ssp2, ssp3, ssp5)
+    VALUES (%s, %s, %s, %s, %s, %s)
+""", (date, grid_id, ssp1_val, ssp2_val, ssp3_val, ssp5_val))
 ```
+
+**왜 Wide Format?**
+- **75% 저장 공간 절감** (4개 행 → 1개 행으로 통합)
+- **쿼리 성능 향상** (scenario_id JOIN 제거)
+- **고정된 4개 시나리오** (SSP1-2.6, SSP2-4.5, SSP3-7.0, SSP5-8.5)
+- **시나리오 간 비교 쿼리 단순화**
 
 ---
 

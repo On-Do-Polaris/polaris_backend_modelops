@@ -92,6 +92,17 @@ python scripts/load_yearly_grid_data.py
 python scripts/load_landcover.py  # 2-3시간
 python scripts/load_dem.py         # 30분
 python scripts/load_drought.py     # 1시간
+
+# 단계 8: 참조 데이터 로드 (AI 모델 학습용)
+python scripts/load_weather_stations.py       # ~5초
+python scripts/load_grid_station_mappings.py  # ~30초
+python scripts/load_water_stress_rankings.py  # ~1분
+
+# 단계 9: 사이트 에너지 데이터 로드 (사이트별)
+export PANGYO_DC_SITE_ID="your-site-uuid"
+export PANGYO_CAMPUS_SITE_ID="your-campus-uuid"
+python scripts/load_site_dc_power_simple.py         # ~10초
+python scripts/load_site_campus_energy_simple.py --year 2024  # ~5초
 ```
 
 **총 소요 시간**: 전체 데이터 로드 시 약 12-15시간
@@ -237,28 +248,28 @@ SELECT
     COUNT(DISTINCT observation_date) AS unique_dates
 FROM ta_data;
 
--- 모든 시나리오가 있는지 확인
+-- Wide Format: 모든 시나리오 컬럼 확인
 SELECT
-    s.scenario_code,
-    COUNT(*) AS row_count
-FROM ta_data t
-JOIN scenario s ON t.scenario_id = s.scenario_id
-GROUP BY s.scenario_code
-ORDER BY s.scenario_code;
+    COUNT(*) AS total_rows,
+    COUNT(ssp1) AS ssp1_count,
+    COUNT(ssp2) AS ssp2_count,
+    COUNT(ssp3) AS ssp3_count,
+    COUNT(ssp5) AS ssp5_count
+FROM ta_data;
 ```
 
 **데이터 분포 확인:**
 
 ```sql
--- 기온 값 분포 확인
+-- Wide Format: 특정 시나리오(SSP2-4.5) 기온 값 분포 확인
 SELECT
-    MIN(value) AS min_temp,
-    MAX(value) AS max_temp,
-    AVG(value) AS avg_temp,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY value) AS median_temp
+    MIN(ssp2) AS min_temp,
+    MAX(ssp2) AS max_temp,
+    AVG(ssp2) AS avg_temp,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ssp2) AS median_temp
 FROM ta_data
-WHERE scenario_id = 2  -- SSP2-4.5
-AND observation_date BETWEEN '2021-01-01' AND '2021-12-31';
+WHERE observation_date BETWEEN '2021-01-01' AND '2021-12-31'
+AND ssp2 IS NOT NULL;
 
 -- 공간 커버리지 확인
 SELECT
@@ -359,8 +370,7 @@ docker exec -it skala_datawarehouse psql -U skala_dw_user -d skala_datawarehouse
 cursor.execute("""
     SELECT MAX(observation_date)
     FROM ta_data
-    WHERE scenario_id = %s
-""", (scenario_id,))
+""")
 
 last_date = cursor.fetchone()[0]
 if last_date:
@@ -494,22 +504,21 @@ db_pool.putconn(conn)
 **해결 방법**:
 
 ```sql
--- 중복 확인
-SELECT observation_date, grid_id, scenario_id, COUNT(*)
+-- Wide Format: 중복 확인
+SELECT observation_date, grid_id, COUNT(*)
 FROM ta_data
-GROUP BY observation_date, grid_id, scenario_id
+GROUP BY observation_date, grid_id
 HAVING COUNT(*) > 1;
 
 -- 중복 삭제 (첫 번째 유지)
 DELETE FROM ta_data a USING (
-    SELECT MIN(ctid) AS ctid, observation_date, grid_id, scenario_id
+    SELECT MIN(ctid) AS ctid, observation_date, grid_id
     FROM ta_data
-    GROUP BY observation_date, grid_id, scenario_id
+    GROUP BY observation_date, grid_id
     HAVING COUNT(*) > 1
 ) b
 WHERE a.observation_date = b.observation_date
 AND a.grid_id = b.grid_id
-AND a.scenario_id = b.scenario_id
 AND a.ctid <> b.ctid;
 ```
 
@@ -524,14 +533,14 @@ ALTER TABLE ta_data DISABLE TRIGGER ALL;
 ALTER TABLE ta_data ENABLE TRIGGER ALL;
 ```
 
-**2. INSERT 대신 COPY 사용:**
+**2. INSERT 대신 COPY 사용 (Wide Format):**
 ```python
 from io import StringIO
 
-# CSV 형식으로 데이터 준비
+# CSV 형식으로 데이터 준비 (Wide Format)
 buffer = StringIO()
 for row in data:
-    buffer.write(f"{row['scenario_id']},{row['grid_id']},{row['date']},{row['value']}\n")
+    buffer.write(f"{row['date']},{row['grid_id']},{row['ssp1']},{row['ssp2']},{row['ssp3']},{row['ssp5']}\n")
 
 buffer.seek(0)
 
@@ -539,7 +548,7 @@ buffer.seek(0)
 cursor.copy_from(
     buffer,
     'ta_data',
-    columns=('scenario_id', 'grid_id', 'observation_date', 'value'),
+    columns=('observation_date', 'grid_id', 'ssp1', 'ssp2', 'ssp3', 'ssp5'),
     sep=','
 )
 conn.commit()
@@ -630,6 +639,110 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
    - 날짜 범위 확인
    - NULL 값 확인
    - 데이터 분포 확인
+
+## 참조 데이터 및 사이트 에너지 데이터
+
+### 참조 데이터 로드 (AI 모델 학습용)
+
+**기상 관측소 데이터:**
+```bash
+# 환경 활성화
+source .venv/bin/activate
+export PYTHONPATH=.
+
+# 기상 관측소 로드
+python scripts/load_weather_stations.py
+
+# 데이터 확인
+docker exec -it skala_datawarehouse psql -U skala_dw_user -d skala_datawarehouse -c \
+  "SELECT COUNT(*) as total_stations,
+          COUNT(DISTINCT basin_code) as basins
+   FROM weather_stations"
+```
+
+**격자-관측소 매핑 데이터:**
+```bash
+# 격자-관측소 매핑 로드
+python scripts/load_grid_station_mappings.py
+
+# 데이터 확인
+docker exec -it skala_datawarehouse psql -U skala_dw_user -d skala_datawarehouse -c \
+  "SELECT COUNT(*) as total_mappings,
+          COUNT(DISTINCT grid_lat || ',' || grid_lon) as unique_grids,
+          COUNT(DISTINCT obscd) as unique_stations
+   FROM grid_station_mappings"
+```
+
+**WRI Aqueduct 물 스트레스 데이터:**
+```bash
+# 물 스트레스 순위 로드
+python scripts/load_water_stress_rankings.py
+
+# 데이터 확인
+docker exec -it skala_datawarehouse psql -U skala_dw_user -d skala_datawarehouse -c \
+  "SELECT COUNT(*) as total_records,
+          COUNT(DISTINCT name_0) as countries,
+          COUNT(DISTINCT indicator_name) as indicators,
+          COUNT(DISTINCT year) as years
+   FROM water_stress_rankings"
+```
+
+### 사이트 에너지 데이터 로드
+
+**판교DC 전력 사용량 (시간별):**
+```bash
+# 환경 활성화
+source .venv/bin/activate
+export PYTHONPATH=.
+
+# Site ID 설정 (Application DB에서 조회 필요)
+export PANGYO_DC_SITE_ID="your-site-uuid"
+
+# Application DB에서 Site ID 조회
+docker exec -it skala_application psql -U skala_app_user -d skala_application -c \
+  "SELECT site_id, site_name FROM sites WHERE site_name LIKE '%판교DC%'"
+
+# DC 전력 데이터 로드
+python scripts/load_site_dc_power_simple.py
+
+# 데이터 확인
+docker exec -it skala_datawarehouse psql -U skala_dw_user -d skala_datawarehouse -c \
+  "SELECT
+     COUNT(*) as total_records,
+     MIN(measurement_date) as start_date,
+     MAX(measurement_date) as end_date,
+     AVG(total_power_kwh) as avg_total_power,
+     AVG(it_power_kwh) as avg_it_power,
+     AVG(cooling_power_kwh) as avg_cooling_power
+   FROM site_dc_power_usage
+   WHERE site_id = '$PANGYO_DC_SITE_ID'"
+```
+
+**판교캠퍼스 에너지 사용량 (월별):**
+```bash
+# Site ID 설정
+export PANGYO_CAMPUS_SITE_ID="your-campus-uuid"
+
+# Application DB에서 Site ID 조회
+docker exec -it skala_application psql -U skala_app_user -d skala_application -c \
+  "SELECT site_id, site_name FROM sites WHERE site_name LIKE '%판교캠퍼스%'"
+
+# 캠퍼스 에너지 데이터 로드 (특정 연도)
+python scripts/load_site_campus_energy_simple.py --year 2024
+
+# 데이터 확인
+docker exec -it skala_datawarehouse psql -U skala_dw_user -d skala_datawarehouse -c \
+  "SELECT
+     COUNT(*) as total_records,
+     measurement_year,
+     AVG(total_power_kwh) as avg_power,
+     AVG(gas_usage_m3) as avg_gas,
+     AVG(water_usage_m3) as avg_water
+   FROM site_campus_energy_usage
+   WHERE site_id = '$PANGYO_CAMPUS_SITE_ID'
+   GROUP BY measurement_year
+   ORDER BY measurement_year"
+```
 
 ---
 

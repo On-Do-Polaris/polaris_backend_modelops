@@ -1,9 +1,15 @@
 '''
 파일명: wildfire_probability_agent.py
-최종 수정일: 2025-11-22
-버전: v1.1
+최종 수정일: 2025-11-24
+버전: v2.0
 파일 개요: 산불 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-11-24: v2.0 - FWI 공식 수정 (캐나다 ISI 방식 근사)
+		* 습도: 제곱근으로 영향 완화 → (1 - RHM/100)^0.5
+		* 풍속: m/s → km/h 변환 후 지수적 반영 → exp(0.05039 × WS_kmh)
+		* 온도: 계수 강화 (0.05 → 0.08), 기준 온도 조정 (10 → 5)
+		* 강수: 감쇠 완화 (0.001 → 0.0005)
+		* 스케일링: ×5 적용하여 EFFIS bin과 호환
 	- 2025-11-22: v1.2 - bin 0~11.2 (Low) 추가
 		* bin: [0~11.2), [11.2~21.3), [21.3~38), [38~50), [50~)
 		* DR_intensity: [0.00, 0.01, 0.03, 0.10, 0.25]
@@ -26,8 +32,17 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 
 	사용 데이터: 월별 기상 데이터 (TA, RHM, WS, RN)
 	강도지표: X_fire(t,m) = FWI(t,m) (월별)
-	FWI 계산식:
-		FWI(t,m) = (1 - RHM/100) × 0.5 × (WS + 1) × exp(0.05 × (TA - 10)) × exp(-0.001 × RN)
+
+	FWI 계산식 (캐나다 ISI 방식 근사, v2.0):
+		FWI(t,m) = (1 - RHM/100)^0.5 × exp(0.05039 × WS_kmh)
+		           × exp(0.08 × (TA - 5)) × exp(-0.0005 × RN) × 5
+
+		- 습도: 제곱근으로 영향 완화
+		- 풍속: m/s → km/h 변환 후 지수적 반영 (캐나다 ISI 방식)
+		- 온도: 계수 강화 및 기준온도 하향
+		- 강수: 감쇠 완화
+		- 스케일링: ×5 (EFFIS bin 호환)
+
 	월 기반 발생확률: P_fire[i] = (해당 bin에 속한 월 수) / (총 월 수)
 	"""
 
@@ -142,9 +157,10 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 
 	def _calculate_fwi(self, ta: float, rhm: float, ws: float, rn: float) -> float:
 		"""
-		Fire Weather Index (FWI) 계산
+		Fire Weather Index (FWI) 계산 (캐나다 ISI 방식 근사, v2.0)
 
-		FWI = (1 - RHM/100) × 0.5 × (WS + 1) × exp(0.05 × (TA - 10)) × exp(-0.001 × RN)
+		FWI = (1 - RHM/100)^0.5 × exp(0.05039 × WS_kmh)
+		      × exp(0.08 × (TA - 5)) × exp(-0.0005 × RN) × 5
 
 		Args:
 			ta: 평균 기온 (°C)
@@ -153,13 +169,22 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 			rn: 강수량 (mm)
 
 		Returns:
-			FWI 값
+			FWI 값 (EFFIS bin 호환 스케일)
 		"""
-		humidity_factor = 1 - (rhm / 100.0)
-		wind_factor = 0.5 * (ws + 1)
-		temp_factor = np.exp(0.05 * (ta - 10))
-		rain_factor = np.exp(-0.001 * rn)
+		# 습도 영향 (제곱근으로 완화)
+		humidity_factor = (1 - (rhm / 100.0)) ** 0.5
 
-		fwi = humidity_factor * wind_factor * temp_factor * rain_factor
+		# 풍속 영향 (m/s → km/h 변환 후 지수적 반영, 캐나다 ISI 방식)
+		ws_kmh = ws * 3.6
+		wind_factor = np.exp(0.05039 * ws_kmh)
+
+		# 온도 영향 (계수 강화, 기준온도 하향)
+		temp_factor = np.exp(0.08 * (ta - 5))
+
+		# 강수 영향 (감쇠 완화)
+		rain_factor = np.exp(-0.0005 * rn)
+
+		# 스케일링 적용 (EFFIS bin 호환)
+		fwi = humidity_factor * wind_factor * temp_factor * rain_factor * 5
 
 		return max(fwi, 0.0)  # 음수 방지

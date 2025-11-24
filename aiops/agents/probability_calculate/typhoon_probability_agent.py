@@ -1,9 +1,14 @@
 '''
 파일명: typhoon_probability_agent.py
-최종 수정일: 2025-11-22
-버전: v1.1
+최종 수정일: 2025-11-23
+버전: v2.0
 파일 개요: 열대성 태풍 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-11-23: v2.0 - SSP 시나리오 기반 미래 태풍 강도 추정 추가
+		* Hybrid Approach: 과거 통계 + 기온 스케일링 + 확률적 시뮬레이션
+		* IPCC AR6 기반 스케일링: 1°C당 4% 강도 증가
+		* Gamma 분포 기반 확률적 S_tc 샘플링
+		* 4개 SSP 시나리오 지원 (SSP126, SSP245, SSP370, SSP585)
 	- 2025-11-22: v1.1 - 타원 영향권 계산 버그 수정
 		* 위경도(도) → km 단위 변환 추가
 		* 위도 1도 ≈ 111km, 경도 1도 ≈ 111km × cos(위도) 적용
@@ -13,7 +18,7 @@
 		* DR_intensity: [0.00, 0.02, 0.10, 0.30]
 		* 취약성 스케일링 제거
 '''
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import numpy as np
 import math
 from .base_probability_agent import BaseProbabilityAgent
@@ -23,11 +28,34 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 	"""
 	열대성 태풍 리스크 확률 P(H) 계산 Agent
 
-	사용 데이터: KMA 태풍 Best Track API
+	사용 데이터:
+		- KMA 태풍 Best Track API (과거)
+		- KMA SSP 시나리오 기온 데이터 (미래 추정)
+
 	강도지표: S_tc(t,j) = 연도별 누적 노출 지수
 	- bin_inst(storm,τ,j): 시점별 태풍 영향 등급
 	- w_tc: bin별 가중치 [0, 1, 3, 6]
+
+	미래 태풍 강도 추정:
+	- Hybrid Approach: 과거 통계 + 기온 스케일링 + Gamma 분포 샘플링
+	- IPCC AR6 기반: 1°C 온난화 시 태풍 강도 4% 증가
+	- SSP 시나리오: SSP126, SSP245, SSP370, SSP585
 	"""
+
+	# SSP 시나리오 매핑
+	SCENARIO_MAPPING = {
+		'SSP1-2.6': 'SSP126',
+		'SSP2-4.5': 'SSP245',
+		'SSP3-7.0': 'SSP370',
+		'SSP5-8.5': 'SSP585',
+		'SSP126': 'SSP126',
+		'SSP245': 'SSP245',
+		'SSP370': 'SSP370',
+		'SSP585': 'SSP585'
+	}
+
+	# IPCC AR6 기반 스케일링 계수 (1°C당 강도 증가율)
+	INTENSITY_SCALE_PER_DEGREE = 0.04  # 4%/°C
 
 	def __init__(self):
 		"""
@@ -66,7 +94,193 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		)
 
 		# 시점별 bin 가중치
-		self.w_tc = [0, 1, 3, 6]  # [bin1, bin2(TS), bin3(STS), bin4(TY)]
+		self.w_tc = [0, 1, 3, 7]  # [bin1, bin2(TS), bin3(STS), bin4(TY)]
+
+		# Baseline 통계 (미래 시나리오용)
+		self.baseline_stats: Optional[Dict[str, Any]] = None
+		self.baseline_temp: Optional[float] = None
+
+	def initialize_baseline(
+		self,
+		historical_tracks: List[Dict[str, Any]],
+		site_location: Dict[str, float],
+		baseline_temp: Optional[float] = None
+	) -> None:
+		"""
+		과거 Best Track 데이터로 baseline 초기화 (미래 시나리오 계산 전 필수)
+
+		Args:
+			historical_tracks: 과거 태풍 Best Track 데이터 (2015-2024)
+			site_location: 사이트 위치 {'lon': float, 'lat': float}
+			baseline_temp: 과거 평균 기온 (°C), None이면 기본값 14.2 사용
+		"""
+		# 과거 S_tc 계산
+		historical_S_tc = self._calculate_historical_S_tc(
+			historical_tracks, site_location
+		)
+
+		# 통계 추출
+		self.baseline_stats = self._extract_baseline_statistics(historical_S_tc)
+
+		# 과거 평균 기온 (스케일링 기준)
+		self.baseline_temp = baseline_temp if baseline_temp is not None else 14.2
+
+		self.logger.info(
+			f"Baseline 초기화 완료: mean={self.baseline_stats['mean']:.2f}, "
+			f"std={self.baseline_stats['std']:.2f}, temp={self.baseline_temp}°C"
+		)
+
+	def _calculate_historical_S_tc(
+		self,
+		typhoon_tracks: List[Dict[str, Any]],
+		site_location: Dict[str, float]
+	) -> Dict[int, float]:
+		"""
+		과거 Best Track 데이터에서 연도별 S_tc 계산
+
+		Args:
+			typhoon_tracks: 태풍 Best Track 데이터
+			site_location: 사이트 위치
+
+		Returns:
+			연도별 S_tc 딕셔너리 {year: S_tc}
+		"""
+		site_lon = site_location.get('lon')
+		site_lat = site_location.get('lat')
+
+		yearly_exposure = {}
+
+		for storm_data in typhoon_tracks:
+			year = storm_data.get('year')
+			tracks = storm_data.get('tracks', [])
+
+			if year not in yearly_exposure:
+				yearly_exposure[year] = 0.0
+
+			for track_point in tracks:
+				bin_inst = self._calculate_bin_inst(track_point, site_lon, site_lat)
+				yearly_exposure[year] += self.w_tc[bin_inst]
+
+		return yearly_exposure
+
+	def _extract_baseline_statistics(
+		self,
+		historical_S_tc: Dict[int, float]
+	) -> Dict[str, Any]:
+		"""
+		과거 S_tc에서 통계적 특성 추출
+
+		Args:
+			historical_S_tc: 연도별 S_tc 딕셔너리
+
+		Returns:
+			통계 딕셔너리 {mean, std, distribution, fit_params}
+		"""
+		values = list(historical_S_tc.values())
+
+		if not values:
+			return {
+				'mean': 0.0,
+				'std': 1.0,
+				'distribution': 'gamma',
+				'fit_params': {'shape': 1.0, 'scale': 1.0}
+			}
+
+		baseline_mean = np.mean(values)
+		baseline_std = np.std(values)
+
+		# Gamma 분포 피팅 (S_tc >= 0)
+		# 0으로 나눔 방지
+		if baseline_std > 0 and baseline_mean > 0:
+			shape = (baseline_mean / baseline_std) ** 2
+			scale = baseline_std ** 2 / baseline_mean
+		else:
+			shape = 1.0
+			scale = max(baseline_mean, 1.0)
+
+		return {
+			'mean': baseline_mean,
+			'std': baseline_std,
+			'distribution': 'gamma',
+			'fit_params': {'shape': shape, 'scale': scale}
+		}
+
+	def _calculate_intensity_scaling(
+		self,
+		year_temp: float
+	) -> float:
+		"""
+		기온 기반 태풍 강도 스케일링 계산
+
+		IPCC AR6 근거: 2°C 온난화 시 태풍 강도 1-10% 증가
+		본 구현: 1°C당 4% 증가 (보수적 중간값)
+
+		Args:
+			year_temp: 해당 연도 평균 기온 (°C)
+
+		Returns:
+			intensity_scale (1.0 = baseline, >1.0 = 강화)
+		"""
+		if self.baseline_temp is None:
+			return 1.0
+
+		temp_increase = year_temp - self.baseline_temp
+		intensity_scale = 1.0 + self.INTENSITY_SCALE_PER_DEGREE * temp_increase
+
+		# 극단값 방지 (0.8 ~ 1.5 범위로 제한)
+		return max(0.8, min(1.5, intensity_scale))
+
+	def _generate_future_S_tc(
+		self,
+		target_years: List[int],
+		yearly_temps: Dict[int, float],
+		seed: int = 42
+	) -> np.ndarray:
+		"""
+		미래 연도별 S_tc 시뮬레이션 (Gamma 분포 샘플링)
+
+		Args:
+			target_years: 계산할 연도 리스트
+			yearly_temps: 연도별 평균 기온 딕셔너리
+			seed: 재현성을 위한 랜덤 시드
+
+		Returns:
+			미래 S_tc 배열
+		"""
+		if self.baseline_stats is None:
+			raise ValueError(
+				"Baseline이 초기화되지 않았습니다. "
+				"먼저 initialize_baseline()을 호출하세요."
+			)
+
+		np.random.seed(seed)
+
+		simulated_S_tc = []
+
+		for year in target_years:
+			# 해당 연도 기온 (없으면 baseline 사용)
+			year_temp = yearly_temps.get(year, self.baseline_temp)
+
+			# 강도 스케일링
+			scale = self._calculate_intensity_scaling(year_temp)
+
+			# 스케일링된 기대값
+			expected_mean = self.baseline_stats['mean'] * scale
+
+			# Gamma 분포에서 샘플링
+			shape = self.baseline_stats['fit_params']['shape']
+			if shape > 0 and expected_mean > 0:
+				scale_param = expected_mean / shape
+				sampled = np.random.gamma(shape, scale_param)
+			else:
+				sampled = expected_mean
+
+			# 극단값 제한
+			sampled = max(0, min(sampled, self.baseline_stats['mean'] * 3))
+
+			simulated_S_tc.append(sampled)
+
+		return np.array(simulated_S_tc)
 
 	def calculate_intensity_indicator(self, collected_data: Dict[str, Any]) -> np.ndarray:
 		"""
@@ -74,14 +288,59 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		S_tc(t,j) = Σ over all (storm,τ in year t) of w_tc[bin_inst(storm,τ,j)]
 
 		Args:
-			collected_data: 수집된 태풍 데이터
-				- typhoon_tracks: 태풍 Best Track 데이터
-					[{'year': int, 'storm_id': str, 'tracks': [track_points]}]
-				- site_location: 사이트 위치 {'lon': float, 'lat': float}
+			collected_data: 수집된 태풍 데이터 (2가지 모드)
+
+			1) 과거 모드:
+			{
+				'typhoon_data': {
+					'typhoon_tracks': [{'year': int, 'storm_id': str, 'tracks': [...]}],
+					'site_location': {'lon': float, 'lat': float}
+				}
+			}
+
+			2) 미래 시나리오 모드:
+			{
+				'future_scenario': {
+					'scenario': 'SSP126' | 'SSP245' | 'SSP370' | 'SSP585',
+					'target_years': [2026, 2027, ...],
+					'yearly_temps': {2026: 15.2, 2027: 15.4, ...},
+					'site_location': {'lon': float, 'lat': float}
+				}
+			}
 
 		Returns:
 			연도별 누적 노출 지수 배열
 		"""
+		# 미래 시나리오 모드
+		if 'future_scenario' in collected_data:
+			scenario_info = collected_data['future_scenario']
+
+			# Baseline 체크
+			if self.baseline_stats is None:
+				raise ValueError(
+					"Baseline이 초기화되지 않았습니다. "
+					"먼저 initialize_baseline()을 호출하세요."
+				)
+
+			target_years = scenario_info.get('target_years', [])
+			yearly_temps = scenario_info.get('yearly_temps', {})
+			scenario = scenario_info.get('scenario', 'SSP370')
+
+			# 시나리오명 정규화
+			scenario = self.SCENARIO_MAPPING.get(scenario, scenario)
+
+			self.logger.info(
+				f"미래 시나리오 모드: {scenario}, {len(target_years)}개 연도"
+			)
+
+			# 미래 S_tc 시뮬레이션
+			return self._generate_future_S_tc(
+				target_years=target_years,
+				yearly_temps=yearly_temps,
+				seed=42
+			)
+
+		# 과거 모드
 		typhoon_data = collected_data.get('typhoon_data', {})
 		typhoon_tracks = typhoon_data.get('typhoon_tracks', [])
 		site_location = typhoon_data.get('site_location', {'lon': 127.0, 'lat': 37.5})
@@ -111,6 +370,11 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 				# 가중치 적용하여 누적
 				yearly_exposure[year] += self.w_tc[bin_inst]
 
+		# Baseline 자동 초기화 (미래 시나리오 계산 대비)
+		if self.baseline_stats is None and typhoon_tracks:
+			self.logger.info("Baseline 자동 초기화 중...")
+			self.baseline_stats = self._extract_baseline_statistics(yearly_exposure)
+
 		# 연도별로 정렬하여 배열로 변환
 		years = sorted(yearly_exposure.keys())
 		exposure_values = [yearly_exposure[y] for y in years]
@@ -122,6 +386,52 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		)
 
 		return exposure_array
+
+	def get_future_S_tc_all_scenarios(
+		self,
+		target_years: List[int],
+		scenario_temps: Dict[str, Dict[int, float]]
+	) -> Dict[str, np.ndarray]:
+		"""
+		모든 SSP 시나리오에 대해 미래 S_tc 계산
+
+		Args:
+			target_years: 계산할 연도 리스트
+			scenario_temps: 시나리오별 연도별 기온
+				{
+					'SSP126': {2026: 15.0, 2027: 15.1, ...},
+					'SSP245': {...},
+					'SSP370': {...},
+					'SSP585': {...}
+				}
+
+		Returns:
+			시나리오별 S_tc 배열
+			{
+				'SSP126': np.array([...]),
+				'SSP245': np.array([...]),
+				'SSP370': np.array([...]),
+				'SSP585': np.array([...])
+			}
+		"""
+		if self.baseline_stats is None:
+			raise ValueError(
+				"Baseline이 초기화되지 않았습니다. "
+				"먼저 initialize_baseline()을 호출하세요."
+			)
+
+		scenarios = ['SSP126', 'SSP245', 'SSP370', 'SSP585']
+		results = {}
+
+		for scenario in scenarios:
+			yearly_temps = scenario_temps.get(scenario, {})
+			results[scenario] = self._generate_future_S_tc(
+				target_years=target_years,
+				yearly_temps=yearly_temps,
+				seed=42  # 동일 시드로 재현성 보장
+			)
+
+		return results
 
 	def _calculate_bin_inst(
 		self,

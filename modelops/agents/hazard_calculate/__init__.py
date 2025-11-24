@@ -1,21 +1,21 @@
-from .coastal_flood_hscore_agent import CoastalFloodHScoreAgent
-from .cold_wave_hscore_agent import ColdWaveHScoreAgent
+from .extreme_heat_hscore_agent import ExtremeHeatHScoreAgent
+from .extreme_cold_hscore_agent import ExtremeColdHScoreAgent
 from .drought_hscore_agent import DroughtHScoreAgent
-from .high_temperature_hscore_agent import HighTemperatureHScoreAgent
-from .inland_flood_hscore_agent import InlandFloodHScoreAgent
-from .typhoon_hscore_agent import TyphoonHScoreAgent
+from .water_stress_hscore_agent import WaterStressHScoreAgent
+from .sea_level_rise_hscore_agent import SeaLevelRiseHScoreAgent
+from .river_flood_hscore_agent import RiverFloodHScoreAgent
 from .urban_flood_hscore_agent import UrbanFloodHScoreAgent
-from .water_scarcity_hscore_agent import WaterScarcityHScoreAgent
+from .typhoon_hscore_agent import TyphoonHScoreAgent
 from .wildfire_hscore_agent import WildfireHScoreAgent
 
 __all__ = [
-    'CoastalFloodHScoreAgent',
-    'ColdWaveHScoreAgent',
+    'ExtremeHeatHScoreAgent',
+    'ExtremeColdHScoreAgent',
     'DroughtHScoreAgent',
-    'HighTemperatureHScoreAgent',
-    'InlandFloodHScoreAgent',
-    'TyphoonHScoreAgent',
+    'WaterStressHScoreAgent',
+    'SeaLevelRiseHScoreAgent',
+    'RiverFloodHScoreAgent',
     'UrbanFloodHScoreAgent',
-    'WaterScarcityHScoreAgent',
+    'TyphoonHScoreAgent',
     'WildfireHScoreAgent',
 ]

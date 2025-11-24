@@ -1,5 +1,5 @@
 '''
-파일명: inland_flood_probability_agent.py
+파일명: river_flood_probability_agent.py
 최종 수정일: 2025-11-21
 버전: v1
 파일 개요: 내륙 홍수 리스크 확률 P(H) 계산 Agent
@@ -15,7 +15,7 @@ import numpy as np
 from .base_probability_agent import BaseProbabilityAgent
 
 
-class InlandFloodProbabilityAgent(BaseProbabilityAgent):
+class RiverFloodProbabilityAgent(BaseProbabilityAgent):
 	"""
 	내륙 홍수 리스크 확률 P(H) 계산 Agent
 
@@ -26,7 +26,7 @@ class InlandFloodProbabilityAgent(BaseProbabilityAgent):
 
 	def __init__(self):
 		"""
-		InlandFloodProbabilityAgent 초기화
+		RiverFloodProbabilityAgent 초기화
 
 		bin 구간은 기준기간 데이터 분석 후 동적으로 설정
 		초기값은 임시값이며, calculate_probability 호출 시 재설정됨
@@ -46,7 +46,7 @@ class InlandFloodProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='하천 홍수',
+			risk_type='river_flood',
 			bins=bins,
 			dr_intensity=dr_intensity
 		)

@@ -1,5 +1,5 @@
 '''
-파일명: high_temperature_probability_agent.py
+파일명: extreme_heat_probability_agent.py
 최종 수정일: 2025-11-24
 버전: v2
 파일 개요: 극심한 고온 리스크 확률 P(H) 계산 Agent
@@ -19,7 +19,7 @@ import numpy as np
 from .base_probability_agent import BaseProbabilityAgent
 
 
-class HighTemperatureProbabilityAgent(BaseProbabilityAgent):
+class ExtremeHeatProbabilityAgent(BaseProbabilityAgent):
 	"""
 	극심한 고온 리스크 확률 P(H) 계산 Agent
 
@@ -40,7 +40,7 @@ class HighTemperatureProbabilityAgent(BaseProbabilityAgent):
 
 	def __init__(self):
 		"""
-		HighTemperatureProbabilityAgent 초기화
+		ExtremeHeatProbabilityAgent 초기화
 
 		bin 구간 (분위수 기반 - 동적 설정):
 			- bin1: WSDI < Q80 (일반적 수준)
@@ -74,7 +74,7 @@ class HighTemperatureProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='극심한 고온',
+			risk_type='extreme_heat',
 			bins=bins,
 			dr_intensity=dr_intensity
 		)

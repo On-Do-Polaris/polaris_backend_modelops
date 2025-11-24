@@ -62,7 +62,7 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='가뭄',
+			risk_type='drought',
 			bins=bins,
 			dr_intensity=dr_intensity,
 			time_unit='monthly'

@@ -11,14 +11,14 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from ..agents.hazard_calculate import (
-    CoastalFloodHScoreAgent,
-    ColdWaveHScoreAgent,
+    SeaLevelRiseHScoreAgent,
+    ExtremeColdHScoreAgent,
     DroughtHScoreAgent,
-    HighTemperatureHScoreAgent,
-    InlandFloodHScoreAgent,
+    ExtremeHeatHScoreAgent,
+    RiverFloodHScoreAgent,
     TyphoonHScoreAgent,
     UrbanFloodHScoreAgent,
-    WaterScarcityHScoreAgent,
+    WaterStressHScoreAgent,
     WildfireHScoreAgent
 )
 from ..database.connection import DatabaseConnection
@@ -35,14 +35,14 @@ class HazardBatchProcessor:
 
         # 9개 리스크 에이전트 초기화
         self.agents = {
-            'coastal_flood': CoastalFloodHScoreAgent(),
-            'cold_wave': ColdWaveHScoreAgent(),
+            "sea_level_rise": SeaLevelRiseHScoreAgent(),
+            "extreme_cold": ExtremeColdHScoreAgent(),
             'drought': DroughtHScoreAgent(),
-            'high_temperature': HighTemperatureHScoreAgent(),
-            'inland_flood': InlandFloodHScoreAgent(),
+            'high_temperature': ExtremeHeatHScoreAgent(),
+            "river_flood": RiverFloodHScoreAgent(),
             'typhoon': TyphoonHScoreAgent(),
             'urban_flood': UrbanFloodHScoreAgent(),
-            'water_scarcity': WaterScarcityHScoreAgent(),
+            "water_stress": WaterStressHScoreAgent(),
             'wildfire': WildfireHScoreAgent()
         }
 

@@ -384,5 +384,52 @@
       ]
     },
     "status": "completed"
+  },
+  "coastal_flood": {
+    "risk_type": "해수면 상승",
+    "bin_probabilities": [
+      0.5581,
+      0.4419,
+      0.0,
+      0.0
+    ],
+    "bin_base_damage_rates": [
+      0.0,
+      0.02,
+      0.15,
+      0.35
+    ],
+    "calculation_details": {
+      "formula": "P_r[i] = (해당 bin 연도 수) / (전체 연도 수)",
+      "time_unit": "yearly",
+      "total_years": 86,
+      "bins": [
+        {
+          "bin": 1,
+          "range": "0 ~ 0",
+          "probability": 0.5581,
+          "base_damage_rate": 0.0
+        },
+        {
+          "bin": 2,
+          "range": "0 ~ 0.3",
+          "probability": 0.4419,
+          "base_damage_rate": 0.02
+        },
+        {
+          "bin": 3,
+          "range": "0.3 ~ 1.0",
+          "probability": 0.0,
+          "base_damage_rate": 0.15
+        },
+        {
+          "bin": 4,
+          "range": "1.0 ~ inf",
+          "probability": 0.0,
+          "base_damage_rate": 0.35
+        }
+      ]
+    },
+    "status": "completed"
   }
 }

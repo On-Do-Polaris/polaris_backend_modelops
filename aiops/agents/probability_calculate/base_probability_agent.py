@@ -18,6 +18,8 @@ from typing import Dict, Any, List, Tuple
 from abc import ABC, abstractmethod
 import logging
 import numpy as np
+from scipy.stats import gaussian_kde
+from scipy.integrate import quad
 
 
 logger = logging.getLogger(__name__)
@@ -150,13 +152,70 @@ class BaseProbabilityAgent(ABC):
 
 	def _calculate_bin_probabilities(self, intensity_values: np.ndarray) -> List[float]:
 		"""
-		bin별 발생확률 P_r[i] 계산
-		P_r[i] = (해당 bin에 속한 샘플 수) / (전체 샘플 수)
-		- yearly: 연도 기반
-		- monthly: 월 기반
+		bin별 발생확률 P_r[i] 계산 (KDE 기반 연속적 확률)
+
+		기존 방식 (이산적):
+			P_r[i] = (해당 bin에 속한 샘플 수) / (전체 샘플 수)
+
+		새 방식 (연속적):
+			Kernel Density Estimation으로 분포 추정 후
+			각 bin 구간에 대한 적분으로 확률 계산
 
 		Args:
 			intensity_values: 강도지표 배열 (연별 또는 월별)
+
+		Returns:
+			bin별 발생확률 리스트 (연속적인 값)
+		"""
+		if len(intensity_values) < 3:
+			# 샘플이 너무 적으면 기존 방식 사용
+			return self._calculate_bin_probabilities_count(intensity_values)
+
+		try:
+			# Kernel Density Estimation
+			kde = gaussian_kde(intensity_values, bw_method='scott')
+
+			probabilities = []
+			for i in range(len(self.bins)):
+				bin_min, bin_max = self.bins[i]
+
+				# 무한대 처리
+				if bin_max == float('inf'):
+					# 마지막 bin: 데이터 최댓값의 1.2배까지만 적분
+					bin_max = np.max(intensity_values) * 1.2
+
+				if bin_min == float('-inf'):
+					# 첫 bin: 데이터 최솟값의 0.8배부터 적분
+					bin_min = np.min(intensity_values) * 0.8
+
+				# bin 구간 내에서 KDE 적분
+				try:
+					prob, _ = quad(kde, bin_min, bin_max, limit=100)
+					probabilities.append(max(0.0, min(1.0, prob)))
+				except:
+					# 적분 실패 시 중점 근사
+					mid_point = (bin_min + bin_max) / 2
+					prob = kde(mid_point)[0] * (bin_max - bin_min)
+					probabilities.append(max(0.0, min(1.0, prob)))
+
+			# 정규화 (합이 1이 되도록)
+			total = sum(probabilities)
+			if total > 0:
+				probabilities = [p / total for p in probabilities]
+
+			return probabilities
+
+		except Exception as e:
+			logger.warning(f"KDE 계산 실패, 기존 방식으로 전환: {e}")
+			return self._calculate_bin_probabilities_count(intensity_values)
+
+	def _calculate_bin_probabilities_count(self, intensity_values: np.ndarray) -> List[float]:
+		"""
+		bin별 발생확률 계산 (기존 방식 - 이산적)
+		P_r[i] = (해당 bin에 속한 샘플 수) / (전체 샘플 수)
+
+		Args:
+			intensity_values: 강도지표 배열
 
 		Returns:
 			bin별 발생확률 리스트

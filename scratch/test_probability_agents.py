@@ -20,6 +20,7 @@ from aiops.agents.probability_calculate.urban_flood_probability_agent import Urb
 from aiops.agents.probability_calculate.wildfire_probability_agent import WildfireProbabilityAgent
 from aiops.agents.probability_calculate.water_scarcity_probability_agent import WaterScarcityProbabilityAgent
 from aiops.agents.probability_calculate.typhoon_probability_agent import TyphoonProbabilityAgent
+from aiops.agents.probability_calculate.coastal_flood_probability_agent import CoastalFloodProbabilityAgent
 
 # 대덕 데이터센터 좌표 (대전광역시 유성구 엑스포로 325)
 DAEJEON_LAT = 36.35
@@ -28,6 +29,7 @@ DAEJEON_LON = 127.38
 KMA_DATA_DIR = Path(__file__).parent / "KMA"
 WAMIS_DATA_DIR = Path(__file__).parent / "wamis"
 TYPHOON_DATA_DIR = Path(__file__).parent / "typhoon"
+CMIP6_ZOS_FILE = Path(__file__).parent / "zos_Omon_ACCESS-CM2_ssp126_r1i1p1f1_gn_20150116-21001216.nc"
 
 
 def get_nearest_idx(lat_arr, lon_arr, target_lat, target_lon):
@@ -412,6 +414,91 @@ def test_typhoon():
     return result
 
 
+def test_coastal_flood():
+    """해수면 상승 (ZOS) 테스트"""
+    print("\n" + "=" * 60)
+    print("9. 해수면 상승 (Coastal Flood / Sea Level Rise) - ZOS")
+    print("=" * 60)
+
+    if not CMIP6_ZOS_FILE.exists():
+        print(f"  [WARN] 파일 없음: {CMIP6_ZOS_FILE}")
+        return None
+
+    # CMIP6 ZOS 데이터 로드
+    ds = nc.Dataset(CMIP6_ZOS_FILE)
+    lat_2d = ds.variables['latitude'][:]
+    lon_2d = ds.variables['longitude'][:]
+    zos_data = ds.variables['zos'][:]  # (time, j, i), m 단위
+    time_data = ds.variables['time'][:]
+
+    # 2D 격자에서 가장 가까운 점 찾기
+    # 대전은 내륙이므로 가장 가까운 해안 격자점 사용
+    # 서해안 쪽 격자점 선택 (예: 인천/서산 해역)
+    target_lat = 36.35  # 대전과 비슷한 위도
+    target_lon = 126.5  # 서해안
+
+    # 2D 격자에서 최근접점 찾기
+    lat_diff = np.abs(lat_2d - target_lat)
+    lon_diff = np.abs(lon_2d - target_lon)
+    dist = np.sqrt(lat_diff**2 + lon_diff**2)
+    min_idx = np.unravel_index(np.argmin(dist), dist.shape)
+    j_idx, i_idx = min_idx
+
+    print(f"  가장 가까운 격자점: lat={lat_2d[j_idx, i_idx]:.2f}, lon={lon_2d[j_idx, i_idx]:.2f}")
+
+    # 해당 격자점의 ZOS 시계열 추출
+    zos_timeseries = zos_data[:, j_idx, i_idx]  # (time,), m 단위
+
+    # masked array 처리
+    if hasattr(zos_timeseries, 'data'):
+        zos_timeseries = zos_timeseries.data
+
+    ds.close()
+
+    # 월별 데이터를 연도별로 그룹핑 (2015-2100)
+    # 1032개월 = 86년 (2015.01 ~ 2100.12)
+    n_months = len(zos_timeseries)
+    n_years = n_months // 12
+
+    zos_yearly_data = []
+    for year_idx in range(n_years):
+        year = 2015 + year_idx
+        start_month = year_idx * 12
+        end_month = start_month + 12
+        monthly_values = zos_timeseries[start_month:end_month]
+
+        # m → cm 변환 (Agent에서 cm으로 기대)
+        monthly_values_cm = [v * 100 for v in monthly_values]
+
+        zos_yearly_data.append({
+            'year': year,
+            'zos_values': monthly_values_cm  # cm 단위
+        })
+
+    print(f"  데이터: {len(zos_yearly_data)}년 (2015-2100)")
+    all_zos_cm = [v for d in zos_yearly_data for v in d['zos_values']]
+    print(f"  ZOS 범위: {min(all_zos_cm):.2f} ~ {max(all_zos_cm):.2f} cm")
+
+    # 해안 지역 시나리오: 지반고도 설정
+    # 실제 해안가 저지대 (예: 부산, 인천 항만 지역)는 지반고도가 1-3m 정도
+    # 테스트를 위해 지반고도를 ZOS와 비슷하게 설정하여 침수 발생하도록 함
+    ground_level = 0.5  # 0.5m (해안 저지대)
+
+    print(f"  지반고도: {ground_level}m (해안 저지대 가정)")
+
+    agent = CoastalFloodProbabilityAgent()
+    collected_data = {
+        'ocean_data': {
+            'zos_data': zos_yearly_data,
+            'ground_level': ground_level
+        }
+    }
+
+    result = agent.calculate_probability(collected_data)
+    print_result(result)
+    return result
+
+
 def print_result(result: dict):
     """결과 출력"""
     if result.get('status') == 'failed':
@@ -469,6 +556,9 @@ def main():
 
     # 8. 태풍
     results['typhoon'] = test_typhoon()
+
+    # 9. 해수면 상승
+    results['coastal_flood'] = test_coastal_flood()
 
     # 결과 저장
     output_file = Path(__file__).parent / "probability_test_results.json"

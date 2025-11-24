@@ -11,14 +11,14 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from ..agents.probability_calculate import (
-    CoastalFloodProbabilityAgent,
-    ColdWaveProbabilityAgent,
+    SeaLevelRiseProbabilityAgent,
+    ExtremeColdProbabilityAgent,
     DroughtProbabilityAgent,
-    HighTemperatureProbabilityAgent,
-    InlandFloodProbabilityAgent,
+    ExtremeHeatProbabilityAgent,
+    RiverFloodProbabilityAgent,
     TyphoonProbabilityAgent,
     UrbanFloodProbabilityAgent,
-    WaterScarcityProbabilityAgent,
+    WaterStressProbabilityAgent,
     WildfireProbabilityAgent
 )
 from ..database.connection import DatabaseConnection
@@ -35,14 +35,14 @@ class ProbabilityBatchProcessor:
 
         # 9개 리스크 에이전트 초기화
         self.agents = {
-            'coastal_flood': CoastalFloodProbabilityAgent(),
-            'cold_wave': ColdWaveProbabilityAgent(),
+            "sea_level_rise": SeaLevelRiseProbabilityAgent(),
+            "extreme_cold": ExtremeColdProbabilityAgent(),
             'drought': DroughtProbabilityAgent(),
-            'high_temperature': HighTemperatureProbabilityAgent(),
-            'inland_flood': InlandFloodProbabilityAgent(),
+            'high_temperature': ExtremeHeatProbabilityAgent(),
+            "river_flood": RiverFloodProbabilityAgent(),
             'typhoon': TyphoonProbabilityAgent(),
             'urban_flood': UrbanFloodProbabilityAgent(),
-            'water_scarcity': WaterScarcityProbabilityAgent(),
+            "water_stress": WaterStressProbabilityAgent(),
             'wildfire': WildfireProbabilityAgent()
         }
 

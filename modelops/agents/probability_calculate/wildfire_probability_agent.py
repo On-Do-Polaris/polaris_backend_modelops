@@ -85,7 +85,7 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='산불',
+			risk_type='wildfire',
 			bins=bins,
 			dr_intensity=dr_intensity,
 			time_unit='monthly'

@@ -1,5 +1,5 @@
 '''
-파일명: cold_wave_probability_agent.py
+파일명: extreme_cold_probability_agent.py
 최종 수정일: 2025-11-24
 버전: v2
 파일 개요: 극심한 한파 리스크 확률 P(H) 계산 Agent
@@ -19,7 +19,7 @@ import numpy as np
 from .base_probability_agent import BaseProbabilityAgent
 
 
-class ColdWaveProbabilityAgent(BaseProbabilityAgent):
+class ExtremeColdProbabilityAgent(BaseProbabilityAgent):
 	"""
 	극심한 한파 리스크 확률 P(H) 계산 Agent
 
@@ -43,7 +43,7 @@ class ColdWaveProbabilityAgent(BaseProbabilityAgent):
 
 	def __init__(self):
 		"""
-		ColdWaveProbabilityAgent 초기화
+		ExtremeColdProbabilityAgent 초기화
 
 		bin 구간 (분위수 기반 - 동적 설정):
 			- bin1: CSDI < Q80 (거의 한파 아님)
@@ -77,7 +77,7 @@ class ColdWaveProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='극심한 한파',
+			risk_type='extreme_cold',
 			bins=bins,
 			dr_intensity=dr_intensity
 		)

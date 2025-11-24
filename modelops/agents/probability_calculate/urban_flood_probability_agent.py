@@ -72,7 +72,7 @@ class UrbanFloodProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='도시 홍수',
+			risk_type='urban_flood',
 			bins=bins,
 			dr_intensity=dr_intensity
 		)

@@ -34,7 +34,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 
 	강도지표: S_tc(t,j) = 연도별 누적 노출 지수
 	- bin_inst(storm,τ,j): 시점별 태풍 영향 등급
-	- w_tc: bin별 가중치 [0, 1, 3, 6]
+	- w_tc: bin별 가중치 [0, 1, 3, 7]
 
 	미래 태풍 강도 추정:
 	- Hybrid Approach: 과거 통계 + 기온 스케일링 + Gamma 분포 샘플링
@@ -88,7 +88,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='태풍',
+			risk_type='typhoon',
 			bins=bins,
 			dr_intensity=dr_intensity
 		)
@@ -234,7 +234,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		self,
 		target_years: List[int],
 		yearly_temps: Dict[int, float],
-		seed: int = 42
+		seed: Optional[int] = None
 	) -> np.ndarray:
 		"""
 		미래 연도별 S_tc 시뮬레이션 (Gamma 분포 샘플링)
@@ -242,7 +242,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		Args:
 			target_years: 계산할 연도 리스트
 			yearly_temps: 연도별 평균 기온 딕셔너리
-			seed: 재현성을 위한 랜덤 시드
+			seed: 재현성을 위한 랜덤 시드 (None이면 외부 상태 사용)
 
 		Returns:
 			미래 S_tc 배열
@@ -253,7 +253,8 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 				"먼저 initialize_baseline()을 호출하세요."
 			)
 
-		np.random.seed(seed)
+		if seed is not None:
+			np.random.seed(seed)
 
 		simulated_S_tc = []
 
@@ -282,7 +283,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 
 		return np.array(simulated_S_tc)
 
-	def calculate_intensity_indicator(self, collected_data: Dict[str, Any]) -> np.ndarray:
+	def calculate_intensity_indicator(self, collected_data: Dict[str, Any], seed: Optional[int] = None) -> np.ndarray:
 		"""
 		태풍 강도지표 S_tc(t,j) 계산
 		S_tc(t,j) = Σ over all (storm,τ in year t) of w_tc[bin_inst(storm,τ,j)]
@@ -307,6 +308,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 					'site_location': {'lon': float, 'lat': float}
 				}
 			}
+			seed: 랜덤 시드 (None이면 내부에서 설정 안함, 외부 상태 사용)
 
 		Returns:
 			연도별 누적 노출 지수 배열
@@ -337,7 +339,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 			return self._generate_future_S_tc(
 				target_years=target_years,
 				yearly_temps=yearly_temps,
-				seed=42
+				seed=seed
 			)
 
 		# 과거 모드

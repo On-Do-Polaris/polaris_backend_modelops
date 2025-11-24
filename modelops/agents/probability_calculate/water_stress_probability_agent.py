@@ -1,5 +1,5 @@
 '''
-파일명: water_scarcity_probability_agent.py
+파일명: water_stress_probability_agent.py
 최종 수정일: 2025-11-23
 버전: v2
 파일 개요: 물부족 리스크 확률 P(H) 계산 Agent
@@ -19,7 +19,7 @@ import numpy as np
 from .base_probability_agent import BaseProbabilityAgent
 
 
-class WaterScarcityProbabilityAgent(BaseProbabilityAgent):
+class WaterStressProbabilityAgent(BaseProbabilityAgent):
 	"""
 	물부족 리스크 확률 P(H) 계산 Agent
 
@@ -49,7 +49,7 @@ class WaterScarcityProbabilityAgent(BaseProbabilityAgent):
 
 	def __init__(self):
 		"""
-		WaterScarcityProbabilityAgent 초기화
+		WaterStressProbabilityAgent 초기화
 
 		bin 구간 (WRI 기준):
 			- bin1: WSI < 0.2 (낮은 물 스트레스)
@@ -78,7 +78,7 @@ class WaterScarcityProbabilityAgent(BaseProbabilityAgent):
 		]
 
 		super().__init__(
-			risk_type='물부족',
+			risk_type='water_stress',
 			bins=bins,
 			dr_intensity=dr_intensity
 		)

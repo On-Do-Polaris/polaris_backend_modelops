@@ -9,7 +9,17 @@
       "Bash(git push:*)",
       "Bash(dir:*)",
       "Bash(cat:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(Test-Path \"c:\\Users\\Administrator\\Desktop\\backend_aiops\\.env\")",
+      "Bash(if [ -f \"c:\\Users\\Administrator\\Desktop\\backend_aiops\\.env\" ])",
+      "Bash(then echo \"exists\")",
+      "Bash(else echo \"not exists\")",
+      "Bash(fi)",
+      "Bash(export DW_HOST=localhost)",
+      "Bash(export DW_PORT=5433)",
+      "Bash(export DW_NAME=skala_datawarehouse)",
+      "Bash(export DW_USER=skala_dw_user)",
+      "Bash(export DW_PASSWORD=1234)"
     ],
     "deny": [],
     "ask": []

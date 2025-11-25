@@ -3,11 +3,11 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    # Database
+    # Database (Data Warehouse - Primary DB for climate data)
     database_host: str = "localhost"
-    database_port: int = 5432
-    database_name: str = "climate_risk_db"
-    database_user: str = "postgres"
+    database_port: int = 5433
+    database_name: str = "skala_datawarehouse"
+    database_user: str = "skala_dw_user"
     database_password: str = ""
 
     # Scheduler

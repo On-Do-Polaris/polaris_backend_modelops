@@ -106,6 +106,13 @@ def load_hdf_to_postgres(hdf_path, table_name, data_source, obs_date, append=Fal
         if logger:
             logger.info(f"      Found {len(subdatasets)} subdataset(s)")
 
+        # Check SAMPLE_LIMIT for subdatasets
+        sample_limit = int(os.environ.get("SAMPLE_LIMIT", 0))
+        if sample_limit > 0 and len(subdatasets) > sample_limit:
+            if logger:
+                logger.info(f"      ⚠️  샘플 모드: {sample_limit}개 subdataset만 로딩합니다")
+            subdatasets = subdatasets[:sample_limit]
+
         # Load each subdataset
         for idx, subdataset in enumerate(subdatasets):
             try:

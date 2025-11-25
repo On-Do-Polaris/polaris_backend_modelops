@@ -188,26 +188,18 @@ def load_all_ssp_scenarios(
     logger.info(f"   Time range: {len(time_values)} years")
     logger.info(f"   Grid size: {len(j_coords)} x {len(i_coords)}")
 
-    # SSP scenario_id 매핑
-    ssp_scenario_map = {
-        'ssp1': 1,  # SSP126
-        'ssp2': 2,  # SSP245
-        'ssp3': 3,  # SSP370
-        'ssp5': 4   # SSP585
-    }
-
-    # Prepare insert SQL (정규화된 형태: 각 SSP별로 별도 row)
+    # Prepare insert SQL (Wide Format: 한 행에 4개 SSP 컬럼)
     insert_sql = """
     INSERT INTO sea_level_data (
-        scenario_id, grid_id, year, value
-    ) VALUES (%s, %s, %s, %s)
+        year, grid_id, ssp1, ssp2, ssp3, ssp5
+    ) VALUES (%s, %s, %s, %s, %s, %s)
     """
 
     success_count = 0
     cursor = conn.cursor()
 
     # Insert data
-    logger.info("   💾 Inserting data...")
+    logger.info("   💾 Inserting data (Wide Format)...")
 
     for t_idx in tqdm(range(len(time_values)), desc="   Processing time steps"):
         # 샘플 모드: limit 도달 시 종료
@@ -216,7 +208,6 @@ def load_all_ssp_scenarios(
             break
 
         year = int(str(time_values[t_idx])[:4])
-        time_date = date(year, 1, 1)
 
         for j_idx, j in enumerate(j_coords):
             # 샘플 모드: limit 도달 시 종료
@@ -227,6 +218,7 @@ def load_all_ssp_scenarios(
                 # 샘플 모드: limit 도달 시 종료
                 if sample_limit > 0 and success_count >= sample_limit:
                     break
+
                 # Get lat/lon for this grid point from first dataset
                 lat_val = float(list(ssp_data.values())[0]['latitude'][j_idx, i_idx])
                 lon_val = float(list(ssp_data.values())[0]['longitude'][j_idx, i_idx])
@@ -236,30 +228,32 @@ def load_all_ssp_scenarios(
                 if not grid_id:
                     continue
 
-                # 각 SSP 시나리오별로 별도의 row 삽입
-                for ssp_col, data_dict in ssp_data.items():
-                    val = float(data_dict['data'][t_idx, j_idx, i_idx])
+                # Extract all 4 SSP values for this (time, grid) point
+                ssp1_val = float(ssp_data['ssp1']['data'][t_idx, j_idx, i_idx]) if 'ssp1' in ssp_data else None
+                ssp2_val = float(ssp_data['ssp2']['data'][t_idx, j_idx, i_idx]) if 'ssp2' in ssp_data else None
+                ssp3_val = float(ssp_data['ssp3']['data'][t_idx, j_idx, i_idx]) if 'ssp3' in ssp_data else None
+                ssp5_val = float(ssp_data['ssp5']['data'][t_idx, j_idx, i_idx]) if 'ssp5' in ssp_data else None
 
-                    # Skip NaN values
-                    if np.isnan(val):
-                        continue
+                # Convert NaN to None for SQL NULL
+                ssp1_val = None if ssp1_val is not None and np.isnan(ssp1_val) else ssp1_val
+                ssp2_val = None if ssp2_val is not None and np.isnan(ssp2_val) else ssp2_val
+                ssp3_val = None if ssp3_val is not None and np.isnan(ssp3_val) else ssp3_val
+                ssp5_val = None if ssp5_val is not None and np.isnan(ssp5_val) else ssp5_val
 
-                    scenario_id = ssp_scenario_map.get(ssp_col)
-                    if not scenario_id:
-                        continue
+                # Skip if all values are None
+                if all(v is None for v in [ssp1_val, ssp2_val, ssp3_val, ssp5_val]):
+                    continue
 
-                    # Insert one row per SSP scenario
-                    cursor.execute(insert_sql, (
-                        scenario_id,
-                        grid_id,
-                        year,
-                        val
-                    ))
-                    success_count += 1
-
-                    # 샘플 모드: limit 도달 시 종료
-                    if sample_limit > 0 and success_count >= sample_limit:
-                        break
+                # Insert one row with all 4 SSP columns (Wide Format)
+                cursor.execute(insert_sql, (
+                    year,
+                    grid_id,
+                    ssp1_val,
+                    ssp2_val,
+                    ssp3_val,
+                    ssp5_val
+                ))
+                success_count += 1
 
         # Commit periodically
         if (t_idx + 1) % 10 == 0:
@@ -268,7 +262,7 @@ def load_all_ssp_scenarios(
     conn.commit()
     cursor.close()
 
-    logger.info(f"   ✅ Loaded {success_count} records")
+    logger.info(f"   ✅ Loaded {success_count} records (Wide Format: 4 SSP columns per row)")
 
 
 def load_all_sea_level_data() -> None:
@@ -289,12 +283,20 @@ def load_all_sea_level_data() -> None:
         sys.exit(1)
 
     data_dir = get_data_dir()
+
+    # Try both possible locations for sea level data
     slr_dir = data_dir / "KMA" / "sea_level_rise"
+    if not slr_dir.exists():
+        slr_dir = data_dir / "sea_level_rise"
 
     if not slr_dir.exists():
         logger.error(f"❌ Directory not found: {slr_dir}")
+        logger.error(f"   Tried: {data_dir / 'KMA' / 'sea_level_rise'}")
+        logger.error(f"   Tried: {data_dir / 'sea_level_rise'}")
         conn.close()
         sys.exit(1)
+
+    logger.info(f"📂 Using data from: {slr_dir}")
 
     try:
         # Find a NetCDF file to extract grid coordinates

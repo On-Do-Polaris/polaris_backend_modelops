@@ -1,0 +1,66 @@
+{
+  "location": {
+    "lat": 37.5172,
+    "lon": 127.0473,
+    "region": "서울특별시 강남구 개포동"
+  },
+  "year": 2030,
+  "scenario": "SSP126",
+  "components": {
+    "H_norm": 0.341,
+    "E_heat": 0.2240178605966685,
+    "V_building": 0.5383333333333333,
+    "V_hospital": 0.016006672081868296,
+    "V_heat": 0.27717000270760084
+  },
+  "risk_scores": {
+    "multiplicative": 0.021173041580592182,
+    "weighted": 0.08545253069337792,
+    "final": 0.08545253069337792
+  },
+  "risk_level": "낮음 (Low)",
+  "data_sources": {
+    "hazard": "SSP126_extreme_heat_gridded.nc",
+    "exposure": "ME_GROUNDCOVERAGE_50000 (토지피복도)",
+    "vulnerability_hospital": "병원 API",
+    "vulnerability_building": "건축물 API"
+  },
+  "details": {
+    "exposure": {
+      "lat": 37.5172,
+      "lon": 127.0473,
+      "buffer_m": 1000,
+      "total_pixels": 3488,
+      "imperv_ratio": 0.0,
+      "green_ratio": 0.8276949541284404,
+      "water_ratio": 0.026376146788990827,
+      "elevation_mean": 41.510479747199085,
+      "E_imperv": 0.0,
+      "E_greenlack": 0.1723050458715596,
+      "E_elevation": 0.861631734176003,
+      "E_heat": 0.2240178605966685
+    },
+    "hospital": {
+      "lat": 37.5172,
+      "lon": 127.0473,
+      "nearest_hospital": {
+        "name": "강남성심한의원",
+        "address": "서울특별시 강남구 학동로 421, 205호 (청담동, 원영빌딩)",
+        "lat": 37.5183883392,
+        "lon": 127.0462740509,
+        "distance_km": 0.16006672081868295
+      },
+      "V_hospital": 0.016006672081868296,
+      "total_hospitals_checked": 100
+    },
+    "building": {
+      "sigungu_cd": "11680",
+      "bjdong_cd": "10300",
+      "building_age_mean": 32.3,
+      "building_age_min": 32,
+      "building_age_max": 33,
+      "V_building": 0.5383333333333333,
+      "total_buildings_checked": 10
+    }
+  }
+}

@@ -1,0 +1,114 @@
+////
+//// DBML for Local Geospatial Data Storage
+////
+//// This schema is based on the guide '로컬데이터 저장 팁.md' and focuses exclusively
+//// on tables required to store and manage local data files like TIF, SHP, HDF, and H5.
+////
+
+Project "Local Geospatial Data" {
+  database_type: 'PostgreSQL'
+  Note: 'Schema for storing large, local geospatial raster and vector data using PostGIS.'
+}
+
+// =================================================================================
+// 1. Core Analysis & Metadata Tables
+// =================================================================================
+
+Table site_locations {
+  site_id integer [pk, increment]
+  site_name varchar
+  geom geometry(Point, 4326) [not null]
+  address text
+  
+  Note: 'Central table for analysis locations, linking various data types.'
+}
+
+Table raster_metadata {
+  raster_id integer [pk, increment]
+  raster_type varchar [not null, note: 'Type of raster data, e.g., DEM, LAND_COVER, NDVI, SOIL_MOISTURE']
+  description text
+  source_file text [note: 'Original file name, e.g., seoul_dem_merged.tif']
+  acquisition_date date
+  resolution_m float
+  srid integer [note: 'EPSG code of the raster data, e.g., 5179']
+  postgis_table_name varchar [unique, not null, note: 'The physical PostGIS table storing the tiles (e.g., dem_tiles)']
+  
+  Note: 'A central catalog for all local raster datasets. This table points to the actual PostGIS raster tile tables.'
+}
+
+
+// =================================================================================
+// 2. Physical PostGIS Table Definitions (as described in the guide)
+// =================================================================================
+
+Table dem_tiles {
+  rid integer [pk, increment, note: 'Raster ID for each tile']
+  raster_id integer [ref: > raster_metadata.raster_id]
+  rast raster [not null, note: 'The PostGIS raster tile data itself']
+  tile_x integer
+  tile_y integer
+  
+  indexes {
+    (rast) [type: gist, name: 'dem_tiles_rast_gist_idx']
+  }
+  
+  Note: 'Stores tiled DEM (Digital Elevation Model) data. This table name should match an entry in raster_metadata.postgis_table_name.'
+}
+
+Table landcover_tiles {
+  rid integer [pk, increment]
+  raster_id integer [ref: > raster_metadata.raster_id]
+  rast raster [not null]
+  tile_x integer
+  tile_y integer
+  
+  indexes {
+    (rast) [type: gist, name: 'landcover_tiles_rast_gist_idx']
+  }
+  
+  Note: 'Stores tiled Land Cover data.'
+}
+
+Table soil_moisture_tiles {
+  rid integer [pk, increment]
+  raster_id integer [ref: > raster_metadata.raster_id]
+  rast raster [not null]
+  measurement_date date
+  soil_depth_cm integer
+  tile_x integer
+  tile_y integer
+  
+  indexes {
+    (rast) [type: gist, name: 'soil_moisture_tiles_rast_gist_idx']
+  }
+  
+  Note: 'Stores tiled Soil Moisture (SMAP) data, converted from H5.'
+}
+
+Table ndvi_tiles {
+  rid integer [pk, increment]
+  raster_id integer [ref: > raster_metadata.raster_id]
+  rast raster [not null]
+  quality_flag integer
+  tile_x integer
+  tile_y integer
+  
+  indexes {
+    (rast) [type: gist, name: 'ndvi_tiles_rast_gist_idx']
+  }
+  
+  Note: 'Stores tiled NDVI (Vegetation Index) data, converted from HDF.'
+}
+
+Table coastline_data {
+  gid integer [pk, increment]
+  geom geometry(MultiLineString, 4326) [not null]
+  region_name varchar
+  coast_length_km float
+  
+  indexes {
+    (geom) [type: gist]
+  }
+  
+  Note: 'Stores vector data for coastlines, loaded from a SHP file.'
+}

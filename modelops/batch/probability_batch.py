@@ -108,8 +108,8 @@ class ProbabilityBatchProcessor:
                 try:
                     result = agent.calculate_probability(climate_data)
                     probabilities[risk_type] = {
-                        'probability': result.get('probability'),
-                        'bin_data': result.get('bin_data')
+                        'aal': result.get('aal'),  # AAL (Annual Average Loss)
+                        'bin_data': result.get('calculation_details', {}).get('bins')  # bin별 상세 정보
                     }
                 except Exception as e:
                     logger.error(f"Risk {risk_type} failed for grid ({latitude}, {longitude}): {str(e)}")
@@ -149,8 +149,8 @@ class ProbabilityBatchProcessor:
                     'latitude': coordinate['latitude'],
                     'longitude': coordinate['longitude'],
                     'risk_type': risk_type,
-                    'probability': data.get('probability'),
-                    'bin_data': data.get('bin_data')
+                    'aal': data.get('aal'),  # AAL (연간 평균 손실률)
+                    'bin_data': data.get('bin_data')  # bin별 확률 및 손상률
                 })
 
         if results:

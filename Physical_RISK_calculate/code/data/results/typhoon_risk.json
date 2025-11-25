@@ -1,0 +1,43 @@
+{
+  "location": {
+    "lat": 37.5172,
+    "lon": 127.0473,
+    "region": "서울특별시 강남구 개포동"
+  },
+  "year": 2030,
+  "scenario": "SSP126",
+  "components": {
+    "H_norm": 0.044,
+    "E_typhoon": 0.5793561573047922,
+    "V_building": 0.5383333333333333,
+    "V_emergency": 0.016006672081868296,
+    "V_typhoon": 0.3294026688327473
+  },
+  "risk_scores": {
+    "weighted": 0.019992694175025867,
+    "final": 0.019992694175025867
+  },
+  "risk_level": "낮음 (Low)",
+  "data_sources": {
+    "hazard": "IPCC AR6 + Knutson (2020) 시나리오 기반",
+    "exposure": "ME_GROUNDCOVERAGE_50000 (토지피복도) + DEM",
+    "vulnerability": "건축물 API + 병원 API"
+  },
+  "details": {
+    "exposure": {
+      "lat": 37.5172,
+      "lon": 127.0473,
+      "buffer_m": 1000,
+      "total_pixels": 3488,
+      "urban_ratio": 0.0,
+      "open_ratio": 0.9200114678899083,
+      "forest_ratio": 0.053612385321100915,
+      "elevation_mean": 41.510479747199085,
+      "E_open_exposure": 0.9200114678899083,
+      "E_forest_protection": 0.9463876146788991,
+      "E_urban_density": 0.0,
+      "E_elevation": 0.13836826582399694,
+      "E_typhoon": 0.5793561573047922
+    }
+  }
+}

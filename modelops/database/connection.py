@@ -62,7 +62,17 @@ class DatabaseConnection:
 
     @staticmethod
     def save_probability_results(results: List[Dict[str, Any]]) -> None:
-        """P(H) 계산 결과 저장"""
+        """
+        P(H) 계산 결과 저장
+
+        Args:
+            results: 저장할 결과 리스트
+                - latitude: 위도
+                - longitude: 경도
+                - risk_type: 리스크 타입
+                - aal: AAL (Annual Average Loss) = Σ(P[i] × DR[i])
+                - bin_data: bin별 상세 정보 (확률, 손상률, 범위)
+        """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
@@ -70,7 +80,7 @@ class DatabaseConnection:
                     INSERT INTO probability_results
                     (latitude, longitude, risk_type, probability, bin_data, calculated_at)
                     VALUES (%(latitude)s, %(longitude)s, %(risk_type)s,
-                            %(probability)s, %(bin_data)s, NOW())
+                            %(aal)s, %(bin_data)s::jsonb, NOW())
                     ON CONFLICT (latitude, longitude, risk_type)
                     DO UPDATE SET
                         probability = EXCLUDED.probability,

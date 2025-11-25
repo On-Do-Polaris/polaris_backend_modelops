@@ -1,0 +1,15 @@
+{
+  "location": {
+    "lat": 36.3741,
+    "lon": 127.3838
+  },
+  "components": {
+    "H_norm": 49.0,
+    "E_inland_flood": 56.578947368421055,
+    "V_inland_flood": 82.0
+  },
+  "risk_scores": {
+    "final": 60.28157894736842
+  },
+  "risk_level": "계산 완료"
+}

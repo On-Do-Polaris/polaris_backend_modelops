@@ -1,13 +1,13 @@
 import logging
 import signal
 import sys
-from aiops.batch.probability_scheduler import ProbabilityScheduler
-from aiops.batch.hazard_scheduler import HazardScheduler
-from aiops.batch.probability_batch import ProbabilityBatchProcessor
-from aiops.batch.hazard_batch import HazardBatchProcessor
-from aiops.triggers.notify_listener import NotifyListener
-from aiops.database.connection import DatabaseConnection
-from aiops.config.settings import settings
+from modelops.batch.probability_scheduler import ProbabilityScheduler
+from modelops.batch.hazard_scheduler import HazardScheduler
+from modelops.batch.probability_batch import ProbabilityBatchProcessor
+from modelops.batch.hazard_batch import HazardBatchProcessor
+from modelops.triggers.notify_listener import NotifyListener
+from modelops.database.connection import DatabaseConnection
+from modelops.config.settings import settings
 
 logging.basicConfig(
     level=logging.INFO,

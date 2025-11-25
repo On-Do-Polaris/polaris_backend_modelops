@@ -1,0 +1,348 @@
+// 기후 시나리오 데이터베이스 스키마
+// SSP 시나리오 4개: SSP1-2.6, SSP2-4.5, SSP3-7.0, SSP5-8.5
+// 변수별 테이블 분리 (15개 테이블)
+
+// ========================================
+// 메타데이터 테이블
+// ========================================
+
+Table scenario {
+  scenario_id smallint [pk, increment, note: '시나리오 ID']
+  scenario_code varchar(20) [unique, not null, note: 'SSP1-2.6, SSP2-4.5 등']
+  scenario_type varchar(10) [not null, note: 'SSP']
+  description text [note: '시나리오 설명']
+  rcp_value numeric(4,1) [note: '2.6, 4.5, 7.0, 8.5']
+  created_at timestamptz [default: `now()`]
+  
+  Note: '기후 시나리오 마스터 테이블 (4개 SSP 시나리오)'
+}
+
+Table location_admin {
+  admin_id serial [pk, increment, note: '행정구역 ID']
+  admin_code varchar(10) [unique, not null, note: '행정구역 코드 (11010 등)']
+  admin_name varchar(100) [not null, note: '행정구역명']
+  sido_code varchar(2) [note: '시도 코드']
+  sigungu_code varchar(5) [note: '시군구 코드']
+  level smallint [note: '행정구역 레벨 (1:시도, 2:시군구)']
+  geom geometry [note: 'PostGIS MULTIPOLYGON (EPSG:5174)']
+  centroid geometry [note: 'PostGIS POINT (중심점)']
+  created_at timestamptz [default: `now()`]
+  
+  Note: '행정구역 위치 정보 (약 260개)'
+  
+  indexes {
+    admin_code [name: 'idx_admin_code']
+  }
+}
+
+Table location_grid {
+  grid_id serial [pk, increment, note: '격자점 ID']
+  grid_x smallint [not null, note: '격자 X 좌표 (0~449)']
+  grid_y smallint [not null, note: '격자 Y 좌표 (0~399)']
+  geom geometry [note: 'PostGIS POINT (EPSG:5174)']
+  lon numeric(9,6) [note: 'WGS84 경도']
+  lat numeric(8,6) [note: 'WGS84 위도']
+  created_at timestamptz [default: `now()`]
+  
+  Note: '격자점 위치 정보 (약 180,000개)'
+  
+  indexes {
+    (grid_x, grid_y) [unique, name: 'idx_grid_xy']
+  }
+}
+
+Table variable_metadata {
+  variable_code varchar(20) [pk, note: '변수 코드 (TAMAX, RN 등)']
+  variable_name varchar(100) [not null, note: '변수명 (한글)']
+  table_name varchar(50) [not null, note: '데이터 테이블명']
+  unit varchar(20) [note: '단위 (°C, mm, m/s 등)']
+  description text [note: '변수 설명']
+  time_resolution varchar(10) [note: 'Daily, Monthly, Yearly']
+  spatial_type varchar(10) [note: 'admin, grid']
+  risk_category varchar(100) [note: '관련 리스크']
+  source varchar(50) [note: '데이터 출처']
+  created_at timestamptz [default: `now()`]
+  
+  Note: '변수 메타데이터 (15개 변수)'
+}
+
+
+// ========================================
+// 기후 데이터 테이블 (변수별 15개)
+// ========================================
+
+Table tamax_data {
+  time date [not null, note: '시간 (Daily)']
+  admin_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '최고기온 (Daily, admin형)'
+  
+  indexes {
+    (time, admin_id) [pk, name: 'pk_tamax_data']
+    admin_id [name: 'idx_tamax_admin_id']
+    time [name: 'idx_tamax_time']
+  }
+}
+
+Table tamin_data {
+  time date [not null, note: '시간 (Daily)']
+  admin_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '최저기온 (Daily, admin형)'
+  
+  indexes {
+    (time, admin_id) [pk, name: 'pk_tamin_data']
+    admin_id [name: 'idx_tamin_admin_id']
+    time [name: 'idx_tamin_time']
+  }
+}
+
+Table rn_data {
+  time date [not null, note: '시간 (Monthly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '강수량 (Monthly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_rn_data']
+    grid_id [name: 'idx_rn_grid_id']
+    time [name: 'idx_rn_time']
+  }
+}
+
+Table ws_data {
+  time date [not null, note: '시간 (Monthly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '평균풍속 (Monthly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_ws_data']
+    grid_id [name: 'idx_ws_grid_id']
+    time [name: 'idx_ws_time']
+  }
+}
+
+Table ta_data {
+  time date [not null, note: '시간 (Monthly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '평균기온 (Monthly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_ta_data']
+    grid_id [name: 'idx_ta_grid_id']
+    time [name: 'idx_ta_time']
+  }
+}
+
+Table rhm_data {
+  time date [not null, note: '시간 (Monthly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '상대습도 (Monthly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_rhm_data']
+    grid_id [name: 'idx_rhm_grid_id']
+    time [name: 'idx_rhm_time']
+  }
+}
+
+Table si_data {
+  time date [not null, note: '시간 (Monthly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '일사량 (Monthly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_si_data']
+    grid_id [name: 'idx_si_grid_id']
+    time [name: 'idx_si_time']
+  }
+}
+
+Table csdi_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '한랭야 계속기간 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_csdi_data']
+    grid_id [name: 'idx_csdi_grid_id']
+    time [name: 'idx_csdi_time']
+  }
+}
+
+Table wsdi_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '온난일 계속기간 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_wsdi_data']
+    grid_id [name: 'idx_wsdi_grid_id']
+    time [name: 'idx_wsdi_time']
+  }
+}
+
+Table rx1day_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '1일 최다강수량 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_rx1day_data']
+    grid_id [name: 'idx_rx1day_grid_id']
+    time [name: 'idx_rx1day_time']
+  }
+}
+
+Table rain80_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '호우일수 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_rain80_data']
+    grid_id [name: 'idx_rain80_grid_id']
+    time [name: 'idx_rain80_time']
+  }
+}
+
+Table spei12_data {
+  time date [not null, note: '시간 (Monthly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: 'SPEI(12개월) (Monthly, admin형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_spei12_data']
+    grid_id [name: 'idx_spei12_admin_id']
+    time [name: 'idx_spei12_time']
+  }
+}
+
+Table rx5day_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '5일최다강수량 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_rx5day_data']
+    grid_id [name: 'idx_rx5day_grid_id']
+    time [name: 'idx_rx5day_time']
+  }
+}
+
+Table cdd_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '최대무강수 지속기간 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_cdd_data']
+    grid_id [name: 'idx_cdd_grid_id']
+    time [name: 'idx_cdd_time']
+  }
+}
+
+Table sdii_data {
+  time date [not null, note: '시간 (Yearly)']
+  grid_id integer [not null, note: '위치 ID']
+  ssp1 real [note: 'SSP1-2.6 시나리오 값']
+  ssp2 real [note: 'SSP2-4.5 시나리오 값']
+  ssp3 real [note: 'SSP3-7.0 시나리오 값']
+  ssp5 real [note: 'SSP5-8.5 시나리오 값']
+  
+  Note: '강수강도 (Yearly, grid형)'
+  
+  indexes {
+    (time, grid_id) [pk, name: 'pk_sdii_data']
+    grid_id [name: 'idx_sdii_grid_id']
+    time [name: 'idx_sdii_time']
+  }
+}
+
+
+// ========================================
+// 테이블 관계
+// ========================================
+
+Ref: location_admin.admin_id < tamax_data.admin_id
+Ref: location_admin.admin_id < tamin_data.admin_id
+Ref: location_grid.grid_id < rn_data.grid_id
+Ref: location_grid.grid_id < ws_data.grid_id
+Ref: location_grid.grid_id < ta_data.grid_id
+Ref: location_grid.grid_id < rhm_data.grid_id
+Ref: location_grid.grid_id < si_data.grid_id
+Ref: location_grid.grid_id < csdi_data.grid_id
+Ref: location_grid.grid_id < wsdi_data.grid_id
+Ref: location_grid.grid_id < rx1day_data.grid_id
+Ref: location_grid.grid_id < rain80_data.grid_id
+Ref: location_grid.grid_id < spei12_data.grid_id
+Ref: location_grid.grid_id < rx5day_data.grid_id
+Ref: location_grid.grid_id < cdd_data.grid_id
+Ref: location_grid.grid_id < sdii_data.grid_id

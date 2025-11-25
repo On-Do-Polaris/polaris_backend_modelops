@@ -7,10 +7,16 @@ SKALA Physical Risk AI System - 데이터베이스 설정
 """
 
 import os
+from pathlib import Path
 from typing import Literal
 
 import psycopg2
 from psycopg2.extensions import connection as Connection
+from dotenv import load_dotenv
+
+# .env 파일 로드 (프로젝트 루트에서)
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
 
 DatabaseType = Literal["datawarehouse", "application", "legacy"]
 

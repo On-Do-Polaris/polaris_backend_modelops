@@ -481,37 +481,63 @@ python scripts/load_monthly_grid_data.py
 
 ### 필수 환경 변수
 
-`.env` 파일에 다음 변수 설정:
+**중요**: 이 프로젝트는 **`.env` 파일에서만** 환경변수를 로드합니다. 시스템 환경변수를 사용하지 마세요.
+
+`.env` 파일 생성:
 
 ```bash
-# Application Database (결과 저장)
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_NAME=skala_application
-DATABASE_USER=skala_app_user
-DATABASE_PASSWORD=<your_password>
-
-# Datawarehouse (기후 데이터 조회)
+# Data Warehouse Configuration (Primary DB for climate data)
 DW_HOST=localhost
 DW_PORT=5433
 DW_NAME=skala_datawarehouse
 DW_USER=skala_dw_user
-DW_PASSWORD=<your_password>
+DW_PASSWORD=1234
 
-# Scheduler
-PROBABILITY_SCHEDULE_MONTH=1    # 매년 1월
-PROBABILITY_SCHEDULE_DAY=1      # 1일
-PROBABILITY_SCHEDULE_HOUR=2     # 02:00
+# Application Database Configuration (For Spring Boot - user/site data)
+APP_HOST=localhost
+APP_PORT=5432
+APP_NAME=skala_application
+APP_USER=skala_app_user
+APP_PASSWORD=your_password
+
+# Database Configuration (Legacy - for backward compatibility)
+DATABASE_HOST=localhost
+DATABASE_PORT=5433
+DATABASE_NAME=skala_datawarehouse
+DATABASE_USER=skala_dw_user
+DATABASE_PASSWORD=1234
+
+# Scheduler Configuration
+PROBABILITY_SCHEDULE_MONTH=1
+PROBABILITY_SCHEDULE_DAY=1
+PROBABILITY_SCHEDULE_HOUR=2
 PROBABILITY_SCHEDULE_MINUTE=0
 
-HAZARD_SCHEDULE_MONTH=1         # 매년 1월
-HAZARD_SCHEDULE_DAY=1           # 1일
-HAZARD_SCHEDULE_HOUR=4          # 04:00
+HAZARD_SCHEDULE_MONTH=1
+HAZARD_SCHEDULE_DAY=1
+HAZARD_SCHEDULE_HOUR=4
 HAZARD_SCHEDULE_MINUTE=0
 
-# Performance
-PARALLEL_WORKERS=4              # 병렬 워커 수 (CPU 코어 수에 맞춰 조정)
+# Batch Processing Configuration
+PARALLEL_WORKERS=4
+BATCH_SIZE=1000
+
+# PostgreSQL LISTEN/NOTIFY
+NOTIFY_CHANNEL=aiops_trigger
 ```
+
+### 시스템 환경변수 제거 (선택사항)
+
+시스템에 DB 관련 환경변수가 설정되어 있다면, 혼란을 방지하기 위해 제거하는 것을 권장합니다:
+
+```powershell
+# PowerShell 스크립트 실행
+.\clear_system_env_vars.ps1
+```
+
+또는 수동으로 제거:
+- Windows: 시스템 속성 → 환경변수 → 사용자/시스템 변수에서 `DW_*`, `APP_*`, `DATABASE_*` 제거
+- Linux/Mac: `~/.bashrc` 또는 `~/.zshrc`에서 관련 export 구문 제거
 
 ---
 

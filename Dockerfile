@@ -23,7 +23,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY main.py .
-COPY aiops/ ./aiops/
+COPY modelops/ ./modelops/
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser && \

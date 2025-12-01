@@ -73,6 +73,7 @@ class BaseProbabilityAgent(ABC):
 
 		Returns:
 			확률 계산 결과 딕셔너리
+				- aal: 연간 평균 손실률 (Annual Average Loss)
 				- bin_probabilities: bin별 발생확률 P_r[i]
 				- bin_base_damage_rates: bin별 기본 손상률 DR_intensity_r[i]
 				- calculation_details: 계산 상세 내역
@@ -87,8 +88,12 @@ class BaseProbabilityAgent(ABC):
 			# 2. bin 분류 및 발생확률 P_r[i] 계산
 			bin_probabilities = self._calculate_bin_probabilities(intensity_values)
 
+			# 3. AAL 계산: Σ(P[i] × DR[i])
+			aal = self._calculate_aal(bin_probabilities, self.dr_intensity)
+
 			result = {
 				'risk_type': self.risk_type,
+				'aal': round(aal, 6),
 				'bin_probabilities': [round(p, 4) for p in bin_probabilities],
 				'bin_base_damage_rates': [round(dr, 4) for dr in self.dr_intensity],
 				'calculation_details': self._get_calculation_details(
@@ -100,7 +105,7 @@ class BaseProbabilityAgent(ABC):
 
 			self.logger.info(
 				f"{self.risk_type} 확률 계산 완료: "
-				f"P_r[i]={bin_probabilities}"
+				f"AAL={aal:.6f}, P_r[i]={bin_probabilities}"
 			)
 
 			return result
@@ -230,6 +235,26 @@ class BaseProbabilityAgent(ABC):
 			probabilities.append(prob)
 
 		return probabilities
+
+	def _calculate_aal(
+		self,
+		bin_probabilities: List[float],
+		damage_rates: List[float]
+	) -> float:
+		"""
+		AAL (Annual Average Loss) 계산
+
+		AAL = Σ(P[i] × DR[i])
+
+		Args:
+			bin_probabilities: bin별 발생확률
+			damage_rates: bin별 기본 손상률
+
+		Returns:
+			연간 평균 손실률 (0~1 범위)
+		"""
+		aal = sum(p * dr for p, dr in zip(bin_probabilities, damage_rates))
+		return aal
 
 	def _get_calculation_details(
 		self,

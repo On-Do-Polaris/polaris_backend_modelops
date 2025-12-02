@@ -19,7 +19,10 @@
       "Bash(export DW_PORT=5433)",
       "Bash(export DW_NAME=skala_datawarehouse)",
       "Bash(export DW_USER=skala_dw_user)",
-      "Bash(export DW_PASSWORD=1234)"
+      "Bash(export DW_PASSWORD=1234)",
+      "Bash(copy:*)",
+      "Bash(copy hazard_batch.py hazard_batch.py.backup)",
+      "Bash(pip install:*)"
     ],
     "deny": [],
     "ask": []

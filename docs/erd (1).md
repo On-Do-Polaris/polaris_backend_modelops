@@ -1,7 +1,7 @@
 # SKALA Physical Risk AI - 통합 ERD
 
 > 최종 수정일: 2025-12-03
-> 버전: v05 (Application DB 8개 테이블 생성 완료)
+> 버전: v07 (인구 전망 + 지역별 재해연보 반영)
 
 ---
 
@@ -26,10 +26,10 @@ SKALA Physical Risk AI 시스템은 **2개의 분리된 데이터베이스**를 
 | Climate Data | 17개 | **Local ETL** | 기후 데이터 (SSP 시나리오별) |
 | Raw Raster | 3개 | **Local ETL** | DEM, 가뭄, 토지피복도 래스터 |
 | Reference Data | 3개 | **Local ETL** | 기상관측소, 물스트레스 순위 |
-| Site Energy | 2개 | **Local ETL** | 사업장 에너지 사용량 |
-| ModelOPS | 2개 | **서비스 생성** | P(H), Hazard Score 결과 |
+| Site Additional | 2개 | **Local ETL / API** | 사업장 추가 데이터 + 배치 작업 |
+| ModelOPS | 5개 | **서비스 생성** | H × E × V 계산 결과 |
 | API Cache | 11개 | **OpenAPI ETL** | 외부 API 캐시 |
-| **합계** | **41개** | | |
+| **합계** | **44개** | | |
 
 ### 1.1.1 데이터 소스별 테이블 분류
 
@@ -42,7 +42,7 @@ Climate Data (17개):   tamax_data, tamin_data, ta_data, rn_data, ws_data,
                        sdii_data, ta_yearly_data, sea_level_data
 Raw Raster (3개):      raw_dem, raw_drought, raw_landcover
 Reference Data (3개):  weather_stations, grid_station_mappings, water_stress_rankings
-Site Energy (2개):     site_dc_power_usage, site_campus_energy_usage
+Site Additional (2개): site_additional_data, batch_jobs
 ```
 
 #### OpenAPI ETL (11개 테이블) - 외부 API 적재
@@ -54,9 +54,10 @@ API Cache (11개):      api_buildings, api_wamis, api_wamis_stations,
                        api_vworld_geocode
 ```
 
-#### 서비스 생성 (2개 테이블) - ModelOPS 계산 결과
+#### 서비스 생성 (5개 테이블) - ModelOPS 계산 결과
 ```
-ModelOPS (2개):        probability_results, hazard_results
+ModelOPS (5개):        probability_results, hazard_results, exposure_results,
+                       vulnerability_results, aal_scaled_results
 ```
 
 ---
@@ -85,9 +86,22 @@ ModelOPS (2개):        probability_results, hazard_results
 | geom | GEOMETRY | MULTIPOLYGON EPSG:5174 | 공간 조인 (ST_Contains) |
 | centroid | GEOMETRY | POINT EPSG:5174 | 대표점 좌표 |
 | population_2020 | INTEGER | 2020년 인구 | Exposure 계산 |
+| population_2025 | INTEGER | 2025년 추정 인구 | 인구 전망 |
+| population_2030 | INTEGER | 2030년 추정 인구 | 인구 전망 |
+| population_2035 | INTEGER | 2035년 추정 인구 | 인구 전망 |
+| population_2040 | INTEGER | 2040년 추정 인구 | 인구 전망 |
+| population_2045 | INTEGER | 2045년 추정 인구 | 인구 전망 |
 | population_2050 | INTEGER | 2050년 인구 | 미래 Exposure 계산 |
+| population_change_2020_2050 | INTEGER | 2020-2050 순증감 (명) | 보고서용 |
+| population_change_rate_percent | NUMERIC(5,2) | 2020-2050 증감률 (%) | 보고서용 |
 
 **예상 데이터 규모:** 5,259 rows (5,007 읍면동 + 252 시군구)
+
+**보고서 활용 예시:**
+```
+"대상 지역은 2020년 인구 xxx명에서 2050년 xxx명으로
+[xx% 증가/감소]할 것으로 예상되는 [인구 증가/감소 지역]입니다."
+```
 
 ---
 
@@ -202,9 +216,11 @@ ModelOPS (2개):        probability_results, hazard_results
 
 ---
 
-### 1.4 ModelOPS Tables (2개)
+### 1.4 ModelOPS Tables (5개)
 
-ModelOPS가 기후 데이터 기반으로 계산한 P(H) 확률 및 Hazard Score 결과를 저장합니다.
+ModelOPS가 H × E × V = Risk 공식에 따라 계산한 결과를 저장합니다.
+
+> ⚠️ **변경 이력 (2025-12-03)**: probability_results 테이블 컬럼 수정 (probability → aal, bin_probabilities), 3개 테이블 추가 (exposure_results, vulnerability_results, aal_scaled_results)
 
 **위험 유형 (risk_type) 9가지:**
 1. `coastal_flood` - 해안 홍수 (해수면 상승, 폭풍 해일)
@@ -232,8 +248,10 @@ ModelOPS가 기후 데이터 기반으로 계산한 P(H) 확률 및 Hazard Score
 | latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 (location_grid와 조인) |
 | longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 |
 | risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 위험 종류 구분 |
-| probability | REAL | P(H) 확률값 (0.0~1.0) | 위험 발생 확률 |
-| bin_data | JSONB | 히스토그램 상세 | 확률 분포 시각화용 |
+| aal | REAL | 연간 평균 손실률 (0.0~1.0) | AAL 계산 기초값 |
+| bin_probabilities | JSONB | bin별 발생확률 배열 | [0.65, 0.25, 0.08, ...] |
+| bin_data | JSONB | 히스토그램 상세 | 하위 호환성 유지 |
+| calculation_details | JSONB | 계산 상세정보 | 모델 파라미터 기록 |
 | calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 |
 
 **예상 데이터 규모:** ~4.06M rows (451,351 grids × 9 risk types)
@@ -263,6 +281,81 @@ ModelOPS가 기후 데이터 기반으로 계산한 P(H) 확률 및 Hazard Score
 - 보통: 30 ~ 60
 - 높음: 60 ~ 80
 - 매우높음: > 80
+
+**예상 데이터 규모:** ~4.06M rows (451,351 grids × 9 risk types)
+
+---
+
+#### exposure_results - E (노출도) 결과
+
+**필요 이유:** ModelOPS Exposure Agent가 계산한 자산 노출 정도 저장
+
+**사용처:**
+- ModelOPS: exposure_calculate 에이전트가 결과 저장
+- FastAPI: H × E × V 계산에 사용
+
+| 컬럼명 | 타입 | 설명 | 역할 |
+|--------|------|------|------|
+| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 |
+| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 |
+| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 위험 종류 구분 |
+| exposure_score | REAL | 노출도 점수 (0.0~1.0) | E 값 |
+| proximity_factor | REAL | 근접도 계수 | 위험원 근접성 |
+| normalized_asset_value | REAL | 정규화 자산가치 | 자산 규모 |
+| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 |
+
+**예상 데이터 규모:** ~4.06M rows (451,351 grids × 9 risk types)
+
+---
+
+#### vulnerability_results - V (취약성) 결과
+
+**필요 이유:** ModelOPS Vulnerability Agent가 계산한 건물 특성 기반 취약성 저장
+
+**사용처:**
+- ModelOPS: vulnerability_calculate 에이전트가 결과 저장
+- FastAPI: H × E × V 계산에 사용
+
+| 컬럼명 | 타입 | 설명 | 역할 |
+|--------|------|------|------|
+| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 |
+| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 |
+| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 위험 종류 구분 |
+| vulnerability_score | REAL | 취약성 점수 (0~100) | V 값 |
+| vulnerability_level | VARCHAR(20) | 등급 | very_low/low/medium/high/very_high |
+| factors | JSONB | 취약성 요인 상세 | 건물 연식, 구조 등 |
+| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 |
+
+**예상 데이터 규모:** ~4.06M rows (451,351 grids × 9 risk types)
+
+---
+
+#### aal_scaled_results - AAL 최종 결과
+
+**필요 이유:** ModelOPS AAL Scaling Agent가 계산한 취약성 보정 연간 평균 손실률 저장
+
+**사용처:**
+- FastAPI: 최종 Physical Risk Score 계산
+- 리포트: 예상 손실액 산출
+
+| 컬럼명 | 타입 | 설명 | 역할 |
+|--------|------|------|------|
+| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 |
+| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 |
+| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 위험 종류 구분 |
+| base_aal | REAL | 기본 AAL | probability_results.aal |
+| vulnerability_scale | REAL | F_vuln (0.9~1.1) | 취약성 스케일 계수 |
+| final_aal | REAL | 최종 AAL | base_aal × F_vuln × (1-insurance_rate) |
+| insurance_rate | REAL | 보험 보전율 (0~1) | 보험 가입률 |
+| expected_loss | BIGINT | 예상 손실액 (원) | final_aal × asset_value |
+| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 |
+
+**계산 공식:**
+```
+F_vuln = 0.9 + (V_score / 100) × 0.2  (범위: 0.9 ~ 1.1)
+final_aal = base_aal × F_vuln × (1 - insurance_rate)
+expected_loss = final_aal × asset_value
+```
 
 **예상 데이터 규모:** ~4.06M rows (451,351 grids × 9 risk types)
 
@@ -393,46 +486,80 @@ PostGIS RASTER 타입으로 저장되는 원시 래스터 데이터입니다.
 
 ---
 
-### 1.7 Site Energy Tables (2개)
+### 1.7 Site Additional Data Tables (2개)
 
-사업장 에너지 사용량 데이터를 저장합니다.
+사업장 추가 데이터 및 배치 작업 상태를 저장합니다.
 
-#### site_dc_power_usage - 데이터센터 전력 사용량
+> ⚠️ **변경 이력 (2025-12-03)**: 기존 `site_dc_power_usage`, `site_campus_energy_usage` 테이블이 `site_additional_data`로 통합되었습니다.
 
-**필요 이유:** Agent 2 (Impact Analysis)가 HEV 가중치 계산에 사용
+#### site_additional_data - 사업장 추가 데이터
+
+**필요 이유:** 사용자가 제공하는 추가 데이터를 범용적으로 저장
 
 **사용처:**
-- FastAPI Agent 2: IT전력/냉방전력 비율로 열취약성(HEV) 계산
-- ESG 보고서: 데이터센터 PUE 계산
+- FastAPI: 전력, 보험, 건물 정보 등 사용자 제공 데이터 조회
+- Agent 2 (Impact Analysis): HEV 가중치 계산
 
 | 컬럼명 | 타입 | 설명 | 역할 |
 |--------|------|------|------|
-| power_usage_id | UUID PK | 사용량 ID | 내부 식별자 |
+| id | UUID PK | 레코드 ID | 내부 식별자 |
 | site_id | UUID | 사업장 ID | Application DB 참조 |
-| it_power_kwh | REAL | IT 장비 전력 (kWh) | HEV 가중치 분자 |
-| cooling_power_kwh | REAL | 냉방 전력 (kWh) | HEV 가중치 분모 |
-| total_power_kwh | REAL | 총 전력 (kWh) | PUE 계산 |
-| measurement_year | INTEGER | 측정 연도 | 시계열 분석 |
-| measurement_month | INTEGER | 측정 월 (1-12) | 월별 추세 |
+| data_category | VARCHAR(50) | 데이터 카테고리 | building/asset/power/insurance/custom |
+| raw_text | TEXT | 원본 텍스트 | PDF 추출 등 |
+| structured_data | JSONB | 정형화된 데이터 | 구조화된 JSON |
+| file_name | VARCHAR(255) | 업로드 파일명 | 파일 추적 |
+| file_s3_key | VARCHAR(500) | S3 저장 키 | 파일 위치 |
+| file_size | BIGINT | 파일 크기 (bytes) | 파일 정보 |
+| file_mime_type | VARCHAR(100) | MIME 타입 | 파일 타입 |
+| metadata | JSONB | 추가 메타데이터 | 확장 정보 |
+| uploaded_by | UUID | 업로드 사용자 ID | 추적 |
+| uploaded_at | TIMESTAMP | 업로드 시점 | 추적 |
+| expires_at | TIMESTAMP | 만료 시점 | 임시 데이터 관리 |
+
+**UNIQUE 제약조건:** (site_id, data_category)
+
+**사용 예시 (전력 데이터):**
+```json
+{
+  "data_category": "power",
+  "structured_data": {
+    "it_power_kwh": 25000,
+    "cooling_power_kwh": 8000,
+    "total_power_kwh": 40000
+  }
+}
+```
 
 ---
 
-#### site_campus_energy_usage - 캠퍼스 에너지 사용량
+#### batch_jobs - 배치 작업 상태 추적
 
-**필요 이유:** ESG 보고서 및 탄소 배출량 계산에 사용
+**필요 이유:** 후보지 추천, 대량 분석 등 비동기 작업 상태 추적
 
 **사용처:**
-- FastAPI: ESG 대시보드 데이터 제공
-- 리포트: 탄소 배출량 추세 분석
+- FastAPI: 배치 작업 진행률 조회
+- Frontend: 작업 상태 폴링
 
 | 컬럼명 | 타입 | 설명 | 역할 |
 |--------|------|------|------|
-| energy_usage_id | UUID PK | 사용량 ID | 내부 식별자 |
-| site_id | UUID | 사업장 ID | Application DB 참조 |
-| total_power_kwh | REAL | 총 전력 (kWh) | 전력 사용량 |
-| gas_usage_m3 | REAL | 가스 사용량 (m³) | 난방/취사 |
-| water_usage_m3 | REAL | 수도 사용량 (m³) | 용수 사용량 |
-| co2_emissions_ton | REAL | 탄소 배출량 (tCO2eq) | ESG 지표 |
+| batch_id | UUID PK | 배치 작업 ID | 내부 식별자 |
+| job_type | VARCHAR(50) | 작업 유형 | site_recommendation/bulk_analysis/data_export |
+| status | VARCHAR(20) | 상태 | queued/running/completed/failed/cancelled |
+| progress | INTEGER | 진행률 (0-100) | UI 진행바 |
+| total_items | INTEGER | 전체 항목 수 | 작업 규모 |
+| completed_items | INTEGER | 완료 항목 수 | 진행 현황 |
+| failed_items | INTEGER | 실패 항목 수 | 에러 추적 |
+| input_params | JSONB | 입력 파라미터 | 재실행용 |
+| results | JSONB | 결과 데이터 | 배치 결과 |
+| error_message | TEXT | 에러 메시지 | 에러 상세 |
+| error_stack_trace | TEXT | 스택 트레이스 | 디버깅 |
+| estimated_duration_minutes | INTEGER | 예상 소요 시간 | UI 표시 |
+| actual_duration_seconds | INTEGER | 실제 소요 시간 | 성능 추적 |
+| created_at | TIMESTAMP | 생성 시점 | 기록 |
+| started_at | TIMESTAMP | 시작 시점 | 기록 |
+| completed_at | TIMESTAMP | 완료 시점 | 기록 |
+| expires_at | TIMESTAMP | 만료 시점 | 결과 보관 (예: 7일) |
+| created_by | UUID | 생성 사용자 ID | 추적 |
 
 ---
 
@@ -703,8 +830,8 @@ WHERE g.longitude = ROUND(sites.longitude::numeric, 2)
 | csdi_data, wsdi_data, ... | KMA NetCDF | 08_load_yearly_grid_data.py |
 | sea_level_grid, sea_level_data | KMA NetCDF | 09_load_sea_level.py |
 | water_stress_rankings | WRI CSV | 10_load_water_stress.py |
-| site_dc_power_usage | Excel | 11_load_site_energy.py |
-| site_campus_energy_usage | Excel | 11_load_site_energy.py |
+| site_additional_data | Excel/JSONB | 11_load_site_data.py |
+| batch_jobs | 서비스 생성 | (서비스에서 동적 생성) |
 
 ---
 
@@ -726,12 +853,79 @@ WHERE g.longitude = ROUND(sites.longitude::numeric, 2)
 
 ---
 
-## 5. 참조 문서
+## 5. 코드-DB 매핑
 
-- SpringBoot 엔티티: `/DB_ALL/springboot/polaris_backend/src/main/java/com/skax/physicalrisk/domain/`
-- FastAPI database.py: `/DB_ALL/fastapi/ai_agent/utils/database.py`
-- ModelOPS connection.py: `/DB_ALL/modelops/modelops/database/connection.py`
-- Datawarehouse SQL: `/db_final_1202/db/sql/datawarehouse/`
+### 5.1 서비스별 테이블 참조
+
+| 서비스 | 참조 테이블 | 용도 |
+|--------|------------|------|
+| **SpringBoot** | users, sites, password_reset_tokens | 사용자/사업장 관리 |
+| | analysis_jobs, analysis_results | AI 분석 작업 관리 |
+| | reports | 리포트 관리 |
+| | industries, hazard_types | 메타데이터 조회 |
+| **FastAPI** | location_grid, location_admin | 좌표 → 격자/행정구역 매핑 |
+| | ta_data, rn_data, ws_data 등 | 기후 데이터 조회 |
+| | probability_results, hazard_results | P(H), Hazard Score 조회 |
+| | api_* 테이블들 | 외부 API 캐시 조회 |
+| **ModelOPS** | ta_data, rn_data, spei12_data 등 | 기후 데이터 입력 |
+| | probability_results | P(H) 확률 결과 저장 |
+| | hazard_results | Hazard Score 결과 저장 |
+
+### 5.2 Wide Format SSP 컬럼 매핑
+
+코드에서 `ssp_scenario_data`를 참조할 경우, 실제 테이블의 컬럼 매핑:
+
+| 코드 참조 | 실제 테이블 | SSP 컬럼 |
+|----------|------------|----------|
+| SSP1-2.6 | ta_data, rn_data 등 | ssp1 |
+| SSP2-4.5 | ta_data, rn_data 등 | ssp2 |
+| SSP3-7.0 | ta_data, rn_data 등 | ssp3 |
+| SSP5-8.5 | ta_data, rn_data 등 | ssp5 |
+
+### 5.3 코드 참조 vs 실제 테이블
+
+| 코드에서 참조 | 실제 테이블 | 비고 |
+|--------------|------------|------|
+| climate_data | ta_data, rn_data, ws_data 등 | 개별 테이블로 분리됨 |
+| geographic_data | raw_dem, raw_landcover | 래스터 테이블 |
+| historical_events | api_disaster_yearbook | 유사 데이터 |
+
+---
+
+## 6. 참조 문서
+
+### 6.1 소스 코드
+
+| 서비스 | 위치 | 주요 파일 |
+|--------|------|----------|
+| SpringBoot | `/DB_ALL/springboot/polaris_backend/` | `domain/**/*.java` (Entity) |
+| FastAPI | `/DB_ALL/fastapi/ai_agent/` | `utils/database.py` |
+| ModelOPS | `/DB_ALL/modelops/modelops/` | `database/connection.py` |
+| Frontend | `/DB_ALL/frontend/src/` | `assets/data/*.ts` (타입 정의) |
+
+### 6.2 SQL 파일
+
+| 데이터베이스 | 위치 |
+|-------------|------|
+| Datawarehouse | `/db_final_1202/db/sql/datawarehouse/*.sql` |
+| Application | `/db_final_1202/db/sql/application/*.sql` |
+
+### 6.3 ETL 스크립트
+
+| 유형 | 위치 |
+|------|------|
+| Local ETL | `/db_final_1202/etl/local/scripts/*.py` |
+| API ETL | `/db_final_1202/etl/api/scripts/*.py` |
+
+---
+
+## 7. 테이블 현황 요약
+
+| 데이터베이스 | 테이블 수 | 상태 |
+|-------------|----------|------|
+| Datawarehouse | 41개 | ✓ 완료 |
+| Application | 8개 | ✓ 완료 |
+| **합계** | **49개** | ✓ |
 
 ---
 

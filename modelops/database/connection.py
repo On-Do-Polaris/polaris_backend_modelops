@@ -1,7 +1,10 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import uuid
+import json
+from datetime import datetime
 from ..config.settings import settings
 
 
@@ -521,3 +524,316 @@ class DatabaseConnection:
                     result.get('insurance_rate', 0.0),
                     result.get('expected_loss')
                 ))
+
+    # ==================== Batch Jobs 관리 메서드 ====================
+
+    @staticmethod
+    def create_batch_job(job_type: str, input_params: Dict[str, Any]) -> str:
+        """
+        배치 작업 생성
+
+        Args:
+            job_type: 작업 유형 ('ondemand_risk_calculation' 등)
+            input_params: 입력 파라미터 (latitude, longitude, risk_types 등)
+
+        Returns:
+            batch_id (UUID string)
+        """
+        batch_id = str(uuid.uuid4())
+        input_params_json = json.dumps(input_params)
+
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO batch_jobs
+                (batch_id, job_type, status, progress, total_items, completed_items,
+                 failed_items, input_params, created_at)
+                VALUES (%s, %s, 'queued', 0, 0, 0, 0, %s::jsonb, NOW())
+                RETURNING batch_id
+            """, (batch_id, job_type, input_params_json))
+
+            result = cursor.fetchone()
+            return result['batch_id']
+
+    @staticmethod
+    def update_batch_progress(batch_id: str, progress: int,
+                             current_step: str = None,
+                             completed_items: int = None,
+                             failed_items: int = None) -> None:
+        """
+        배치 진행률 업데이트
+
+        Args:
+            batch_id: 배치 ID
+            progress: 진행률 (0-100)
+            current_step: 현재 단계 설명 (선택)
+            completed_items: 완료 항목 수 (선택)
+            failed_items: 실패 항목 수 (선택)
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 동적 쿼리 생성
+            update_fields = ["progress = %s"]
+            params = [progress]
+
+            if current_step is not None:
+                update_fields.append("status = 'running'")
+
+            if completed_items is not None:
+                update_fields.append("completed_items = %s")
+                params.append(completed_items)
+
+            if failed_items is not None:
+                update_fields.append("failed_items = %s")
+                params.append(failed_items)
+
+            # batch_id는 마지막 파라미터
+            params.append(batch_id)
+
+            query = f"""
+                UPDATE batch_jobs
+                SET {', '.join(update_fields)}
+                WHERE batch_id = %s
+            """
+
+            cursor.execute(query, params)
+
+    @staticmethod
+    def complete_batch_job(batch_id: str, results: Dict[str, Any]) -> None:
+        """
+        배치 작업 완료 처리
+
+        Args:
+            batch_id: 배치 ID
+            results: 최종 결과 (JSONB)
+        """
+        results_json = json.dumps(results)
+
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE batch_jobs
+                SET status = 'completed',
+                    progress = 100,
+                    results = %s::jsonb,
+                    completed_at = NOW()
+                WHERE batch_id = %s
+            """, (results_json, batch_id))
+
+    @staticmethod
+    def fail_batch_job(batch_id: str, error_message: str,
+                      error_stack_trace: str = None) -> None:
+        """
+        배치 작업 실패 처리
+
+        Args:
+            batch_id: 배치 ID
+            error_message: 에러 메시지
+            error_stack_trace: 스택 트레이스 (선택)
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE batch_jobs
+                SET status = 'failed',
+                    error_message = %s,
+                    error_stack_trace = %s,
+                    completed_at = NOW()
+                WHERE batch_id = %s
+            """, (error_message, error_stack_trace, batch_id))
+
+    @staticmethod
+    def get_batch_status(batch_id: str) -> Optional[Dict[str, Any]]:
+        """
+        배치 상태 조회 (FastAPI에서 사용)
+
+        Args:
+            batch_id: 배치 ID
+
+        Returns:
+            {
+                'batch_id': str,
+                'job_type': str,
+                'status': str,
+                'progress': int,
+                'results': dict,
+                'error_message': str,
+                'created_at': datetime,
+                'completed_at': datetime
+            } 또는 None
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    batch_id,
+                    job_type,
+                    status,
+                    progress,
+                    total_items,
+                    completed_items,
+                    failed_items,
+                    input_params,
+                    results,
+                    error_message,
+                    error_stack_trace,
+                    created_at,
+                    started_at,
+                    completed_at
+                FROM batch_jobs
+                WHERE batch_id = %s
+            """, (batch_id,))
+
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    # ==================== 조회 메서드 ====================
+
+    @staticmethod
+    def fetch_hazard_results(latitude: float, longitude: float,
+                            risk_types: List[str] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        Hazard Score 조회
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            risk_types: 조회할 리스크 타입 목록 (None이면 전체)
+
+        Returns:
+            {
+                'extreme_heat': {'hazard_score': 0.75, 'hazard_score_100': 75, ...},
+                ...
+            }
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+
+            if risk_types:
+                cursor.execute("""
+                    SELECT risk_type, hazard_score, hazard_score_100, hazard_level
+                    FROM hazard_results
+                    WHERE latitude = %s AND longitude = %s
+                      AND risk_type = ANY(%s)
+                """, (latitude, longitude, risk_types))
+            else:
+                cursor.execute("""
+                    SELECT risk_type, hazard_score, hazard_score_100, hazard_level
+                    FROM hazard_results
+                    WHERE latitude = %s AND longitude = %s
+                """, (latitude, longitude))
+
+            results = {}
+            for row in cursor.fetchall():
+                results[row['risk_type']] = {
+                    'hazard_score': row['hazard_score'],
+                    'hazard_score_100': row['hazard_score_100'],
+                    'hazard_level': row['hazard_level']
+                }
+
+            return results
+
+    @staticmethod
+    def fetch_probability_results(latitude: float, longitude: float,
+                                 risk_types: List[str] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        P(H) 조회
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            risk_types: 조회할 리스크 타입 목록 (None이면 전체)
+
+        Returns:
+            {
+                'extreme_heat': {'aal': 0.025, 'bin_probabilities': [...], ...},
+                ...
+            }
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+
+            if risk_types:
+                cursor.execute("""
+                    SELECT risk_type, aal, bin_probabilities, calculation_details, bin_data
+                    FROM probability_results
+                    WHERE latitude = %s AND longitude = %s
+                      AND risk_type = ANY(%s)
+                """, (latitude, longitude, risk_types))
+            else:
+                cursor.execute("""
+                    SELECT risk_type, aal, bin_probabilities, calculation_details, bin_data
+                    FROM probability_results
+                    WHERE latitude = %s AND longitude = %s
+                """, (latitude, longitude))
+
+            results = {}
+            for row in cursor.fetchall():
+                results[row['risk_type']] = {
+                    'aal': row['aal'],
+                    'bin_probabilities': row['bin_probabilities'],
+                    'calculation_details': row['calculation_details'],
+                    'bin_data': row['bin_data']
+                }
+
+            return results
+
+    @staticmethod
+    def fetch_population_data(latitude: float, longitude: float) -> Dict[str, Any]:
+        """
+        행정구역 인구 데이터 조회 (location_admin)
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+
+        Returns:
+            {
+                'admin_name': str,
+                'population_2020': int,
+                'population_2025': int,
+                ...,
+                'population_2050': int,
+                'population_change_2020_2050': int,
+                'population_change_rate_percent': float
+            }
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    admin_name,
+                    population_2020,
+                    population_2025,
+                    population_2030,
+                    population_2035,
+                    population_2040,
+                    population_2045,
+                    population_2050,
+                    population_change_2020_2050,
+                    population_change_rate_percent
+                FROM location_admin
+                WHERE ST_Contains(geom, ST_SetSRID(ST_Point(%s, %s), 5174))
+                LIMIT 1
+            """, (longitude, latitude))
+
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+            # 행정구역을 찾지 못한 경우 기본값 반환
+            return {
+                'admin_name': 'Unknown',
+                'population_2020': 0,
+                'population_2025': 0,
+                'population_2030': 0,
+                'population_2035': 0,
+                'population_2040': 0,
+                'population_2045': 0,
+                'population_2050': 0,
+                'population_change_2020_2050': 0,
+                'population_change_rate_percent': 0.0
+            }

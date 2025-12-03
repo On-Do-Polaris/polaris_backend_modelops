@@ -11,12 +11,16 @@ ZIP 파일에서 ASCII DEM을 추출하여 raw_dem 테이블에 로드
 """
 
 import sys
+import os
 import zipfile
 import re
 from pathlib import Path
 from tqdm import tqdm
 
 from utils import setup_logging, get_db_connection, get_data_dir, table_exists, get_row_count
+
+# SAMPLE_LIMIT: ZIP 파일 개수 제한 (테스트용)
+SAMPLE_LIMIT = int(os.environ.get('SAMPLE_LIMIT', 0))  # 0 = 전체
 
 
 def extract_zip_with_korean(zip_path: Path, extract_dir: Path) -> list:
@@ -79,6 +83,11 @@ def load_dem() -> None:
 
     zip_files = list(dem_dir.glob("*.zip"))
     logger.info(f"{len(zip_files)}개 ZIP 파일 발견")
+
+    # SAMPLE_LIMIT 적용
+    if SAMPLE_LIMIT > 0 and len(zip_files) > SAMPLE_LIMIT:
+        zip_files = zip_files[:SAMPLE_LIMIT]
+        logger.info(f"   SAMPLE_LIMIT={SAMPLE_LIMIT} 적용 → {len(zip_files)}개만 처리")
 
     if not zip_files:
         logger.warning("ZIP 파일이 없습니다")

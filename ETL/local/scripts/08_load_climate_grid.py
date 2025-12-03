@@ -12,6 +12,7 @@ NetCDF 파일에서 월별/연간 기후 데이터를 로드
 """
 
 import sys
+import os
 import gzip
 import shutil
 import tempfile
@@ -21,6 +22,10 @@ from tqdm import tqdm
 import numpy as np
 
 from utils import setup_logging, get_db_connection, get_data_dir, table_exists, get_row_count
+
+# SAMPLE_LIMIT: 처리할 시간 스텝 수 제한 (테스트용)
+# 예: SAMPLE_LIMIT=12 → 1년치(12개월)만 처리
+SAMPLE_LIMIT = int(os.environ.get('SAMPLE_LIMIT', 0))  # 0 = 전체(960개월)
 
 
 def decompress_if_gzip(file_path: Path) -> Path:
@@ -211,8 +216,13 @@ def load_climate_grid() -> None:
                     cursor.execute(f"TRUNCATE TABLE {table_name}")
                     conn.commit()
 
+                # SAMPLE_LIMIT 적용: 0이면 전체(960), 그 외엔 제한
+                max_steps = min(time_steps, 960)
+                if SAMPLE_LIMIT > 0:
+                    max_steps = min(max_steps, SAMPLE_LIMIT)
+
                 insert_count = 0
-                for t_idx in tqdm(range(min(time_steps, 960)), desc=f"  {table_name}", leave=False):  # 80년 * 12개월
+                for t_idx in tqdm(range(max_steps), desc=f"  {table_name}", leave=False):  # SAMPLE_LIMIT 적용
                     year = 2021 + (t_idx // 12)
                     month = (t_idx % 12) + 1
                     obs_date = date(year, month, 1)
@@ -285,8 +295,13 @@ def load_climate_grid() -> None:
                             cursor.execute("TRUNCATE TABLE ta_yearly_data")
                             conn.commit()
 
+                        # SAMPLE_LIMIT 적용 (연간: 80년 → SAMPLE_LIMIT개 연도)
+                        max_years = min(data.shape[0], 80)
+                        if SAMPLE_LIMIT > 0:
+                            max_years = min(max_years, SAMPLE_LIMIT)
+
                         insert_count = 0
-                        for year_idx in range(min(data.shape[0], 80)):
+                        for year_idx in range(max_years):
                             year = 2021 + year_idx
 
                             for (lon_idx, lat_idx), grid_id in grid_map.items():

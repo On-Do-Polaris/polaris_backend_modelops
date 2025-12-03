@@ -7,7 +7,8 @@ NetCDF 파일에서 월별/연간 기후 데이터를 로드
 대상 테이블: location_grid, ta_data, rn_data, ta_yearly_data 등
 예상 데이터: 약 1,000,000개 레코드
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import sys
@@ -49,14 +50,14 @@ def load_climate_grid() -> None:
     try:
         import netCDF4 as nc
     except ImportError:
-        logger.error("❌ netCDF4 모듈이 필요합니다. pip install netCDF4")
+        logger.error("netCDF4 모듈이 필요합니다. pip install netCDF4")
         sys.exit(1)
 
     try:
         conn = get_db_connection()
-        logger.info("✅ 데이터베이스 연결 성공")
+        logger.info("데이터베이스 연결 성공")
     except Exception as e:
-        logger.error(f"❌ 데이터베이스 연결 실패: {e}")
+        logger.error(f"데이터베이스 연결 실패: {e}")
         sys.exit(1)
 
     cursor = conn.cursor()
@@ -66,16 +67,16 @@ def load_climate_grid() -> None:
     kma_dir = data_dir / "KMA" / "extracted" / "KMA" / "downloads_kma_ssp_gridraw"
 
     if not kma_dir.exists():
-        logger.error(f"❌ KMA 디렉토리를 찾을 수 없습니다: {kma_dir}")
+        logger.error(f"KMA 디렉토리를 찾을 수 없습니다: {kma_dir}")
         conn.close()
         sys.exit(1)
 
     # SSP 시나리오 디렉토리 찾기
     ssp_dirs = list(kma_dir.glob("SSP*"))
-    logger.info(f"📂 {len(ssp_dirs)}개 SSP 시나리오 발견")
+    logger.info(f"{len(ssp_dirs)}개 SSP 시나리오 발견")
 
     # 1. location_grid 테이블 생성/초기화
-    logger.info("\n📊 location_grid 테이블 초기화")
+    logger.info("\nlocation_grid 테이블 초기화")
     cursor.execute("TRUNCATE TABLE location_grid CASCADE")
     conn.commit()
 
@@ -85,7 +86,7 @@ def load_climate_grid() -> None:
         sample_files = list(kma_dir.glob("**/*.nc"))
 
     if not sample_files:
-        logger.error("❌ NetCDF 파일을 찾을 수 없습니다")
+        logger.error("NetCDF 파일을 찾을 수 없습니다")
         conn.close()
         sys.exit(1)
 
@@ -142,10 +143,10 @@ def load_climate_grid() -> None:
             insert_count += 1
 
     conn.commit()
-    logger.info(f"   ✅ location_grid: {insert_count:,}개 포인트")
+    logger.info(f"   location_grid: {insert_count:,}개 포인트")
 
     # 2. 월별 데이터 로드 (ta_data, rn_data)
-    logger.info("\n📊 월별 기후 데이터 로딩")
+    logger.info("\n월별 기후 데이터 로딩")
 
     # 테이블별 변수 매핑
     table_var_map = {
@@ -162,11 +163,11 @@ def load_climate_grid() -> None:
         if not monthly_dir.exists():
             continue
 
-        logger.info(f"\n   📂 {ssp_name} 처리 중...")
+        logger.info(f"\n   {ssp_name} 처리 중...")
 
         for table_name, var_names in table_var_map.items():
             if not table_exists(conn, table_name):
-                logger.warning(f"   ⚠️  {table_name} 테이블 없음, 건너뜀")
+                logger.warning(f"   {table_name} 테이블 없음, 건너뜀")
                 continue
 
             # 해당 변수 파일 찾기
@@ -243,13 +244,13 @@ def load_climate_grid() -> None:
 
                 conn.commit()
                 ds.close()
-                logger.info(f"   ✅ {table_name} ({ssp_name}): {insert_count:,}개")
+                logger.info(f"   {table_name} ({ssp_name}): {insert_count:,}개")
 
             except Exception as e:
-                logger.warning(f"   ⚠️  {table_name} 오류: {e}")
+                logger.warning(f"   {table_name} 오류: {e}")
 
     # 3. 연간 데이터 로드
-    logger.info("\n📊 연간 기후 데이터 로딩")
+    logger.info("\n연간 기후 데이터 로딩")
 
     for ssp_dir in ssp_dirs:
         ssp_name = ssp_dir.name
@@ -313,14 +314,14 @@ def load_climate_grid() -> None:
 
                         conn.commit()
                         ds.close()
-                        logger.info(f"   ✅ ta_yearly_data ({ssp_name}): {insert_count:,}개")
+                        logger.info(f"   ta_yearly_data ({ssp_name}): {insert_count:,}개")
 
                 except Exception as e:
-                    logger.warning(f"   ⚠️  ta_yearly_data 오류: {e}")
+                    logger.warning(f"   ta_yearly_data 오류: {e}")
 
     # 결과 요약
     logger.info("\n" + "=" * 60)
-    logger.info("✅ 기후 그리드 데이터 로딩 완료")
+    logger.info("기후 그리드 데이터 로딩 완료")
     logger.info(f"   - location_grid: {get_row_count(conn, 'location_grid'):,}개")
     logger.info(f"   - ta_data: {get_row_count(conn, 'ta_data'):,}개")
     logger.info(f"   - rn_data: {get_row_count(conn, 'rn_data'):,}개")

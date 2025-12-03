@@ -6,7 +6,8 @@ ZIP 파일에서 ASCII DEM을 추출하여 raw_dem 테이블에 로드
 대상 테이블: raw_dem (Point geometry)
 예상 데이터: 약 500,000개 포인트
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import sys
@@ -60,9 +61,9 @@ def load_dem() -> None:
 
     try:
         conn = get_db_connection()
-        logger.info("✅ 데이터베이스 연결 성공")
+        logger.info("데이터베이스 연결 성공")
     except Exception as e:
-        logger.error(f"❌ 데이터베이스 연결 실패: {e}")
+        logger.error(f"데이터베이스 연결 실패: {e}")
         sys.exit(1)
 
     cursor = conn.cursor()
@@ -72,20 +73,20 @@ def load_dem() -> None:
     dem_dir = data_dir / "DEM"
 
     if not dem_dir.exists():
-        logger.error(f"❌ DEM 디렉토리를 찾을 수 없습니다: {dem_dir}")
+        logger.error(f"DEM 디렉토리를 찾을 수 없습니다: {dem_dir}")
         conn.close()
         sys.exit(1)
 
     zip_files = list(dem_dir.glob("*.zip"))
-    logger.info(f"📂 {len(zip_files)}개 ZIP 파일 발견")
+    logger.info(f"{len(zip_files)}개 ZIP 파일 발견")
 
     if not zip_files:
-        logger.warning("⚠️  ZIP 파일이 없습니다")
+        logger.warning("ZIP 파일이 없습니다")
         conn.close()
         return
 
     # 테이블 재생성 (Point geometry 기반)
-    logger.info("📊 테이블 재생성 (Point geometry)")
+    logger.info("테이블 재생성 (Point geometry)")
     cursor.execute("DROP TABLE IF EXISTS raw_dem CASCADE;")
     cursor.execute("""
         CREATE TABLE raw_dem (
@@ -145,11 +146,11 @@ def load_dem() -> None:
                 except Exception as e:
                     error_count += 1
                     if error_count <= 5:
-                        logger.warning(f"⚠️  파일 처리 오류: {e}")
+                        logger.warning(f"파일 처리 오류: {e}")
 
         except Exception as e:
             error_count += 1
-            logger.warning(f"⚠️  ZIP 처리 오류 ({zip_file.name}): {e}")
+            logger.warning(f"ZIP 처리 오류 ({zip_file.name}): {e}")
 
     # 남은 배치 처리
     if batch_data:
@@ -161,7 +162,7 @@ def load_dem() -> None:
         conn.commit()
 
     # 인덱스 생성
-    logger.info("📊 인덱스 생성")
+    logger.info("인덱스 생성")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_raw_dem_geom ON raw_dem USING GIST (geom);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_raw_dem_region ON raw_dem (region);")
     conn.commit()
@@ -177,7 +178,7 @@ def load_dem() -> None:
     final_count = get_row_count(conn, "raw_dem")
 
     logger.info("=" * 60)
-    logger.info("✅ DEM 데이터 로딩 완료")
+    logger.info("DEM 데이터 로딩 완료")
     logger.info(f"   - 삽입: {insert_count:,}개 포인트")
     logger.info(f"   - 오류: {error_count:,}개")
     logger.info(f"   - 최종: {final_count:,}개")

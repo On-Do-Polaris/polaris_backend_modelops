@@ -5,7 +5,8 @@ API: 국토교통부 건축물대장정보 서비스
 URL: https://apis.data.go.kr/1613000/BldRgstHubService
 용도: 건물 구조, 연식, 층수 정보
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os
@@ -84,13 +85,11 @@ def parse_building_data(raw_data: dict, logger) -> list:
                 'arch_area': float(item.get('archArea', 0) or 0),
                 'bc_rat': float(item.get('bcRat', 0) or 0),
                 'tot_area': float(item.get('totArea', 0) or 0),
-                'vl_rat': float(item.get('vlRat', 0) or 0),
+                'vlr_rat': float(item.get('vlRat', 0) or 0),  # 스키마: vlr_rat (용적률)
                 'grnd_flr_cnt': int(item.get('grndFlrCnt', 0) or 0),
                 'ugrnd_flr_cnt': int(item.get('ugrndFlrCnt', 0) or 0),
                 'heit': float(item.get('heit', 0) or 0),
-                'hh_cnt': int(item.get('hhldCnt', 0) or 0),
-                'fmlr_cnt': int(item.get('fmlyCnt', 0) or 0),
-                'rnum': int(item.get('rnum', 0) or 0),
+                # hh_cnt, fmlr_cnt, rnum 컬럼은 스키마에 없음 (제거됨)
                 'api_response': item
             }
 

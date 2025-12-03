@@ -1,144 +1,245 @@
 """
 SKALA Physical Risk AI System - 가뭄 데이터 적재
-HDF/NetCDF 파일에서 가뭄 지수를 raw_drought 테이블에 로드
+HDF/NetCDF 파일을 GeoTIFF로 변환 후 raw_drought 래스터 테이블에 로드
 
-데이터 소스: drought/*.hdf, drought/*.nc
-대상 테이블: raw_drought
-예상 데이터: 약 10,000개 레코드
+데이터 소스: drought/*.hdf, drought/*.h5, drought/*.nc
+대상 테이블: raw_drought (raster)
+예상 데이터: 약 10개 타일
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v04
 """
 
 import sys
+import subprocess
+import tempfile
+import os
 from pathlib import Path
 from tqdm import tqdm
-import numpy as np
 
 from utils import setup_logging, get_db_connection, get_data_dir, table_exists, get_row_count
 
 
+def hdf5_to_geotiff(h5_path: Path, output_dir: Path, logger=None) -> list:
+    """
+    HDF5 파일을 GeoTIFF로 변환
+
+    Args:
+        h5_path: HDF5 파일 경로
+        output_dir: 출력 디렉토리
+        logger: 로거
+
+    Returns:
+        생성된 GeoTIFF 파일 경로 리스트
+    """
+    tif_files = []
+
+    # SMAP L4 데이터셋 목록
+    datasets = [
+        'Analysis_Data/sm_surface_analysis',
+        'Analysis_Data/sm_rootzone_analysis',
+    ]
+
+    for dataset in datasets:
+        var_name = dataset.split('/')[-1]
+        output_tif = output_dir / f"{h5_path.stem}_{var_name}.tif"
+
+        try:
+            # gdal_translate로 HDF5 서브데이터셋을 GeoTIFF로 변환
+            cmd = [
+                'gdal_translate', '-q',
+                f'HDF5:"{h5_path}"://{dataset}',
+                str(output_tif)
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            if result.returncode == 0 and output_tif.exists():
+                tif_files.append(output_tif)
+                if logger:
+                    logger.info(f"   변환 성공: {var_name}")
+            else:
+                if logger:
+                    logger.warning(f"   변환 실패: {var_name} - {result.stderr[:100]}")
+
+        except Exception as e:
+            if logger:
+                logger.warning(f"   변환 오류: {var_name} - {e}")
+
+    return tif_files
+
+
+def load_tif_to_raster(tif_path: Path, table_name: str, append: bool = False, logger=None) -> bool:
+    """
+    GeoTIFF를 PostgreSQL raster 테이블에 로드
+
+    Args:
+        tif_path: TIF 파일 경로
+        table_name: 테이블 이름
+        append: 추가 모드 여부
+        logger: 로거
+
+    Returns:
+        성공 여부
+    """
+    try:
+        db_host = os.getenv("DW_HOST", "localhost")
+        db_port = os.getenv("DW_PORT", "5434")
+        db_name = os.getenv("DW_NAME", "skala_datawarehouse")
+        db_user = os.getenv("DW_USER", "skala_dw_user")
+        db_password = os.getenv("DW_PASSWORD", "skala_dw_2025")
+
+        # raster2pgsql 명령
+        cmd = ["raster2pgsql"]
+        cmd.append("-a" if append else "-c")
+        cmd.extend(["-I", "-C", "-M", "-F", "-t", "100x100", "-s", "4326"])
+        cmd.extend([str(tif_path), table_name])
+
+        raster_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        psql_cmd = ["psql", "-h", db_host, "-p", db_port, "-U", db_user, "-d", db_name, "-q"]
+        psql_env = os.environ.copy()
+        psql_env["PGPASSWORD"] = db_password
+
+        psql_proc = subprocess.Popen(
+            psql_cmd, stdin=raster_proc.stdout,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=psql_env
+        )
+
+        raster_proc.stdout.close()
+        _, stderr = psql_proc.communicate(timeout=120)
+
+        if psql_proc.returncode != 0:
+            if logger:
+                logger.warning(f"   raster2pgsql 실패: {stderr.decode()[:100]}")
+            return False
+
+        return True
+
+    except Exception as e:
+        if logger:
+            logger.warning(f"   적재 오류: {e}")
+        return False
+
+
 def load_drought() -> None:
-    """가뭄 데이터를 raw_drought 테이블에 로드"""
+    """가뭄 데이터를 raw_drought 래스터 테이블에 로드"""
     logger = setup_logging("load_drought")
     logger.info("=" * 60)
-    logger.info("가뭄 데이터 로딩 시작")
+    logger.info("가뭄 데이터 로딩 시작 (래스터 방식)")
     logger.info("=" * 60)
 
     try:
         conn = get_db_connection()
-        logger.info("✅ 데이터베이스 연결 성공")
+        logger.info("데이터베이스 연결 성공")
     except Exception as e:
-        logger.error(f"❌ 데이터베이스 연결 실패: {e}")
+        logger.error(f"데이터베이스 연결 실패: {e}")
         sys.exit(1)
 
-    if not table_exists(conn, "raw_drought"):
-        logger.error("❌ raw_drought 테이블이 존재하지 않습니다")
-        conn.close()
-        sys.exit(1)
-
-    cursor = conn.cursor()
+    conn.close()
 
     # 데이터 파일 찾기
     data_dir = get_data_dir()
     drought_dir = data_dir / "drought"
 
     if not drought_dir.exists():
-        logger.warning(f"⚠️  drought 디렉토리를 찾을 수 없습니다: {drought_dir}")
-        # NetCDF 파일이 KMA 디렉토리에 있을 수 있음
+        logger.warning(f"drought 디렉토리를 찾을 수 없습니다: {drought_dir}")
         drought_dir = data_dir / "KMA" / "extracted"
 
-    # 다양한 포맷 파일 찾기
+    # HDF5, NetCDF 파일 찾기
+    h5_files = list(drought_dir.glob("**/*.h5"))
     nc_files = list(drought_dir.glob("**/*drought*.nc")) + list(drought_dir.glob("**/*spei*.nc"))
-    hdf_files = list(drought_dir.glob("**/*.hdf")) + list(drought_dir.glob("**/*.h5"))
+    hdf_files = list(drought_dir.glob("**/*.hdf"))
 
-    logger.info(f"📂 NetCDF 파일: {len(nc_files)}개")
-    logger.info(f"   HDF 파일: {len(hdf_files)}개")
+    logger.info(f"HDF5 파일: {len(h5_files)}개")
+    logger.info(f"NetCDF 파일: {len(nc_files)}개")
+    logger.info(f"HDF4 파일: {len(hdf_files)}개")
 
-    # 기존 데이터 삭제
-    existing_count = get_row_count(conn, "raw_drought")
-    if existing_count > 0:
-        logger.warning(f"⚠️  기존 데이터 {existing_count:,}개 삭제")
-        cursor.execute("TRUNCATE TABLE raw_drought")
-        conn.commit()
+    # 기존 테이블 삭제 (psql로)
+    logger.info("기존 테이블 삭제")
+    db_host = os.getenv("DW_HOST", "localhost")
+    db_port = os.getenv("DW_PORT", "5434")
+    db_name = os.getenv("DW_NAME", "skala_datawarehouse")
+    db_user = os.getenv("DW_USER", "skala_dw_user")
+    db_password = os.getenv("DW_PASSWORD", "skala_dw_2025")
 
-    insert_count = 0
+    drop_env = os.environ.copy()
+    drop_env["PGPASSWORD"] = db_password
+    subprocess.run(
+        ["psql", "-h", db_host, "-p", db_port, "-U", db_user, "-d", db_name,
+         "-c", "DROP TABLE IF EXISTS raw_drought CASCADE;"],
+        env=drop_env, capture_output=True
+    )
+
+    # 임시 디렉토리
+    tmp_dir = Path(tempfile.mkdtemp())
+    success_count = 0
     error_count = 0
+    first_file = True
 
-    # NetCDF 파일 처리
-    try:
-        import netCDF4 as nc
+    # HDF5 파일 처리
+    for h5_file in tqdm(h5_files, desc="HDF5 변환"):
+        logger.info(f"처리 중: {h5_file.name}")
+        tif_files = hdf5_to_geotiff(h5_file, tmp_dir, logger)
 
-        for nc_file in tqdm(nc_files, desc="NetCDF 처리"):
-            try:
-                ds = nc.Dataset(nc_file)
-
-                # 변수명 찾기 (spei, drought, spi 등)
-                var_names = [v for v in ds.variables.keys()
-                            if v.lower() not in ['time', 'lat', 'lon', 'latitude', 'longitude', 'x', 'y']]
-
-                if not var_names:
-                    continue
-
-                var_name = var_names[0]
-                data = ds.variables[var_name][:]
-
-                # 좌표 찾기
-                lat_name = 'latitude' if 'latitude' in ds.variables else 'lat'
-                lon_name = 'longitude' if 'longitude' in ds.variables else 'lon'
-
-                lat = ds.variables[lat_name][:]
-                lon = ds.variables[lon_name][:]
-
-                # 시간 처리
-                time_dim = data.shape[0] if len(data.shape) > 2 else 1
-
-                for t in range(min(time_dim, 100)):  # 처음 100개 시간스텝
-                    if len(data.shape) > 2:
-                        slice_data = data[t]
-                    else:
-                        slice_data = data
-
-                    for i in range(min(len(lat), 50)):
-                        for j in range(min(len(lon), 50)):
-                            val = slice_data[i, j] if len(slice_data.shape) > 1 else slice_data[i]
-
-                            if np.ma.is_masked(val) or np.isnan(val):
-                                continue
-
-                            cursor.execute("""
-                                INSERT INTO raw_drought (
-                                    drought_index, latitude, longitude, time_index, value
-                                ) VALUES (%s, %s, %s, %s, %s)
-                            """, (var_name, float(lat[i]), float(lon[j]), t, float(val)))
-                            insert_count += 1
-
-                    if insert_count % 5000 == 0:
-                        conn.commit()
-
-                ds.close()
-
-            except Exception as e:
+        for tif_file in tif_files:
+            success = load_tif_to_raster(
+                tif_file, "raw_drought",
+                append=not first_file, logger=logger
+            )
+            if success:
+                success_count += 1
+                first_file = False
+            else:
                 error_count += 1
-                if error_count <= 5:
-                    logger.warning(f"⚠️  NetCDF 처리 오류 ({nc_file.name}): {e}")
 
-    except ImportError:
-        logger.warning("⚠️  netCDF4 모듈이 없습니다. NetCDF 파일 건너뜀")
+            # 임시 파일 삭제
+            try:
+                tif_file.unlink()
+            except:
+                pass
 
-    conn.commit()
+    # NetCDF 파일 처리 (gdal_translate 지원)
+    for nc_file in tqdm(nc_files, desc="NetCDF 처리"):
+        output_tif = tmp_dir / f"{nc_file.stem}.tif"
+        try:
+            result = subprocess.run(
+                ['gdal_translate', '-q', str(nc_file), str(output_tif)],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0 and output_tif.exists():
+                success = load_tif_to_raster(
+                    output_tif, "raw_drought",
+                    append=not first_file, logger=logger
+                )
+                if success:
+                    success_count += 1
+                    first_file = False
+                else:
+                    error_count += 1
+                output_tif.unlink()
+        except Exception as e:
+            error_count += 1
+            logger.warning(f"NetCDF 처리 오류: {e}")
 
-    # 결과 출력
+    # 임시 디렉토리 정리
+    try:
+        import shutil
+        shutil.rmtree(tmp_dir)
+    except:
+        pass
+
+    # 결과 확인
+    conn = get_db_connection()
     final_count = get_row_count(conn, "raw_drought")
-
-    logger.info("=" * 60)
-    logger.info("✅ 가뭄 데이터 로딩 완료")
-    logger.info(f"   - 삽입: {insert_count:,}개")
-    logger.info(f"   - 오류: {error_count:,}개")
-    logger.info(f"   - 최종: {final_count:,}개")
-    logger.info("=" * 60)
-
-    cursor.close()
     conn.close()
+
+    logger.info("=" * 60)
+    logger.info("가뭄 데이터 로딩 완료")
+    logger.info(f"   - 성공: {success_count}개 파일")
+    logger.info(f"   - 실패: {error_count}개 파일")
+    logger.info(f"   - 최종: {final_count:,}개 타일")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":

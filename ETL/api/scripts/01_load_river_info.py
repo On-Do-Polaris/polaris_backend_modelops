@@ -5,7 +5,8 @@ API: 재난안전데이터공유플랫폼 하천정보
 URL: https://www.safetydata.go.kr/V2/api/DSSP-IF-10720
 용도: 홍수 위험 평가를 위한 하천 정보
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os

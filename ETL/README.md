@@ -1,7 +1,7 @@
 # SKALA Physical Risk AI - ETL Pipeline
 
 > 최종 수정일: 2025-12-03
-> 버전: v01
+> 버전: v02
 
 ---
 
@@ -13,8 +13,8 @@ SKALA Physical Risk AI 시스템의 ETL(Extract, Transform, Load) 파이프라�
 
 | ETL 유형 | 디렉토리 | 데이터 소스 | 대상 테이블 |
 |----------|----------|-------------|-------------|
-| **Local ETL** | `local/` | 로컬 파일 (GeoJSON, NetCDF, CSV) | 28개 |
-| **API ETL** | `api/` | 외부 OpenAPI | 11개 |
+| **Local ETL** | `local/` | 로컬 파일 (GeoJSON, NetCDF, CSV) | 26개 |
+| **API ETL** | `api/` | 외부 OpenAPI | 12개 |
 
 ---
 
@@ -67,15 +67,38 @@ etl/
 
 ## 사전 요구사항
 
-### 1. Python 환경
+### 1. 서버 시스템 요구사항
+
+ETL 스크립트 실행을 위해 서버에 다음 도구들이 설치되어 있어야 합니다:
+
+| 도구 | 용도 | 필요 스크립트 | 설치 방법 |
+|------|------|---------------|-----------|
+| **PostgreSQL 15+** | 데이터베이스 | 전체 | Docker 또는 시스템 설치 |
+| **PostGIS 3.3+** | 공간 데이터 확장 | 전체 | PostgreSQL과 함께 설치 |
+| **raster2pgsql** | 래스터 데이터 적재 | 05_load_landcover.py | `apt install postgis` |
+| **psql** | PostgreSQL 클라이언트 | 05_load_landcover.py | `apt install postgresql-client` |
+| **GDAL** | 공간 데이터 변환 | (선택) | `apt install gdal-bin` |
+
+```bash
+# Ubuntu/Debian 서버
+apt update
+apt install -y postgresql-client postgis gdal-bin
+
+# macOS (로컬 개발)
+brew install postgresql postgis gdal
+
+# Docker (PostGIS 이미지 사용 시 raster2pgsql 포함)
+docker pull postgis/postgis:15-3.3
+```
+
+> **참고**: `raster2pgsql`은 시스템 레벨 도구이므로 Python에서 자동 설치 불가합니다.
+> 서버 배포 시 위 도구들을 미리 설치해주세요.
+
+### 2. Python 환경
 
 ```bash
 # Python 3.11+ 필요
 python3 --version
-
-# PostGIS 도구 (래스터 데이터용)
-brew install gdal postgis  # macOS
-apt install gdal-bin postgis  # Ubuntu
 ```
 
 ### 2. 가상환경 설정
@@ -182,7 +205,7 @@ SAMPLE_LIMIT=10 python3 scripts/06_load_buildings.py
 | 08 | load_climate_grid.py | location_grid, ta_data 등 | KMA/*.nc | 기후 격자 데이터 |
 | 09 | load_sea_level.py | sea_level_grid, sea_level_data | KMA/sea_level.nc | 해수면 상승 데이터 |
 | 10 | load_water_stress.py | water_stress_rankings | WRI/*.csv | WRI Aqueduct 데이터 |
-| 11 | load_site_data.py | site_*_energy_usage | site_data.xlsx | 사업장 에너지 사용량 |
+| 11 | load_site_data.py | site_additional_data | site_data.xlsx | 사업장 추가 데이터 (JSONB) |
 
 ### 실행 순서 의존성
 

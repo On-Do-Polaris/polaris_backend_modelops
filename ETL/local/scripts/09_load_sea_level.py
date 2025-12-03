@@ -6,7 +6,8 @@ NetCDF 파일에서 해수면 상승 예측 데이터를 로드
 대상 테이블: sea_level_grid, sea_level_data
 예상 데이터: 약 7,000개 레코드
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import sys
@@ -27,14 +28,14 @@ def load_sea_level() -> None:
     try:
         import netCDF4 as nc
     except ImportError:
-        logger.error("❌ netCDF4 모듈이 필요합니다")
+        logger.error("netCDF4 모듈이 필요합니다")
         sys.exit(1)
 
     try:
         conn = get_db_connection()
-        logger.info("✅ 데이터베이스 연결 성공")
+        logger.info("데이터베이스 연결 성공")
     except Exception as e:
-        logger.error(f"❌ 데이터베이스 연결 실패: {e}")
+        logger.error(f"데이터베이스 연결 실패: {e}")
         sys.exit(1)
 
     cursor = conn.cursor()
@@ -44,15 +45,15 @@ def load_sea_level() -> None:
     sea_level_dir = data_dir / "sea_level_rise"
 
     if not sea_level_dir.exists():
-        logger.error(f"❌ sea_level_rise 디렉토리를 찾을 수 없습니다")
+        logger.error(f"sea_level_rise 디렉토리를 찾을 수 없습니다")
         conn.close()
         sys.exit(1)
 
     nc_files = list(sea_level_dir.glob("*annual_mean*.nc"))
-    logger.info(f"📂 {len(nc_files)}개 NetCDF 파일 발견")
+    logger.info(f"{len(nc_files)}개 NetCDF 파일 발견")
 
     if not nc_files:
-        logger.warning("⚠️  NetCDF 파일이 없습니다")
+        logger.warning("NetCDF 파일이 없습니다")
         conn.close()
         return
 
@@ -98,7 +99,7 @@ def load_sea_level() -> None:
             grid_map[(j, i)] = grid_id
 
     conn.commit()
-    logger.info(f"   ✅ sea_level_grid: {len(grid_map)}개 포인트")
+    logger.info(f"   sea_level_grid: {len(grid_map)}개 포인트")
 
     ds.close()
 
@@ -175,14 +176,14 @@ def load_sea_level() -> None:
             conn.commit()
             ds.close()
             total_insert += insert_count
-            logger.info(f"   ✅ {nc_file.name}: {insert_count:,}개")
+            logger.info(f"   {nc_file.name}: {insert_count:,}개")
 
         except Exception as e:
-            logger.warning(f"   ⚠️  오류 ({nc_file.name}): {e}")
+            logger.warning(f"   오류 ({nc_file.name}): {e}")
 
     # 결과 출력
     logger.info("=" * 60)
-    logger.info("✅ 해수면 상승 데이터 로딩 완료")
+    logger.info("해수면 상승 데이터 로딩 완료")
     logger.info(f"   - sea_level_grid: {get_row_count(conn, 'sea_level_grid'):,}개")
     logger.info(f"   - sea_level_data: {get_row_count(conn, 'sea_level_data'):,}개")
     logger.info("=" * 60)

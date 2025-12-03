@@ -9,7 +9,8 @@ Physical Risk 분석에 필요한 10개 API 테이블 ETL
 - api_typhoon_info/track/td/besttrack: 태풍 데이터 (AAL)
 - api_disaster_yearbook: 재해연보
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os

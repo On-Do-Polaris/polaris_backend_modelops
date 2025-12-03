@@ -1,0 +1,15 @@
+# Data files (too large for git)
+local/data/
+api/data/
+
+# Python virtual environments
+.venv/
+__pycache__/
+*.pyc
+
+# Logs
+local/logs/
+api/logs/
+
+# OS files
+.DS_Store

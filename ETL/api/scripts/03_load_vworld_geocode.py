@@ -5,7 +5,8 @@ API: VWorld 역지오코딩
 URL: https://api.vworld.kr/req/address
 용도: 좌표 → 주소 변환 (건축물대장 조회를 위한 시군구코드/법정동코드 획득)
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os

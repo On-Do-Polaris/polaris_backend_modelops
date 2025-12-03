@@ -5,7 +5,8 @@ API: WAMIS 국가수자원관리종합정보시스템 (오픈 API - 키 불필�
 URL: http://www.wamis.go.kr:8080/wamis/openapi/
 용도: 용수이용량, 유량관측소, 실시간 일유량
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os

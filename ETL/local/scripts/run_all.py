@@ -8,7 +8,8 @@ SKALA Physical Risk AI System - 전체 ETL 실행
     python run_all.py --skip 1,2   # 특정 단계 건너뛰기
     python run_all.py --only 3,4   # 특정 단계만 실행
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import sys
@@ -39,7 +40,7 @@ def run_etl(script_name: str, description: str, tables: str, logger) -> bool:
     """개별 ETL 스크립트 실행"""
     try:
         logger.info(f"\n{'='*60}")
-        logger.info(f"📂 {description} 적재 시작")
+        logger.info(f"{description} 적재 시작")
         logger.info(f"   스크립트: {script_name}.py")
         logger.info(f"   테이블: {tables}")
         logger.info(f"{'='*60}")
@@ -59,14 +60,14 @@ def run_etl(script_name: str, description: str, tables: str, logger) -> bool:
         if main_func and callable(main_func):
             main_func()
         else:
-            logger.warning(f"⚠️  실행 함수를 찾을 수 없습니다: {script_name}")
+            logger.warning(f"실행 함수를 찾을 수 없습니다: {script_name}")
             return False
 
-        logger.info(f"✅ {description} 적재 완료")
+        logger.info(f"{description} 적재 완료")
         return True
 
     except Exception as e:
-        logger.error(f"❌ {description} 적재 실패: {e}")
+        logger.error(f"{description} 적재 실패: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -83,7 +84,7 @@ def main():
 
     # 단계 목록 출력
     if args.list:
-        print("\n📋 ETL 단계 목록:")
+        print("\nETL 단계 목록:")
         print("-" * 60)
         for i, (script, desc, tables) in enumerate(ETL_SCRIPTS, 1):
             print(f"  {i:2}. {desc:20} → {tables}")
@@ -103,17 +104,17 @@ def main():
     # 시작
     start_time = datetime.now()
     logger.info("=" * 60)
-    logger.info("🚀 SKALA ETL 전체 실행 시작")
+    logger.info("SKALA ETL 전체 실행 시작")
     logger.info(f"   시작 시간: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
 
     # DB 연결 테스트
     try:
         conn = get_db_connection()
-        logger.info("✅ 데이터베이스 연결 확인 완료")
+        logger.info("데이터베이스 연결 확인 완료")
         conn.close()
     except Exception as e:
-        logger.error(f"❌ 데이터베이스 연결 실패: {e}")
+        logger.error(f"데이터베이스 연결 실패: {e}")
         sys.exit(1)
 
     # ETL 실행
@@ -123,11 +124,11 @@ def main():
     for i, (script, desc, tables) in enumerate(ETL_SCRIPTS, 1):
         # 건너뛰기 체크
         if i in skip_steps:
-            logger.info(f"\n⏭️  {i}. {desc} - 건너뜀")
+            logger.info(f"\n{i}. {desc} - 건너뜀")
             continue
 
         if only_steps and i not in only_steps:
-            logger.info(f"\n⏭️  {i}. {desc} - 건너뜀")
+            logger.info(f"\n{i}. {desc} - 건너뜀")
             continue
 
         # 실행
@@ -141,14 +142,14 @@ def main():
     duration = end_time - start_time
 
     logger.info("\n" + "=" * 60)
-    logger.info("🏁 SKALA ETL 전체 실행 완료")
+    logger.info("SKALA ETL 전체 실행 완료")
     logger.info(f"   종료 시간: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"   소요 시간: {duration}")
     logger.info(f"   성공: {success_count}개, 실패: {fail_count}개")
     logger.info("=" * 60)
 
     # 테이블별 결과 출력
-    logger.info("\n📊 테이블별 적재 결과:")
+    logger.info("\n테이블별 적재 결과:")
     logger.info("-" * 40)
 
     conn = get_db_connection()
@@ -163,7 +164,7 @@ def main():
 
     for table in tables_to_check:
         count = get_row_count(conn, table)
-        status = "✅" if count > 0 else "❌"
+        status = "O" if count > 0 else "X"
         logger.info(f"   {status} {table:30} {count:>10,}개")
 
     conn.close()

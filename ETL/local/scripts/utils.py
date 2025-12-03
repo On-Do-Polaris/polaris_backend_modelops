@@ -2,7 +2,8 @@
 SKALA Physical Risk AI System - ETL 유틸리티
 공통 함수 및 데이터베이스 연결 관리
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os
@@ -201,10 +202,10 @@ if __name__ == "__main__":
         cursor = conn.cursor()
         cursor.execute("SELECT version();")
         version = cursor.fetchone()[0]
-        print(f"✅ Connected: {version}")
+        print(f"Connected: {version}")
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"❌ Connection failed: {e}")
+        print(f"Connection failed: {e}")
 
     print(f"\nData directory: {get_data_dir()}")

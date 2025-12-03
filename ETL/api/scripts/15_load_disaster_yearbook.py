@@ -5,7 +5,8 @@ API: 행정안전부 연도별 자연재해 피해 통계
 URL: https://apis.data.go.kr/1741000/NaturalDisasterDamageByYear/getNaturalDisasterDamageByYear
 용도: 과거 자연재해 피해 통계 (태풍, 호우, 대설 등)
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os
@@ -248,7 +249,7 @@ def load_disaster_yearbook(sample_limit: int = None):
             conn,
             'api_disaster_yearbook',
             all_data,
-            unique_columns=['year'],
+            unique_columns=['year', 'admin_code', 'disaster_type'],  # 스키마 UNIQUE(year, admin_code, disaster_type) 제약조건
             batch_size=50
         )
         logger.info(f"DB 적재 완료: {success_count}건")

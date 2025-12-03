@@ -5,7 +5,8 @@ API: 기상청 API허브 태풍 베스트트랙
 URL: https://apihub.kma.go.kr/api/typ01/url/typ_besttrack.php
 용도: AAL 분석용 과거 태풍 정밀 재분석 데이터 (2015~2022)
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os

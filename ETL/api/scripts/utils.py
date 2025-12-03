@@ -2,7 +2,8 @@
 SKALA Physical Risk AI System - API ETL 유틸리티
 외부 API 호출 및 데이터베이스 연결 관리
 
-최종 수정일: 2025-12-02
+최종 수정일: 2025-12-03
+버전: v01
 """
 
 import os

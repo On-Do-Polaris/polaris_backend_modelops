@@ -1,9 +1,12 @@
 '''
 파일명: hazard_batch.py
-최종 수정일: 2025-12-02
-버전: v04
+최종 수정일: 2025-12-03
+버전: v05
 파일 개요: Hazard Score 전체 배치 계산 (9개 리스크 에이전트 연결) - ProcessPoolExecutor 호환
 변경 이력:
+    - 2025-12-03: v05 - 전처리 레이어 통합
+        * fetch_climate_data()에 risk_type 전달
+        * 리스크별 파생 지표 자동 계산
     - 2025-12-02: v04 - ProcessPoolExecutor 호환성 수정
         * 독립 함수(_process_single_grid_worker) 추출
         * 워커별 에이전트 자체 생성
@@ -60,13 +63,15 @@ def _process_single_grid_worker(coordinate: Dict[str, float]) -> Dict[str, Any]:
             'wildfire': WildfireHScoreAgent()
         }
 
-        # 2. 기후 데이터 조회 (독립 DB 연결)
-        climate_data = DatabaseConnection.fetch_climate_data(latitude, longitude)
-
-        # 3. 9개 리스크별 Hazard Score 계산
+        # 2. 9개 리스크별 Hazard Score 계산 (전처리 레이어 통합)
         hazard_scores = {}
         for risk_type, agent in agents.items():
             try:
+                # 리스크별 전처리된 기후 데이터 조회
+                climate_data = DatabaseConnection.fetch_climate_data(
+                    latitude, longitude, risk_type=risk_type
+                )
+
                 result = agent.calculate_hazard_score(climate_data)
                 if result.get('status') == 'completed':
                     hazard_scores[risk_type] = {

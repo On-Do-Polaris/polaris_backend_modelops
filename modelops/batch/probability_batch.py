@@ -1,9 +1,13 @@
 '''
 파일명: probability_batch.py
-최종 수정일: 2025-12-02
-버전: v04
+최종 수정일: 2025-12-03
+버전: v05
 파일 개요: P(H) 전체 배치 계산 (9개 리스크 에이전트 연결) - ProcessPoolExecutor 호환
 변경 이력:
+    - 2025-12-03: v05 - 전처리 레이어 및 API 클라이언트 통합
+        * fetch_climate_data()에 risk_type 전달
+        * 리스크별 파생 지표 자동 계산
+        * API 클라이언트 통합 (WAMIS, 태풍, 건물)
     - 2025-12-02: v04 - ProcessPoolExecutor 호환성 수정
         * 독립 함수(_process_single_grid_worker) 추출
         * 워커별 에이전트 자체 생성
@@ -60,18 +64,22 @@ def _process_single_grid_worker(coordinate: Dict[str, float]) -> Dict[str, Any]:
             'wildfire': WildfireProbabilityAgent()
         }
 
-        # 2. 기후 데이터 조회 (독립 DB 연결)
-        climate_data = DatabaseConnection.fetch_climate_data(latitude, longitude)
-
-        # 3. 9개 리스크별 P(H) 계산
+        # 2. 9개 리스크별 P(H) 계산 (전처리 레이어 통합)
         probabilities = {}
         for risk_type, agent in agents.items():
             try:
+                # 리스크별 전처리된 기후 데이터 조회
+                climate_data = DatabaseConnection.fetch_climate_data(
+                    latitude, longitude, risk_type=risk_type
+                )
+
                 result = agent.calculate_probability(climate_data)
                 if result.get('status') == 'completed':
                     probabilities[risk_type] = {
                         'aal': result.get('aal'),
-                        'bin_data': result.get('calculation_details', {}).get('bins')
+                        'bin_probabilities': result.get('bin_probabilities'),
+                        'calculation_details': result.get('calculation_details'),
+                        'bin_data': result.get('bin_data')
                     }
                 else:
                     logger.error(
@@ -86,7 +94,7 @@ def _process_single_grid_worker(coordinate: Dict[str, float]) -> Dict[str, Any]:
                 )
                 probabilities[risk_type] = None
 
-        # 4. 결과 저장 (에러 처리 포함)
+        # 3. 결과 저장 (업데이트된 스키마: aal, bin_probabilities, calculation_details)
         try:
             results = []
             for risk_type, data in probabilities.items():
@@ -96,6 +104,8 @@ def _process_single_grid_worker(coordinate: Dict[str, float]) -> Dict[str, Any]:
                         'longitude': longitude,
                         'risk_type': risk_type,
                         'aal': data.get('aal'),
+                        'bin_probabilities': data.get('bin_probabilities'),
+                        'calculation_details': data.get('calculation_details'),
                         'bin_data': data.get('bin_data')
                     })
 

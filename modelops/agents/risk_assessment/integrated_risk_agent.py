@@ -124,6 +124,14 @@ class IntegratedRiskAgent:
                     insurance_rate=insurance_rate,
                     asset_value=asset_value
                 )
+
+                # AAL 등급 분류
+                final_aal = aal_result.get('final_aal', 0.0)
+                grade = self.aal_scaling_agent.classify_aal_grade(final_aal)
+
+                # 등급 정보를 aal_result에 추가
+                aal_result['grade'] = grade
+
                 results['aal_scaled'][risk_type] = aal_result
 
                 # 진행상황 콜백
@@ -291,11 +299,9 @@ class IntegratedRiskAgent:
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
-                'base_aal': aal_result.get('base_aal', 0.0),
-                'vulnerability_scale': aal_result.get('vulnerability_scale', 1.0),
                 'final_aal': aal_result.get('final_aal', 0.0),
                 'insurance_rate': aal_result.get('insurance_rate', 0.0),
-                'expected_loss': aal_result.get('expected_loss')
+                'grade': aal_result.get('grade', '-')
             }])
 
         except Exception as e:
@@ -303,10 +309,15 @@ class IntegratedRiskAgent:
 
     def _calculate_summary(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """요약 통계 계산"""
-        # 총 AAL 계산
-        total_aal_summary = self.aal_scaling_agent.calculate_total_aal(
-            results['aal_scaled']
-        )
+        # 각 리스크별 등급 분류
+        risk_breakdown = {}
+        for risk_type, aal_result in results['aal_scaled'].items():
+            risk_breakdown[risk_type] = {
+                'base_aal': aal_result.get('base_aal', 0.0),
+                'final_aal': aal_result.get('final_aal', 0.0),
+                'grade': aal_result.get('grade', '-'),
+                'expected_loss': aal_result.get('expected_loss')
+            }
 
         # 평균 취약성 계산
         v_scores = [
@@ -334,8 +345,6 @@ class IntegratedRiskAgent:
         )
 
         return {
-            'total_final_aal': total_aal_summary['total_final_aal'],
-            'total_expected_loss': total_aal_summary['total_expected_loss'],
             'average_vulnerability': round(avg_vulnerability, 2),
             'average_exposure': round(avg_exposure, 4),
             'highest_aal_risk': {
@@ -346,7 +355,7 @@ class IntegratedRiskAgent:
                 'risk_type': highest_v_risk[0],
                 'vulnerability_score': highest_v_risk[1].get('vulnerability_score', 0.0)
             },
-            'risk_breakdown': total_aal_summary['risk_breakdown']
+            'risk_breakdown': risk_breakdown
         }
 
     def _get_default_building_info(self) -> Dict[str, Any]:

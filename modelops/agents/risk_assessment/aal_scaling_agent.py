@@ -140,45 +140,67 @@ class AALScalingAgent:
 
         return results
 
-    def calculate_total_aal(
+    def classify_aal_grade(self, final_aal: float) -> str:
+        """
+        단일 AAL 값에 대한 등급 분류
+
+        Args:
+            final_aal: 최종 스케일링된 AAL (% 단위 또는 확률)
+
+        Returns:
+            등급 문자열 ('-', '0~3%', '~6%', '~10%', '~16%', '~30%', '30%~')
+        """
+        # AAL 등급 기준 (% 단위 기준)
+        if final_aal <= 0:  # 0% 이하 (발생 원천 없음)
+            return '-'
+        elif final_aal < 3.0:  # 0~3%
+            return '0~3%'
+        elif final_aal < 6.0:  # 3~6%
+            return '~6%'
+        elif final_aal < 10.0:  # 6~10%
+            return '~10%'
+        elif final_aal < 16.0:  # 10~16%
+            return '~16%'
+        elif final_aal < 30.0:  # 16~30%
+            return '~30%'
+        else:  # 30% 이상
+            return '30%~'
+
+    def classify_aal_grades(
         self,
         scaled_aals: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        모든 리스크의 총 AAL 계산
+        모든 리스크에 대한 AAL 등급 일괄 분류
 
         Args:
             scaled_aals: {risk_type: AAL 스케일링 결과}
 
         Returns:
             {
-                'total_final_aal': float,
-                'total_expected_loss': int | None,
-                'risk_breakdown': {...}
+                risk_type: {
+                    'base_aal': float,
+                    'final_aal': float,
+                    'grade': str,
+                    'grade_description': str,
+                    'expected_loss': int | None
+                }
             }
         """
-        total_final_aal = 0.0
-        total_expected_loss = 0
-        has_loss_data = False
+        results = {}
 
         for risk_type, aal_result in scaled_aals.items():
-            total_final_aal += aal_result.get('final_aal', 0.0)
+            final_aal= aal_result.get('final_aal', 0.0)
+            # base_aal = aal_result.get('base_aal', 0.0)
 
-            expected_loss = aal_result.get('expected_loss')
-            if expected_loss is not None:
-                total_expected_loss += expected_loss
-                has_loss_data = True
+            # 등급 분류
+            grade_info = self.classify_aal_grade(final_aal)
 
-        return {
-            'total_final_aal': round(total_final_aal, 6),
-            'total_expected_loss': total_expected_loss if has_loss_data else None,
-            'risk_breakdown': {
-                risk_type: {
-                    'final_aal': result.get('final_aal', 0.0),
-                    'contribution_pct': round(
-                        result.get('final_aal', 0.0) / total_final_aal * 100, 2
-                    ) if total_final_aal > 0 else 0.0
-                }
-                for risk_type, result in scaled_aals.items()
-            }
-        }
+            # base_aal 및 예상 손실액 추가
+            # grade_info['base_aal'] = base_aal
+            # grade_info['expected_loss'] = aal_result.get('expected_loss')
+
+            results[risk_type] = grade_info
+
+        return results
+

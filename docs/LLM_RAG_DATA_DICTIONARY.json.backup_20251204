@@ -1,0 +1,735 @@
+{
+  "extreme_heat": {
+    "WSDI": {
+      "full_name": "Warm Spell Duration Index (열파 지속 지수)",
+      "definition": "평년(1981-2010) 대비 일최고기온이 90백분위 이상인 날이 최소 6일 연속되는 기간의 연간 일수 합계",
+      "unit": "일/년 (days)",
+      "data_source": "KMA 극값지수",
+      "calculation_method": "분위수 기반 동적 bin 설정 (Q80, Q90, Q95, Q99)",
+      "high_value_means": "WSDI > Q99 (상위 1%)는 극한 폭염을 의미하며, 건물 냉방 부하 증가, 에너지 소비 급증, 인프라 열화 가속을 유발합니다.",
+      "impacts_on": {
+        "financial_risk": "냉방비 급증으로 OPEX 증가. WSDI > Q99 (상위 1% 극한 폭염) 시 손상률 3.5%, 일반 수준(<Q80) 대비 35배 증가. 에너지 비용이 평년 대비 최대 2배까지 상승 가능",
+        "operational_risk": "고온으로 인한 설비 과부하, 직원 생산성 저하, 옥외 작업 제한",
+        "reputation_risk": "기후 적응 능력 부족으로 TCFD 공시에서 물리적 리스크 대응 미흡 평가, ESG 등급 하락 가능성"
+      },
+      "used_in": [
+        "Impact Analysis: 폭염 강도별 에너지 비용 증가율 추정, 냉방 부하 정량화",
+        "Strategy Generation: 건물 단열 개선, 냉방 효율화 투자 우선순위 결정",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 SSP 시나리오별 WSDI 추이 분석, 재무 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "baseline_wsdi": "기준기간(1991-2020) WSDI 데이터로 분위수 임계값 계산, 미래 시나리오와 비교"
+      }
+    }
+  },
+  "extreme_cold": {
+    "CSDI": {
+      "full_name": "Cold Spell Duration Index (한파 지속 지수)",
+      "definition": "평년(1981-2010) 대비 일최저기온이 10백분위 이하인 날이 최소 6일 연속되는 기간의 연간 일수 합계",
+      "unit": "일/년 (days)",
+      "data_source": "KMA 극값지수",
+      "calculation_method": "분위수 기반 동적 bin 설정 (Q80, Q90, Q95, Q99)",
+      "high_value_means": "CSDI > Q99 (상위 1%)는 극한 한파를 의미하며, 배관 동파 위험, 난방 부하 급증, 건물 구조 수축을 유발합니다.",
+      "impacts_on": {
+        "financial_risk": "난방비 급증 및 배관 동파 수리비 발생. CSDI > Q99 (상위 1% 극한 한파) 시 손상률 2.5%, 일반 수준 대비 50배 증가. 난방 비용 평년 대비 최대 3배 상승 가능",
+        "operational_risk": "배관 동파 시 용수 공급 중단, 난방 시스템 과부하로 인한 설비 고장",
+        "reputation_risk": "한파 대응 실패로 TCFD 물리적 리스크 관리 역량 부족 노출, ESG 평가에서 기후 회복력 부족 지적 가능"
+      },
+      "used_in": [
+        "Impact Analysis: 한파 강도별 난방비 증가율 및 배관 동파 확률 추정",
+        "Strategy Generation: 배관 보온 강화, 비상 난방 시스템 구축 투자 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 극한 한파 시나리오 분석, 운영 연속성 계획 공시"
+      ],
+      "interaction_with_other_data": {
+        "baseline_csdi": "기준기간 CSDI 데이터로 분위수 임계값 계산"
+      }
+    }
+  },
+  "wildfire": {
+    "TA": {
+      "full_name": "평균 기온 (Temperature Average)",
+      "definition": "월평균 기온 (FWI 계산용)",
+      "unit": "°C",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "기온이 높을수록 FWI 지수가 지수적으로 증가. TA 1°C 상승 시 FWI 8.3% 증가 (exp(0.08) 기반, 온도 계수 0.08)",
+      "impacts_on": {
+        "financial_risk": "산불 위험 증가로 보험료 상승, 산불 발생 시 자산 손실",
+        "operational_risk": "고온으로 인한 산불 위험 증가, 옥외 작업 중단",
+        "reputation_risk": "산불 대응 미흡 시 ESG 평가에서 환경 리스크 관리 부족 지적"
+      },
+      "used_in": [
+        "Impact Analysis: 기온 상승에 따른 FWI 증가율 정량화",
+        "Strategy Generation: 고온 시즌 방화대 조성, 감시 강화 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 산불 리스크 시나리오 분석"
+      ],
+      "interaction_with_other_data": {
+        "RHM": "고온 + 저습 조합 시 FWI 최대화",
+        "WS": "고온 + 강풍 조합 시 산불 확산 속도 급증",
+        "RN": "고온 + 무강수 조합 시 산림 건조 심화"
+      },
+      "calculation_formula": "temp_factor = exp(0.08 × (TA - 5))"
+    },
+    "RHM": {
+      "full_name": "상대 습도 (Relative Humidity)",
+      "definition": "월평균 상대 습도 (FWI 계산용)",
+      "unit": "%",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "습도가 낮을수록 FWI 급증. 습도 10% 하락 (예: 90% → 80%) 시 FWI 41% 증가 (제곱근 효과)",
+      "impacts_on": {
+        "financial_risk": "저습으로 인한 산불 위험 증가, 보험료 상승",
+        "operational_risk": "산불 위험으로 현장 작업 중단",
+        "reputation_risk": "산불 대응 실패 시 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 습도별 FWI 변화율 추정",
+        "Strategy Generation: 저습 시즌 방화 감시 강화",
+        "Report Generation: TCFD 산불 리스크 분석에서 습도 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "TA": "저습 + 고온 조합 시 FWI 최대화",
+        "WS": "저습 + 강풍 조합 시 산불 확산 속도 5배 증가"
+      },
+      "calculation_formula": "humidity_factor = (1 - RHM/100)^0.5"
+    },
+    "WS": {
+      "full_name": "풍속 (Wind Speed)",
+      "definition": "월평균 풍속 (FWI 계산용)",
+      "unit": "m/s",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "풍속이 강할수록 FWI 지수적 증가. 풍속 10km/h 증가 시 FWI 65% 증가 (exp(0.5039) 기반, 캐나다 ISI 방식)",
+      "impacts_on": {
+        "financial_risk": "강풍 시 산불 확산 속도 급증, 피해 규모 확대로 손실 증가",
+        "operational_risk": "강풍으로 인한 산불 진화 어려움",
+        "reputation_risk": "산불 대응 실패 시 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 풍속별 FWI 증가율 및 산불 확산 속도 추정",
+        "Strategy Generation: 강풍 시즌 방화대 확장 투자 우선순위",
+        "Report Generation: TCFD 산불 리스크 분석에서 풍속 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "RHM": "강풍 + 저습 조합 시 산불 확산 속도 급증",
+        "TA": "강풍 + 고온 조합 시 FWI 200 이상"
+      },
+      "calculation_formula": "wind_factor = exp(0.05039 × WS_kmh), WS_kmh = WS × 3.6"
+    },
+    "RN": {
+      "full_name": "강수량 (Rainfall)",
+      "definition": "월 강수량 (FWI 계산용)",
+      "unit": "mm",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "무강수 시 FWI 급증. RN < 10mm 시 FWI 약 2배 증가",
+      "impacts_on": {
+        "financial_risk": "가뭄으로 인한 산불 위험 증가, 보험료 상승",
+        "operational_risk": "산림 건조로 산불 진화 어려움",
+        "reputation_risk": "산불 대응 미흡 시 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 강수량별 FWI 변화율 추정",
+        "Strategy Generation: 무강수 시즌 방화 감시 강화",
+        "Report Generation: TCFD 산불 리스크 분석에서 강수 패턴 변화 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "TA": "무강수 + 고온 조합 시 산림 건조 심화",
+        "RHM": "무강수 + 저습 조합 시 FWI 최대화"
+      },
+      "calculation_formula": "rain_factor = exp(-0.0005 × RN)"
+    },
+    "FWI": {
+      "full_name": "Fire Weather Index (산불 위험 지수)",
+      "definition": "기온, 습도, 풍속, 강수량을 종합한 산불 위험 지수",
+      "unit": "무차원 (지수)",
+      "data_source": "TA, RHM, WS, RN 기반 계산",
+      "calculation_method": "월별 기후 데이터로 FWI 계산 후 bin 분류",
+      "calculation_formula": "FWI = (1 - RHM/100)^0.5 × exp(0.05039 × WS_kmh) × exp(0.08 × (TA - 5)) × exp(-0.0005 × RN) × 5",
+      "high_value_means": "FWI > 50은 산불 고위험, FWI > 100은 산불 극한 위험으로 진화 거의 불가능을 의미합니다.",
+      "impacts_on": {
+        "financial_risk": "산불 발생 시 자산 손실 및 영업 중단 손실. FWI ≥ 50 (Extreme) 시 손상률 25%, Moderate(11.2-21.3, 손상률 1%) 대비 25배 증가",
+        "operational_risk": "산불 위험으로 현장 작업 전면 중단",
+        "reputation_risk": "산불 대응 실패 시 ESG 평가에서 환경 리스크 관리 능력 부족 노출"
+      },
+      "used_in": [
+        "Impact Analysis: FWI별 산불 발화 확률 및 재무 손실 추정",
+        "Strategy Generation: FWI 임계값별 대응 매뉴얼 수립, 방화대 투자 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 산불 리스크 시계열 분석, SSP 시나리오별 FWI 추이"
+      ],
+      "interaction_with_other_data": {
+        "TA": "온도 상승 → FWI 지수적 증가",
+        "RHM": "습도 하락 → FWI 급증",
+        "WS": "풍속 증가 → FWI 지수적 증가",
+        "RN": "강수 감소 → FWI 증가"
+      }
+    }
+  },
+  "drought": {
+    "SPEI_12": {
+      "full_name": "Standardized Precipitation-Evapotranspiration Index 12개월",
+      "definition": "강수량과 증발산량을 고려한 12개월 누적 수분 가용성 지수. 음수는 가뭄, 양수는 습윤을 의미",
+      "unit": "무차원 (표준화 지수)",
+      "data_source": "KMA SPEI 데이터",
+      "calculation_method": "월별 SPEI-12 값을 bin으로 분류 (>-1, -1~-1.5, -1.5~-2.0, ≤-2.0)",
+      "high_value_means": "SPEI-12 ≤ -2.0 (극심 가뭄)은 용수 공급 제한, 토양 수분 고갈, 화재 위험 증가를 의미합니다.",
+      "impacts_on": {
+        "financial_risk": "가뭄으로 인한 용수비 증가, 생산 차질. SPEI-12 ≤ -2.0 (극심 가뭄) 시 손상률 20%, 중간 가뭄(-1.5~-1, 손상률 2%) 대비 10배 증가. 용수 비용 최대 3배 상승 가능",
+        "operational_risk": "용수 공급 제한으로 냉각수 부족, 제조 공정 중단 위험",
+        "reputation_risk": "물 사용 효율 저하로 ESG 평가에서 수자원 관리 역량 부족 지적, CDP Water 등급 하락 가능"
+      },
+      "used_in": [
+        "Impact Analysis: 가뭄 심도별 용수 비용 증가 및 생산 차질 정량화",
+        "Strategy Generation: 빗물 저장 시설, 절수 설비 도입 우선순위 결정",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 물 스트레스 대응 전략 공시, SSP 시나리오별 가뭄 영향 분석"
+      ],
+      "interaction_with_other_data": {
+        "monthly_data": "월별 SPEI-12 값을 평탄화하여 월 기반 확률 계산"
+      }
+    }
+  },
+  "water_stress": {
+    "TA": {
+      "full_name": "평균 기온 (Temperature Average)",
+      "definition": "월평균 기온 (ET0 계산용)",
+      "unit": "°C",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "기온이 높을수록 증발산량(ET0) 증가 → 유효강수량(P_eff) 감소 → 수자원 가용량(TRWR) 감소",
+      "impacts_on": {
+        "financial_risk": "고온으로 인한 ET0 증가 → 수자원 부족 → 용수비 증가",
+        "operational_risk": "수자원 감소로 냉각수 공급 제한, 생산 설비 가동 제약",
+        "reputation_risk": "물 스트레스 대응 미흡 시 CDP Water 등급 하락, ESG 평가에서 수자원 관리 역량 부족 지적"
+      },
+      "used_in": [
+        "Impact Analysis: 기온 상승에 따른 ET0 증가 및 수자원 가용량 감소 정량화",
+        "Strategy Generation: 용수 재이용 시스템, 절수 설비 투자 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 물 스트레스 시나리오 분석"
+      ],
+      "interaction_with_other_data": {
+        "RHM": "고온 + 저습 → ET0 최대화 → 수자원 급감",
+        "SI": "고온 + 고일사 → ET0 증가 → P_eff 감소",
+        "RN": "고온 + 무강수 → P_eff 음수 가능 → TRWR 급감"
+      },
+      "calculation_formula": "Penman-Monteith 식에서 포화수증기압(es), 실제수증기압(ea), 기울기(Δ) 계산에 사용"
+    },
+    "RHM": {
+      "full_name": "상대 습도 (Relative Humidity)",
+      "definition": "월평균 상대 습도 (ET0 계산용)",
+      "unit": "%",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "습도가 낮을수록 ET0 증가 → 수자원 가용량 감소",
+      "impacts_on": {
+        "financial_risk": "저습으로 인한 ET0 증가 → 수자원 부족 → 용수비 증가",
+        "operational_risk": "수자원 감소로 생산 차질",
+        "reputation_risk": "물 사용 효율 저하 → ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 습도 변화에 따른 ET0 및 수자원 가용량 추정",
+        "Strategy Generation: 저습 시즌 용수 사용 최적화",
+        "Report Generation: TCFD 물 스트레스 분석에서 습도 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "TA": "저습 + 고온 → ET0 최대화",
+        "WS": "저습 + 강풍 → ET0 급증"
+      },
+      "calculation_formula": "실제수증기압 ea = es × (RHM / 100)"
+    },
+    "WS": {
+      "full_name": "풍속 (Wind Speed)",
+      "definition": "월평균 풍속 (ET0 계산용)",
+      "unit": "m/s",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "풍속이 강할수록 ET0 증가 → 수자원 가용량 감소",
+      "impacts_on": {
+        "financial_risk": "강풍으로 인한 ET0 증가 → 수자원 부족 → 용수비 증가",
+        "operational_risk": "수자원 감소로 냉각수 공급 제한",
+        "reputation_risk": "물 스트레스 대응 미흡 시 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 풍속 변화에 따른 ET0 및 수자원 가용량 추정",
+        "Strategy Generation: 용수 절감 기술 도입 우선순위",
+        "Report Generation: TCFD 물 스트레스 분석에서 풍속 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "RHM": "강풍 + 저습 → ET0 급증",
+        "SI": "강풍 + 고일사 → ET0 최대화"
+      },
+      "calculation_formula": "풍속 보정 u2 = WS × 4.87 / ln(67.8 × 10 - 5.42), Aerodynamic Term에 사용"
+    },
+    "SI": {
+      "full_name": "일사량 (Solar Irradiance)",
+      "definition": "월평균 일사량 (ET0 계산용)",
+      "unit": "W/m²",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "일사량이 높을수록 ET0 증가 → 수자원 가용량 감소",
+      "impacts_on": {
+        "financial_risk": "고일사로 인한 ET0 증가 → 수자원 부족 → 용수비 증가",
+        "operational_risk": "수자원 감소로 냉각수 공급 제한",
+        "reputation_risk": "물 스트레스 대응 미흡 시 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 일사량 변화에 따른 ET0 및 수자원 가용량 추정",
+        "Strategy Generation: 일사 패턴 고려한 용수 사용 최적화",
+        "Report Generation: TCFD 물 스트레스 분석에서 일사량 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "TA": "고일사 + 고온 → ET0 최대화",
+        "WS": "고일사 + 강풍 → ET0 급증"
+      },
+      "calculation_formula": "Rs ≈ SI × 0.0864 (MJ/m²/day) → 순복사량(Rn) 계산 → Radiation Term"
+    },
+    "RN": {
+      "full_name": "강수량 (Rainfall)",
+      "definition": "월 강수량",
+      "unit": "mm",
+      "data_source": "KMA 기후 데이터",
+      "high_value_means": "무강수 시 유효강수량(P_eff) 음수 → TRWR 급감 → WSI 급등",
+      "impacts_on": {
+        "financial_risk": "무강수로 인한 P_eff 음수 → 수자원 고갈 → 용수비 급증",
+        "operational_risk": "수자원 부족으로 생산 중단",
+        "reputation_risk": "물 사용 제한 위반 시 법적 제재, ESG 평가 최하위"
+      },
+      "used_in": [
+        "Impact Analysis: 강수 패턴 변화에 따른 수자원 가용량 및 WSI 추정",
+        "Strategy Generation: 빗물 저장 시설 투자 우선순위",
+        "Report Generation: TCFD 물 스트레스 분석에서 강수 변동성 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "TA": "무강수 + 고온 → P_eff 음수",
+        "ET0": "무강수 + 고ET0 → P_eff 대폭 감소"
+      },
+      "calculation_formula": "P_eff = RN - ET0 (유효강수량)"
+    },
+    "BWS": {
+      "full_name": "Baseline Water Stress (Aqueduct 4.0 물 스트레스 지수)",
+      "definition": "WRI Aqueduct 4.0에서 제공하는 미래 물 스트레스 지수 (2030, 2050, 2080)",
+      "unit": "무차원 (비율, 0~5 점수)",
+      "data_source": "Aqueduct 4.0 (World Resources Institute)",
+      "calculation_method": "WRI의 글로벌 물 스트레스 모델 기반. 미래 시나리오(SSP1-5)별 물 스트레스 예측치 제공",
+      "high_value_means": "BWS ≥ 4.0 (Extremely High Water Stress)은 용수 공급이 수요의 80% 이상 소진되는 지역으로, 심각한 물 부족 위험을 의미합니다.",
+      "impacts_on": {
+        "financial_risk": "BWS ≥ 4.0 시 용수 공급 제한으로 생산 차질, 용수비 급등, 대체 수원 확보 비용 증가",
+        "operational_risk": "물 스트레스 고위험 지역에서 냉각수/공정용수 공급 중단 → 설비 가동 중지",
+        "reputation_risk": "물 스트레스 고위험 지역 입지로 CDP Water 최하위 등급, ESG 평가에서 수자원 리스크 관리 능력 부족 노출"
+      },
+      "used_in": [
+        "Impact Analysis: 미래 물 스트레스 시나리오별 용수 공급 제약 정량화",
+        "Strategy Generation: 고위험 지역 대체 수원 확보, 용수 재이용 시스템 투자 우선순위 결정",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 SSP 시나리오별 물 스트레스 추이 분석, Aqueduct 4.0 BWS 데이터 인용"
+      ],
+      "interaction_with_other_data": {
+        "Withdrawal": "BWS와 실제 용수이용량 조합 → 실제 물 스트레스 리스크 수준 판단",
+        "Flow": "하천 유량 감소 시 BWS 악화 → 물 스트레스 증가",
+        "WSI": "BWS는 미래 예측치, WSI는 현재 계산치 → 두 지표 비교로 물 스트레스 추세 파악"
+      }
+    },
+    "Flow": {
+      "full_name": "Daily River Flow (실시간 일유량)",
+      "definition": "하천 관측소에서 측정한 일별 유량 데이터",
+      "unit": "m³/s (초당 입방미터)",
+      "data_source": "유량 관측소 (수자원공사, 환경부)",
+      "calculation_method": "관측소별 일 유량 데이터 수집 → TRWR(Total Renewable Water Resources) 계산에 활용",
+      "high_value_means": "유량이 낮을수록 가용 수자원 감소 → TRWR 하락 → WSI 상승. 극저유량(Q10 이하) 시 용수 공급 제한 가능",
+      "impacts_on": {
+        "financial_risk": "유량 감소 시 TRWR 하락 → WSI 상승 → 용수비 증가, 생산 차질",
+        "operational_risk": "극저유량 시 취수 제한으로 냉각수/공정용수 공급 중단 → 설비 가동 중지",
+        "reputation_risk": "유량 감소로 물 스트레스 악화 시 CDP Water 평가에서 수자원 관리 역량 부족 지적"
+      },
+      "used_in": [
+        "Impact Analysis: 유량 변동에 따른 TRWR 및 WSI 변화 정량화, 극저유량 시나리오별 용수 공급 제약 분석",
+        "Strategy Generation: 유량 모니터링 기반 용수 사용 최적화, 저유량 시즌 비상 용수 확보 계획 수립",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 유량 추세 분석, SSP 시나리오별 유량 감소 영향 정량화"
+      ],
+      "interaction_with_other_data": {
+        "RN": "강수량 감소 → 유량 감소 → TRWR 하락",
+        "ET0": "증발산량 증가 → 유효강수량 감소 → 유량 감소",
+        "WSI": "유량 감소 → TRWR 하락 → WSI 상승",
+        "BWS": "미래 유량 감소 예측은 BWS에 반영됨"
+      }
+    },
+    "Withdrawal": {
+      "full_name": "Water Withdrawal (용수이용량)",
+      "definition": "지역별 연간 용수 취수량 (생활용수, 공업용수, 농업용수 포함)",
+      "unit": "m³/year (연간 입방미터)",
+      "data_source": "WAMIS (국가 수자원 관리 종합정보 시스템), Aqueduct 4.0 (미래 예측)",
+      "calculation_method": "WAMIS: 과거 실측 용수이용량. Aqueduct 4.0: SSP 시나리오별 미래 용수 수요 예측",
+      "high_value_means": "용수이용량이 높을수록 WSI 상승 → 물 스트레스 증가. Withdrawal > ARWR 시 수자원 고갈 위험",
+      "impacts_on": {
+        "financial_risk": "용수이용량 증가 → WSI 상승 → 용수비 급등, 용수 공급 제한 시 생산 차질로 매출 손실",
+        "operational_risk": "용수이용량이 ARWR을 초과할 경우 강제 취수 제한 → 설비 가동 중단",
+        "reputation_risk": "과도한 용수이용으로 CDP Water 평가에서 수자원 관리 미흡 판정, ESG 등급 하락, 지역 사회 반발"
+      },
+      "used_in": [
+        "Impact Analysis: 용수이용량 증가율에 따른 WSI 변화 및 용수비 증가 정량화",
+        "Strategy Generation: 용수 재이용률 목표 설정, 절수 설비 투자 ROI 계산, 용수이용량 감축 로드맵 수립",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 SSP 시나리오별 용수 수요 증가 분석, 용수이용량 감축 목표 및 실적 공시"
+      ],
+      "interaction_with_other_data": {
+        "WSI": "WSI = Withdrawal / ARWR → 용수이용량이 WSI의 분자. 용수이용량 10% 증가 시 WSI 10% 증가 (선형 관계)",
+        "BWS": "Aqueduct 4.0 BWS 계산 시 미래 Withdrawal 예측치 사용",
+        "Flow": "유량 감소 시 ARWR 하락 → 동일 Withdrawal에도 WSI 상승"
+      }
+    },
+    "WSI": {
+      "full_name": "Water Stress Index (물 스트레스 지수)",
+      "definition": "용수이용량 / 가용 수자원 (ARWR)",
+      "unit": "무차원 (비율)",
+      "data_source": "WAMIS 용수이용량, 유량 관측소 데이터, Aqueduct 4.0 BWS (미래)",
+      "calculation_method": "WSI = Withdrawal / ARWR, ARWR = TRWR × scale_factor × 0.63 (환경유지유량 차감)",
+      "calculation_formula": "scale_factor = P_eff(year) / P_eff(baseline), P_eff = RN - ET0",
+      "high_value_means": "WSI ≥ 0.8 (극심한 물 스트레스)은 용수 공급 제한, 생산 중단 위험을 의미합니다. WRI 기준 적용.",
+      "impacts_on": {
+        "financial_risk": "WSI ≥ 0.8 시 용수 공급 제한으로 생산 차질, 용수비 급등. 손상률 15%, 낮은 물 스트레스(WSI < 0.2, 손상률 1%) 대비 15배 증가",
+        "operational_risk": "용수 부족으로 냉각수 공급 중단 → 설비 가동 중지",
+        "reputation_risk": "물 스트레스 대응 미흡 시 CDP Water 최하위 등급, ESG 평가에서 수자원 관리 능력 부족 노출, 투자자 신뢰 하락"
+      },
+      "used_in": [
+        "Impact Analysis: WSI별 용수비 증가율 및 생산 차질 정량화",
+        "Strategy Generation: 용수 재이용 시스템, 절수 설비 투자 ROI 계산",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 SSP 시나리오별 WSI 추이 분석, 물 스트레스 대응 전략 공시"
+      ],
+      "interaction_with_other_data": {
+        "TA": "고온 → ET0 증가 → P_eff 감소 → scale_factor 하락 → WSI 상승",
+        "RHM": "저습 → ET0 증가 → WSI 상승",
+        "WS": "강풍 → ET0 증가 → WSI 상승",
+        "SI": "고일사 → ET0 증가 → WSI 상승",
+        "RN": "무강수 → P_eff 감소 → WSI 급등",
+        "BWS": "미래 WSI 예측치 = Aqueduct 4.0 BWS",
+        "Flow": "유량 감소 → TRWR 하락 → WSI 상승",
+        "Withdrawal": "용수이용량 증가 → WSI 상승"
+      }
+    }
+  },
+  "sea_level_rise": {
+    "ZOS": {
+      "full_name": "Sea Surface Height (해수면 높이)",
+      "definition": "해수면 높이 (미래 시나리오 기반)",
+      "unit": "m",
+      "data_source": "CMIP6 SSP 시나리오 데이터",
+      "calculation_method": "SSP 시나리오별 미래 해수면 높이 추정",
+      "high_value_means": "ZOS > 1.0m는 해안 지역 침수 위험을 의미하며, 해수 역류로 인한 지하 시설 침수 위험이 높습니다.",
+      "impacts_on": {
+        "financial_risk": "해수면 상승으로 해안 자산 가치 하락, 침수 복구비 증가. 침수 깊이 ≥ 1.0m 시 손상률 35%, 경미 피해(0-0.3m, 손상률 2%) 대비 17.5배 증가. 침수 깊이 0.3m → 1.0m 증가 시 손상률 7.5배 (2% → 15%) 증가",
+        "operational_risk": "해수 역류로 지하층 침수, 업무 중단",
+        "reputation_risk": "해안 침수 대응 미흡 시 ESG 평가에서 기후 리스크 관리 능력 부족 노출, 투자자 우려 증가"
+      },
+      "used_in": [
+        "Impact Analysis: ZOS별 침수 확률 및 자산 가치 하락 추정",
+        "Strategy Generation: 방조제 설치, 저지대 자산 매각 vs 보강 투자 비교",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 SSP 시나리오별 해수면 상승 영향 분석, 장기 적응 전략 공시"
+      ],
+      "interaction_with_other_data": {
+        "baseline_zos": "과거 해수면 높이와 미래 시나리오 비교"
+      }
+    }
+  },
+  "river_flood": {
+    "RX1DAY": {
+      "full_name": "Max 1-day Precipitation (일 최대 강수량)",
+      "definition": "연중 1일 최대 강수량",
+      "unit": "mm/day",
+      "data_source": "KMA 극값지수",
+      "calculation_method": "연도별 RX1DAY 값을 bin으로 분류 (고정 임계값 기반)",
+      "high_value_means": "RX1DAY > 200mm는 대규모 하천 범람 위험을 의미하며, 건물 침수, 인프라 손상을 유발합니다.",
+      "impacts_on": {
+        "financial_risk": "하천 범람 시 침수 복구비 및 자산 손실. RX1DAY > Q99 (상위 1% 강우) 시 손상률 20%, 상위 20% 강우(Q80-Q95, 손상률 2%) 대비 10배 증가. 대규모 홍수 시 복구 비용 수십억 원 규모",
+        "operational_risk": "침수로 인한 전산장비 손실, 업무 중단, 물류 마비",
+        "reputation_risk": "홍수 대응 실패로 TCFD 물리적 리스크 관리 능력 부족 노출, ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 강수량별 침수 확률 및 재무 손실 추정",
+        "Strategy Generation: 방수벽 설치, 배수 펌프 용량 확대 투자 ROI 계산",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 홍수 시나리오 분석, 적응 대책 공시"
+      ],
+      "interaction_with_other_data": {
+        "baseline_rx1day": "과거 RX1DAY 추세를 미래 시나리오와 비교"
+      }
+    }
+  },
+  "urban_flood": {
+    "RAIN80": {
+      "full_name": "일 최대 80mm 이상 강우 발생 일수",
+      "definition": "연중 일 강수량이 80mm 이상인 날의 일수",
+      "unit": "일/년 (days)",
+      "data_source": "KMA 극값지수",
+      "calculation_method": "연도별 RAIN80 일수를 bin으로 분류",
+      "high_value_means": "RAIN80 > 10일은 도시 침수 고빈도 지역을 의미하며, 하수도 역류, 저지대 침수 빈발을 나타냅니다.",
+      "impacts_on": {
+        "financial_risk": "도시 침수 복구비 및 영업 중단 손실. RAIN80 ≥ 8일 (고빈도 홍수) 시 손상률 45%, 저빈도(1-2일, 손상률 3%) 대비 15배 증가. 호우일수 3-4일에서 5-7일로 증가 시 손상률 2.5배 증가. 반복적 침수 시 연간 수억 원 손실 가능",
+        "operational_risk": "하수도 역류로 인한 위생 문제, 지하 시설 침수",
+        "reputation_risk": "도시 침수 대응 미흡으로 ESG 평가에서 기후 회복력 부족 지적"
+      },
+      "used_in": [
+        "Impact Analysis: RAIN80 빈도별 침수 확률 및 손실액 추정",
+        "Strategy Generation: 배수 시스템 개선, 차수판 설치 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 도시 침수 대응 계획 공시"
+      ],
+      "interaction_with_other_data": {
+        "baseline_rain80": "과거 RAIN80 추세 분석"
+      }
+    }
+  },
+  "typhoon": {
+    "lon": {
+      "full_name": "태풍 중심 경도 (Longitude)",
+      "definition": "태풍 중심의 경도 좌표 (베스트트랙 시점별 데이터)",
+      "unit": "도 (degree)",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "사이트 경도와의 거리 계산에 사용. 거리가 가까울수록 태풍 영향 증가",
+      "impacts_on": {
+        "financial_risk": "태풍 직접 영향 시 건물 손상, 자산 손실",
+        "operational_risk": "태풍 영향권 내 업무 중단",
+        "reputation_risk": "태풍 대응 실패 시 ESG 평가에서 기후 회복력 부족 노출"
+      },
+      "used_in": [
+        "Impact Analysis: 태풍 경로와 사이트 거리 기반 영향 확률 계산",
+        "Strategy Generation: 태풍 대비 시설 보강 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 태풍 노출도 분석"
+      ],
+      "interaction_with_other_data": {
+        "lat": "lon + lat → 사이트와 태풍 중심 간 거리 계산 (km 단위 변환)",
+        "gale_long/gale_short/gale_dir": "거리 + 강풍 타원 → 영향권 판정"
+      },
+      "calculation_formula": "dx_km = (site_lon - typhoon_lon) × 111km × cos(평균위도)"
+    },
+    "lat": {
+      "full_name": "태풍 중심 위도 (Latitude)",
+      "definition": "태풍 중심의 위도 좌표 (베스트트랙 시점별 데이터)",
+      "unit": "도 (degree)",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "사이트 위도와의 거리 계산에 사용. 거리가 가까울수록 태풍 영향 증가",
+      "impacts_on": {
+        "financial_risk": "태풍 직접 영향 시 건물 손상, 자산 손실",
+        "operational_risk": "태풍 영향권 내 업무 중단",
+        "reputation_risk": "태풍 대응 실패 시 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 태풍 경로와 사이트 거리 기반 영향 확률 계산",
+        "Strategy Generation: 태풍 대비 시설 보강 우선순위",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 태풍 노출도 분석"
+      ],
+      "interaction_with_other_data": {
+        "lon": "lon + lat → 사이트와 태풍 중심 간 거리 계산",
+        "storm_long/storm_short/storm_dir": "거리 + 폭풍 타원 → 영향권 판정"
+      },
+      "calculation_formula": "dy_km = (site_lat - typhoon_lat) × 111km"
+    },
+    "grade": {
+      "full_name": "태풍 등급 (Typhoon Grade)",
+      "definition": "태풍 강도 등급 (TD, TS, STS, TY)",
+      "possible_values": ["TD (Tropical Depression, 열대저압부)", "TS (Tropical Storm, 열대폭풍)", "STS (Severe Tropical Storm, 강한열대폭풍)", "TY (Typhoon, 태풍)"],
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "TY (태풍) 등급은 최대 풍속 33m/s 이상으로 건물 구조 손상 위험이 높습니다.",
+      "impacts_on": {
+        "financial_risk": "TY 등급 태풍 직접 영향 시 건물 손상, 복구 비용 증가",
+        "operational_risk": "TY 등급 태풍 시 업무 전면 중단, 장기 복구 기간",
+        "reputation_risk": "강력한 태풍 대응 실패 시 ESG 평가에서 기후 회복력 미흡 노출"
+      },
+      "used_in": [
+        "Impact Analysis: 태풍 등급별 피해 규모 추정",
+        "Strategy Generation: 등급별 대응 매뉴얼 수립",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 태풍 강도 시나리오 분석"
+      ],
+      "interaction_with_other_data": {
+        "storm_long/storm_short": "TY + 폭풍 타원 내 → bin_inst = 3 (최고 영향)",
+        "gale_long/gale_short": "TS + 강풍 타원 내 → bin_inst = 1"
+      },
+      "calculation_formula": "bin_inst 결정: grade + 타원 영향권 → 0 (영향 없음) ~ 3 (TY급 영향)"
+    },
+    "gale_long": {
+      "full_name": "강풍 타원 장반경 (Gale Ellipse Semi-major Axis)",
+      "definition": "강풍 영향권 타원의 장반경 (풍속 15m/s 이상 영역)",
+      "unit": "km",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "강풍 타원 내 진입 시 풍속 15m/s 이상, 간판/유리창 파손 위험",
+      "impacts_on": {
+        "financial_risk": "강풍 영향권 내 외벽 손상, 간판 파손",
+        "operational_risk": "강풍으로 외부 작업 중단",
+        "reputation_risk": "태풍 피해로 고객 불만, ESG 평가 영향"
+      },
+      "used_in": [
+        "Impact Analysis: 강풍 영향권 면적 및 피해 확률 계산",
+        "Strategy Generation: 강풍 대비 외벽 보강 우선순위",
+        "Report Generation: TCFD 태풍 리스크 분석에서 강풍 영향 범위 정량화"
+      ],
+      "interaction_with_other_data": {
+        "gale_short/gale_dir": "장반경 + 단반경 + 회전각 → 타원 정의",
+        "grade": "강풍 타원 + TS/STS/TY → bin_inst = 1"
+      },
+      "calculation_formula": "is_inside_ellipse(dx, dy, gale_long, gale_short, gale_dir) → 타원 내부 판정"
+    },
+    "gale_short": {
+      "full_name": "강풍 타원 단반경 (Gale Ellipse Semi-minor Axis)",
+      "definition": "강풍 영향권 타원의 단반경",
+      "unit": "km",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "강풍 타원 형태 정의에 사용",
+      "impacts_on": {
+        "financial_risk": "강풍 영향권 내 외벽 손상",
+        "operational_risk": "강풍으로 외부 작업 중단",
+        "reputation_risk": "태풍 피해로 ESG 평가 영향"
+      },
+      "used_in": [
+        "Impact Analysis: 강풍 영향권 면적 계산",
+        "Strategy Generation: 강풍 대비 시설 보강",
+        "Report Generation: TCFD 태풍 리스크 분석"
+      ],
+      "interaction_with_other_data": {
+        "gale_long/gale_dir": "타원 정의"
+      },
+      "calculation_formula": "타원 방정식: (x_rot/gale_long)² + (y_rot/gale_short)² ≤ 1"
+    },
+    "gale_dir": {
+      "full_name": "강풍 타원 회전 방향 (Gale Ellipse Direction)",
+      "definition": "강풍 영향권 타원의 회전 각도 (북쪽 기준 시계방향)",
+      "unit": "도 (degree)",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "타원 회전 각도, 태풍 진행 방향 반영",
+      "impacts_on": {
+        "financial_risk": "강풍 영향권 내 외벽 손상",
+        "operational_risk": "강풍으로 외부 작업 중단",
+        "reputation_risk": "태풍 피해로 ESG 평가 영향"
+      },
+      "used_in": [
+        "Impact Analysis: 강풍 영향권 판정",
+        "Strategy Generation: 강풍 대비 시설 보강",
+        "Report Generation: TCFD 태풍 리스크 분석"
+      ],
+      "interaction_with_other_data": {
+        "gale_long/gale_short": "타원 정의"
+      },
+      "calculation_formula": "회전 변환: x_rot = dx × cos(θ) + dy × sin(θ), θ = gale_dir (라디안)"
+    },
+    "storm_long": {
+      "full_name": "폭풍 타원 장반경 (Storm Ellipse Semi-major Axis)",
+      "definition": "폭풍 영향권 타원의 장반경 (풍속 25m/s 이상 영역)",
+      "unit": "km",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "폭풍 타원 내 진입 시 풍속 25m/s 이상, 건물 구조 손상 위험",
+      "impacts_on": {
+        "financial_risk": "폭풍 영향권 내 건물 구조 손상, 대규모 복구 비용",
+        "operational_risk": "폭풍으로 업무 전면 중단",
+        "reputation_risk": "폭풍 피해로 ESG 평가 대폭 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 폭풍 영향권 면적 및 피해 규모 추정",
+        "Strategy Generation: 구조 보강 투자 우선순위",
+        "Report Generation: TCFD 태풍 리스크 분석에서 폭풍 영향 범위 정량화"
+      ],
+      "interaction_with_other_data": {
+        "storm_short/storm_dir": "장반경 + 단반경 + 회전각 → 타원 정의",
+        "grade": "폭풍 타원 + TY → bin_inst = 3, STS → bin_inst = 2"
+      },
+      "calculation_formula": "is_inside_ellipse(dx, dy, storm_long, storm_short, storm_dir) → 타원 내부 판정"
+    },
+    "storm_short": {
+      "full_name": "폭풍 타원 단반경 (Storm Ellipse Semi-minor Axis)",
+      "definition": "폭풍 영향권 타원의 단반경",
+      "unit": "km",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "폭풍 타원 형태 정의에 사용",
+      "impacts_on": {
+        "financial_risk": "폭풍 영향권 내 건물 구조 손상",
+        "operational_risk": "폭풍으로 업무 전면 중단",
+        "reputation_risk": "폭풍 피해로 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 폭풍 영향권 면적 계산",
+        "Strategy Generation: 구조 보강 투자",
+        "Report Generation: TCFD 태풍 리스크 분석"
+      ],
+      "interaction_with_other_data": {
+        "storm_long/storm_dir": "타원 정의"
+      },
+      "calculation_formula": "타원 방정식: (x_rot/storm_long)² + (y_rot/storm_short)² ≤ 1"
+    },
+    "storm_dir": {
+      "full_name": "폭풍 타원 회전 방향 (Storm Ellipse Direction)",
+      "definition": "폭풍 영향권 타원의 회전 각도 (북쪽 기준 시계방향)",
+      "unit": "도 (degree)",
+      "data_source": "KMA 태풍 Best Track API",
+      "high_value_means": "타원 회전 각도, 태풍 진행 방향 반영",
+      "impacts_on": {
+        "financial_risk": "폭풍 영향권 내 건물 구조 손상",
+        "operational_risk": "폭풍으로 업무 전면 중단",
+        "reputation_risk": "폭풍 피해로 ESG 평가 하락"
+      },
+      "used_in": [
+        "Impact Analysis: 폭풍 영향권 판정",
+        "Strategy Generation: 구조 보강 투자",
+        "Report Generation: TCFD 태풍 리스크 분석"
+      ],
+      "interaction_with_other_data": {
+        "storm_long/storm_short": "타원 정의"
+      },
+      "calculation_formula": "회전 변환: x_rot = dx × cos(θ) + dy × sin(θ), θ = storm_dir (라디안)"
+    },
+    "S_tc": {
+      "full_name": "태풍 누적 노출 지수 (Typhoon Cumulative Exposure Index)",
+      "definition": "연도별 태풍 영향의 누적 가중 지수",
+      "unit": "무차원 (지수)",
+      "data_source": "KMA 베스트트랙 API 기반 계산",
+      "calculation_method": "시점별 bin_inst에 가중치(w_tc) 적용하여 연도별 누적",
+      "calculation_formula": "S_tc(year) = Σ w_tc[bin_inst(storm, τ)], w_tc = [0, 1, 3, 7]",
+      "high_value_means": "S_tc > 15는 연간 매우 강한 태풍 노출을 의미하며, 건물 구조 손상 위험이 높습니다.",
+      "impacts_on": {
+        "financial_risk": "S_tc > 15 시 건물 손상으로 대규모 복구 비용 발생, 손상률 30%. 약한 노출(0-5, 손상률 2%) 대비 15배 증가. TY급 영향 시점은 TS급 대비 가중치 7배",
+        "operational_risk": "S_tc > 15 시 업무 중단 장기화",
+        "reputation_risk": "반복적 태풍 피해로 ESG 평가에서 기후 회복력 부족 노출, 투자자 신뢰 하락"
+      },
+      "used_in": [
+        "Impact Analysis: S_tc별 피해 규모 및 복구 비용 추정",
+        "Strategy Generation: S_tc 임계값별 구조 보강 우선순위 결정",
+        "Report Generation: TCFD 물리적 리스크 섹션에서 SSP 시나리오별 S_tc 추이 분석 (IPCC AR6 기반 1°C당 태풍 강도 4% 증가 반영)"
+      ],
+      "interaction_with_other_data": {
+        "lon/lat": "거리 계산 → 타원 영향권 판정 → bin_inst → S_tc",
+        "grade": "등급 + 타원 → bin_inst 결정",
+        "gale_*/storm_*": "타원 영향권 → bin_inst → 가중치 적용",
+        "climate_change": "기온 1°C 상승 시 태풍 강도 4% 증가 (IPCC AR6 기준). 2°C 온난화 시 태풍 강도 최대 8% 증가"
+      }
+    }
+  },
+  "_metadata": {
+    "version": "3.0",
+    "last_updated": "2025-12-03",
+    "purpose": "LLM RAG를 위한 P(H) 계산 데이터 사전 (기후 데이터 중심, TCFD 보고서 작성용)",
+    "scope": "확률 계산(Probability Agent)에서 사용되는 원시 기후 데이터 및 처리된 기후 지표만 포함. 취약성(Vulnerability) 및 노출도(Exposure) 데이터는 별도 정리.",
+    "usage_notes": [
+      "이 데이터 사전은 9개 기후 리스크에 대한 P(H) 확률 계산 과정에서 사용되는 기후 데이터를 정리한 것입니다.",
+      "각 데이터는 high_value_means, impacts_on, used_in, interaction_with_other_data 필드로 구성됩니다.",
+      "impacts_on 필드는 financial_risk, operational_risk, reputation_risk를 필수로 포함합니다.",
+      "reputation_risk는 ESG 평가 (TCFD, CDP 등)에서 발생하는 리스크를 의미합니다.",
+      "used_in 필드는 'Impact Analysis:', 'Strategy Generation:', 'Report Generation:' 형태로 구분됩니다.",
+      "Report Generation은 TCFD 물리적 리스크 보고서 작성을 위한 활용 방법을 명시합니다.",
+      "원시 데이터(TA, RHM, WS, SI, RN)는 FWI, ET0 등의 지표 계산에 사용됩니다.",
+      "베스트트랙 API 데이터(lon, lat, grade, gale_*, storm_*)는 태풍 누적 노출 지수 S_tc 계산에 사용됩니다.",
+      "수치의 근거: 보수적 추정치 기반. 실제 프로젝트 적용 시 현장 데이터로 보정 필요.",
+      "취약성 스케일링(F_vuln)은 별도 Vulnerability Agent에서 처리하므로 본 데이터 사전에서 제외."
+    ],
+    "data_sources": [
+      "KMA 극값지수 (WSDI, CSDI, RX1DAY, RAIN80)",
+      "KMA SPEI 데이터 (SPEI-12)",
+      "KMA 기후 데이터 (TA, RHM, WS, SI, RN)",
+      "KMA 태풍 Best Track API (lon, lat, grade, gale_*, storm_*)",
+      "WAMIS 용수이용량 데이터",
+      "유량 관측소 데이터 (TRWR 계산)",
+      "Aqueduct 4.0 BWS (미래 용수이용량)",
+      "CMIP6 SSP 시나리오 데이터 (ZOS, 미래 기후)"
+    ],
+    "risk_types": [
+      "extreme_heat (극심한 고온)",
+      "extreme_cold (극심한 한파)",
+      "drought (가뭄)",
+      "river_flood (하천 홍수)",
+      "urban_flood (도시 침수)",
+      "wildfire (산불)",
+      "water_stress (물부족)",
+      "typhoon (열대성 태풍)",
+      "sea_level_rise (해수면 상승)"
+    ],
+    "calculation_notes": {
+      "FWI": "산불 위험 지수 = (1 - RHM/100)^0.5 × exp(0.05039 × WS_kmh) × exp(0.08 × (TA - 5)) × exp(-0.0005 × RN) × 5",
+      "ET0": "Penman-Monteith 식 기반 증발산량 계산 (TA, RHM, WS, SI 사용)",
+      "WSI": "물 스트레스 지수 = Withdrawal / (TRWR × scale_factor × 0.63)",
+      "S_tc": "태풍 누적 노출 지수 = Σ w_tc[bin_inst], w_tc = [0, 1, 3, 7]",
+      "environmental_flow": "환경유지유량으로 총재생가능수자원(TRWR)의 37% 차감, 실제 가용수자원(ARWR)은 TRWR의 63%"
+    }
+  }
+}

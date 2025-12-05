@@ -22,7 +22,8 @@
       "Bash(export DW_PASSWORD=1234)",
       "Bash(copy:*)",
       "Bash(copy hazard_batch.py hazard_batch.py.backup)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(git fetch:*)"
     ],
     "deny": [],
     "ask": []

@@ -23,7 +23,9 @@
       "Bash(copy:*)",
       "Bash(copy hazard_batch.py hazard_batch.py.backup)",
       "Bash(pip install:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(git lfs:*)",
+      "Bash(git rm:*)"
     ],
     "deny": [],
     "ask": []

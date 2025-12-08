@@ -1,10 +1,17 @@
 # Build stage
-FROM python:3.11-slim AS builder
+FROM ubuntu:22.04 AS builder
 
 WORKDIR /app
 
-# Install system dependencies for geospatial libraries
+# Install Python 3.11 and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3.11-distutils \
     gdal-bin \
     libgdal-dev \
     libhdf5-dev \
@@ -23,16 +30,22 @@ COPY pyproject.toml README.md ./
 RUN uv pip install --system --no-cache .
 
 # Production stage
-FROM python:3.11-slim AS production
+FROM ubuntu:22.04 AS production
 
 WORKDIR /app
 
-# Install runtime dependencies for geospatial libraries
+# Install Python 3.11 and runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python3.11 \
     gdal-bin \
-    libgdal34 \
-    libhdf5-103 \
-    libnetcdf-c++4-1 \
+    libgdal30 \
+    libhdf5-103-1 \
+    libnetcdf19 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -54,7 +67,7 @@ EXPOSE 8001
 
 # Health check for FastAPI
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)" || exit 1
+    CMD python3.11 -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)" || exit 1
 
 # Run the FastAPI application with uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--log-level", "info"]
+CMD ["python3.11", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--log-level", "info"]

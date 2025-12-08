@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS aal_scaled_results (
     latitude NUMERIC NOT NULL,
     longitude NUMERIC NOT NULL,
     risk_type VARCHAR(50) NOT NULL,
-    base_aal REAL,  -- 기존 probability_results.probability
+    base_aal REAL,  -- 기존 probability_results.aal
     vulnerability_scale REAL,  -- F_vuln (0.9 ~ 1.1)
     final_aal REAL,  -- base_aal × F_vuln × (1 - insurance)
     insurance_rate REAL DEFAULT 0.0,  -- 보험 보전율 (현재 0.0)
@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_aal_scaled_location ON aal_scaled_results(latitud
 CREATE INDEX IF NOT EXISTS idx_aal_scaled_risk_type ON aal_scaled_results(risk_type);
 
 COMMENT ON TABLE aal_scaled_results IS 'AAL 스케일링 결과 저장 (V 반영)';
-COMMENT ON COLUMN aal_scaled_results.base_aal IS '기본 AAL (probability_results.probability)';
+COMMENT ON COLUMN aal_scaled_results.base_aal IS '기본 AAL (probability_results.aal)';
 COMMENT ON COLUMN aal_scaled_results.vulnerability_scale IS '취약성 스케일 계수 F_vuln (0.9-1.1)';
 COMMENT ON COLUMN aal_scaled_results.final_aal IS '최종 AAL (base_aal × F_vuln × (1 - insurance))';
 COMMENT ON COLUMN aal_scaled_results.insurance_rate IS '보험 보전율 (0-1, 현재 0.0 고정)';

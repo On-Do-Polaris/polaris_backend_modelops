@@ -1,0 +1,143 @@
+name: CD - ModelOps Deploy to Server
+
+on:
+  workflow_run:
+    workflows: ['CI - ModelOps Build & Push']
+    types:
+      - completed
+    branches: [main]
+
+env:
+  IMAGE_NAME: polaris-modelops
+  CONTAINER_NAME: polaris-modelops
+
+jobs:
+  deploy:
+    name: ModelOps 서버 배포
+    runs-on: ubuntu-22.04
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: 배포 시작 알림
+        run: |
+          echo "### Starting ModelOps Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ secrets.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ secrets.SERVER_HOST }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ModelOps Risk Assessment API (FastAPI)" >> $GITHUB_STEP_SUMMARY
+          echo "**Port:** 8001" >> $GITHUB_STEP_SUMMARY
+
+      - name: SSH로 서버 배포
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+
+            echo "========================================="
+            echo "ModelOps 배포 시작"
+            echo "========================================="
+
+            # 변수 설정
+            REGISTRY="${{ secrets.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev"
+            PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+            REPO="${{ secrets.ARTIFACT_REGISTRY_REPO }}"
+            IMAGE_NAME="${{ env.IMAGE_NAME }}"
+            CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+            IMAGE="${REGISTRY}/${PROJECT_ID}/${REPO}/${IMAGE_NAME}:latest"
+
+            # 필요시 네트워크 생성
+            docker network create web || true
+
+            # GCP Artifact Registry 인증
+            echo "1. GCP Artifact Registry 인증 중..."
+            echo '${{ secrets.GCP_SA_KEY }}' | docker login -u _json_key --password-stdin https://${{ secrets.ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev
+
+            # 최신 이미지 pull
+            echo "2. 최신 이미지 다운로드 중..."
+            docker pull ${IMAGE}
+
+            # 기존 컨테이너 확인 및 중지 (포트 충돌 방지)
+            echo "3. 기존 컨테이너 처리 중..."
+            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+              echo "   기존 컨테이너 중지 중..."
+              docker stop ${CONTAINER_NAME} || true
+              echo "   기존 컨테이너 삭제 중..."
+              docker rm ${CONTAINER_NAME} || true
+            else
+              echo "   기존 컨테이너 없음 (최초 배포)"
+            fi
+
+            # 새 컨테이너 실행
+            echo "4. 새 컨테이너 실행 중... (이름: ${CONTAINER_NAME})"
+            docker run -d \
+              --name ${CONTAINER_NAME} \
+              --network web \
+              --restart unless-stopped \
+              -p 8001:8001 \
+              -e DW_HOST=${{ secrets.DW_HOST }} \
+              -e DW_PORT=${{ secrets.DW_PORT }} \
+              -e DW_NAME=${{ secrets.DW_NAME }} \
+              -e DW_USER=${{ secrets.DW_USER }} \
+              -e DW_PASSWORD=${{ secrets.DW_PASSWORD }} \
+              ${IMAGE}
+
+            # Health check - FastAPI health 엔드포인트 확인
+            echo "5. Health check 중..."
+            for i in {1..30}; do
+              if docker exec ${CONTAINER_NAME} sh -c "curl -f -s http://localhost:8001/health > /dev/null 2>&1 || wget --quiet --tries=1 --spider http://localhost:8001/health 2>/dev/null" 2>/dev/null; then
+                echo "   ✓ ModelOps API 정상 동작 확인 (${i}초 경과)"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "   ✗ Health check 실패"
+                echo "   컨테이너 로그:"
+                docker logs ${CONTAINER_NAME} --tail 50
+                exit 1
+              fi
+              echo "   대기 중... (${i}/30)"
+              sleep 1
+            done
+
+            # API 엔드포인트 확인
+            echo "6. API 엔드포인트 확인 중..."
+            docker exec ${CONTAINER_NAME} curl -s http://localhost:8001/ | head -20 || true
+
+            # 미사용 이미지 정리
+            echo "7. 미사용 이미지 정리 중..."
+            docker image prune -af
+
+            echo "========================================="
+            echo "ModelOps 배포 완료"
+            echo "========================================="
+
+            # 컨테이너 정보 출력
+            echo ""
+            echo "컨테이너 정보:"
+            docker ps --filter name=${CONTAINER_NAME} --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      - name: 배포 완료 알림
+        if: success()
+        run: |
+          echo "### ModelOps Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "배포가 성공적으로 완료되었습니다." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ModelOps Risk Assessment API (FastAPI)" >> $GITHUB_STEP_SUMMARY
+          echo "**Port:** 8001" >> $GITHUB_STEP_SUMMARY
+          echo "**Health Check:** http://<server>:8001/health" >> $GITHUB_STEP_SUMMARY
+          echo "**API Docs:** http://<server>:8001/docs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**배포 전략:** Recreate 방식" >> $GITHUB_STEP_SUMMARY
+          echo "- 기존 컨테이너 중지 → 새 컨테이너 실행 → Health Check" >> $GITHUB_STEP_SUMMARY
+
+      - name: 배포 실패 알림
+        if: failure()
+        run: |
+          echo "### ModelOps Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "배포 중 오류가 발생했습니다." >> $GITHUB_STEP_SUMMARY
+          echo "컨테이너 로그를 확인해주세요." >> $GITHUB_STEP_SUMMARY

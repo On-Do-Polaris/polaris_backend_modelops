@@ -1,7 +1,31 @@
 {
   "permissions": {
     "allow": [
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(Test-Path \"c:\\Users\\Administrator\\Desktop\\backend_aiops\\.env\")",
+      "Bash(if [ -f \"c:\\Users\\Administrator\\Desktop\\backend_aiops\\.env\" ])",
+      "Bash(then echo \"exists\")",
+      "Bash(else echo \"not exists\")",
+      "Bash(fi)",
+      "Bash(export DW_HOST=localhost)",
+      "Bash(export DW_PORT=5433)",
+      "Bash(export DW_NAME=skala_datawarehouse)",
+      "Bash(export DW_USER=skala_dw_user)",
+      "Bash(export DW_PASSWORD=1234)",
+      "Bash(copy:*)",
+      "Bash(copy hazard_batch.py hazard_batch.py.backup)",
+      "Bash(pip install:*)",
+      "Bash(git fetch:*)",
+      "Bash(git lfs:*)",
+      "Bash(git rm:*)"
     ],
     "deny": [],
     "ask": []

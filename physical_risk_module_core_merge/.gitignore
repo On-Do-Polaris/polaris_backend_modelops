@@ -1,0 +1,84 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+dem_venv/
+venv/
+venv311/
+.env/
+
+# Data files
+Physical_RISK_calculate/data/
+data/
+*.nc
+*.tif
+*.hdf
+*.h5
+*.shp
+*.dbf
+*.shx
+*.prj
+*.sbx
+*.sbn
+*.zip
+*.pdf
+
+# Environment variables
+.env
+.env.*
+*/.env
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Output and temporary files
+*.json
+*.txt
+*.log
+*.bak
+move_kma_files.py
+unzip_script.py
+debug_netcdf.py
+inspect_netcdf.py
+risk_report_*.json
+risk_assessment_*.json
+netcdf_analysis_result.md
+*.cpg
+*.qpj
+
+# IDE settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace

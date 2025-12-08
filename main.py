@@ -22,9 +22,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="ModelOps Risk Assessment API",
     description="""
-    E (Exposure), V (Vulnerability), AAL (Average Annual Loss) 계산 API
+    H (Hazard), E (Exposure), V (Vulnerability), AAL (Average Annual Loss) 통합 계산 API
 
     ## Features
+    - **H × E × V 통합 리스크 계산**: 9개 기후 리스크 통합 점수 산출
     - **실시간 계산**: WebSocket을 통한 실시간 진행상황 제공
     - **Mini-batch 처리**: 9개 리스크 순차 계산
     - **자동 데이터 수집**: DB에서 필요한 데이터 자동 조회
@@ -91,9 +92,16 @@ async def root():
     return {
         "service": "ModelOps Risk Assessment API",
         "version": "1.0.0",
-        "description": "E, V, AAL 계산 API with Real-time Progress",
+        "description": "H × E × V 통합 리스크 계산 API with Real-time Progress",
         "docs": "/docs",
         "health": "/health",
+        "features": [
+            "H (Hazard) 점수 계산",
+            "E (Exposure) 점수 계산",
+            "V (Vulnerability) 점수 계산",
+            "H × E × V 통합 리스크 점수 계산",
+            "AAL (Average Annual Loss) 스케일링"
+        ],
         "endpoints": {
             "calculate": "POST /api/v1/risk-assessment/calculate",
             "status": "GET /api/v1/risk-assessment/status/{request_id}",

@@ -1,7 +1,7 @@
 // ================================================================
 // SKALA Physical Risk AI - Datawarehouse ERD
 // ================================================================
-// Database: skala_datawarehouse (Port: 5434)
+// Database: datawarehouse (Port: 5432)
 // Services: FastAPI + ModelOPS
 // Total Tables: 45
 //

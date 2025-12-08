@@ -6,6 +6,8 @@ WORKDIR /app
 # Install Python 3.11 and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
+    gpg \
+    gpg-agent \
     && add-apt-repository ppa:deadsnakes/ppa -y \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -37,6 +39,8 @@ WORKDIR /app
 # Install Python 3.11 and runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
+    gpg \
+    gpg-agent \
     && add-apt-repository ppa:deadsnakes/ppa -y \
     && apt-get update \
     && apt-get install -y --no-install-recommends \

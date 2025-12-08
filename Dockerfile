@@ -33,7 +33,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml README.md ./
 
 # Install dependencies with Python 3.11
-RUN uv pip install --python python3.11 --system --no-cache .
+RUN uv pip install --python python3.11 --system --no-cache . && \
+    python3.11 -c "import sys; print('Site-packages:', sys.path)"
 
 # Production stage
 FROM ubuntu:22.04 AS production
@@ -61,7 +62,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/lib/python3.11 /usr/lib/python3.11
+COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code

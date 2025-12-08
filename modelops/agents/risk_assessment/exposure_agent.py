@@ -1,165 +1,282 @@
-"""
-Exposure Agent (E 계산)
-노출도 계산: normalized_asset_value × proximity_to_hazard
-"""
-
-from typing import Dict, Any, Optional
+'''
+파일명: exposure_agent.py
+설명: 노출도(Exposure) 계산 Agent
+업데이트: ExposureCalculator 로직 통합 (건물 및 환경 정보 기반)
+'''
+from typing import Dict, Any, Optional, Tuple
 import logging
+try:
+    from modelops.config import hazard_config as config
+except ImportError:
+    config = None
 
 logger = logging.getLogger(__name__)
 
 
 class ExposureAgent:
-    """노출도 (E) 계산 Agent"""
+    """
+    노출도 (Exposure) 계산 Agent
+    
+    역할:
+    - 건물 정보(Building Data)와 공간 정보(Spatial Data)를 결합하여
+    - 각 리스크 유형별 노출도를 평가하고 구조화된 데이터 생성
+    - VulnerabilityAgent의 입력값으로 사용됨
+    """
 
     def __init__(self):
-        """ExposureAgent 초기화"""
-        self.risk_types = [
-            'extreme_heat', 'extreme_cold', 'wildfire', 'drought',
-            'water_stress', 'sea_level_rise', 'river_flood',
-            'urban_flood', 'typhoon'
-        ]
+        pass
 
-    def calculate_exposure(
-        self,
-        latitude: float,
-        longitude: float,
-        risk_type: str,
-        building_info: Dict[str, Any],
-        asset_info: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    def calculate_exposure(self, collected_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         노출도 계산
 
-        E = normalized_asset_value × proximity_to_hazard
-
         Args:
-            latitude: 위도
-            longitude: 경도
-            risk_type: 리스크 유형
-            building_info: 건물 정보
-            asset_info: 자산 정보 (현재 None)
+            collected_data: 수집된 데이터 딕셔너리
+                - building_data: 건물 정보
+                - spatial_data: 토지피복 등 공간 정보
+                - latitude, longitude: 위치
 
         Returns:
-            {
-                'exposure_score': 0.0 ~ 1.0,
-                'proximity_factor': 0.0 ~ 1.0,
-                'normalized_asset_value': 0.0 ~ 1.0,
-                'calculation_details': {...}
-            }
+            Exposure 데이터 딕셔너리 (VulnerabilityAgent 입력용)
         """
-        try:
-            # 1. 자산 가치 정규화 (현재는 건물 면적 기반으로 간단 계산)
-            normalized_asset = self._normalize_asset_value(building_info, asset_info)
+        building_data = collected_data.get('building_data', {})
+        spatial_data = collected_data.get('spatial_data', {})
+        lat = collected_data.get('latitude', 0.0)
+        lon = collected_data.get('longitude', 0.0)
 
-            # 2. 위험 요소 근접도 계산
-            proximity = self._calculate_proximity_factor(
-                latitude, longitude, risk_type, building_info
-            )
-
-            # 3. 노출도 = 자산 가치 × 근접도
-            exposure_score = normalized_asset * proximity
-
-            return {
-                'exposure_score': round(exposure_score, 4),
-                'proximity_factor': round(proximity, 4),
-                'normalized_asset_value': round(normalized_asset, 4),
-                'calculation_details': {
-                    'risk_type': risk_type,
-                    'latitude': latitude,
-                    'longitude': longitude,
-                    'building_area': building_info.get('total_area', 0)
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"Exposure 계산 실패 ({risk_type}): {e}")
-            return {
-                'exposure_score': 0.0,
-                'proximity_factor': 0.0,
-                'normalized_asset_value': 0.0,
-                'error': str(e)
-            }
-
-    def _normalize_asset_value(
-        self,
-        building_info: Dict[str, Any],
-        asset_info: Optional[Dict[str, Any]]
-    ) -> float:
-        """
-        자산 가치 정규화 (0.0 ~ 1.0)
-
-        현재는 자산 정보가 없으므로 건물 면적 기반으로 간단 계산
-        """
-        if asset_info and asset_info.get('total_asset_value'):
-            # 자산 가치가 있을 경우 (미래 구현)
-            asset_value = asset_info['total_asset_value']
-            # 예시: 1000억원을 1.0으로 정규화
-            max_asset = 100_000_000_000  # 1000억
-            return min(1.0, asset_value / max_asset)
-
-        # 건물 면적 기반 간단 정규화
-        total_area = building_info.get('total_area', 0) or 0
-
-        if total_area <= 0:
-            return 0.5  # 기본값
-
-        # 면적 정규화: 10,000㎡를 1.0으로
-        max_area = 10_000
-        normalized = min(1.0, total_area / max_area)
-
-        # 최소값 0.1 보장 (너무 작은 값 방지)
-        return max(0.1, normalized)
-
-    def _calculate_proximity_factor(
-        self,
-        latitude: float,
-        longitude: float,
-        risk_type: str,
-        building_info: Dict[str, Any]
-    ) -> float:
-        """
-        위험 요소 근접도 계산 (0.0 ~ 1.0)
-
-        리스크 유형별 근접도 계산 로직
-        - 침수: 저층 건물일수록 높음
-        - 해수면 상승: 해안 근접도
-        - 폭염/혹한: 건물 특성 기반
-        - 기타: 기본 근접도
-        """
-        if risk_type in ['river_flood', 'urban_flood']:
-            # 침수 리스크: 지하층 있으면 근접도 증가
-            floors_below = building_info.get('floors_below', 0) or 0
-            floors_above = building_info.get('floors_above', 1) or 1
-
-            if floors_below > 0:
-                # 지하층 있으면 높은 근접도
-                return min(1.0, 0.7 + (floors_below * 0.1))
-            elif floors_above <= 3:
-                # 저층 건물
-                return 0.8
-            else:
-                # 고층 건물
-                return 0.5
-
-        elif risk_type == 'sea_level_rise':
-            # 해수면 상승: 해안 근접도 (현재는 기본값)
-            # TODO: 실제 해안선 거리 계산 필요
-            return 0.6
-
-        elif risk_type in ['extreme_heat', 'extreme_cold']:
-            # 폭염/혹한: 건물 전체 영향
-            return 0.9
-
-        elif risk_type == 'typhoon':
-            # 태풍: 고층 건물일수록 높음
-            floors_above = building_info.get('floors_above', 1) or 1
-            return min(1.0, 0.5 + (floors_above * 0.05))
-
-        elif risk_type in ['wildfire', 'drought', 'water_stress']:
-            # 산불, 가뭄, 물 부족: 중간 근접도
-            return 0.6
-
+        if not config:
+            logger.warning("Config module not loaded. Using hardcoded defaults.")
+            defaults = {}
+            dist_defaults = {'distance_to_river_m': 1000, 'distance_to_coast_m': 50000}
+            hydro_defaults = {'watershed_area_km2': 2500, 'stream_order': 3, 'annual_rainfall_mm': 1200}
         else:
-            # 기본 근접도
-            return 0.7
+            defaults = config.DEFAULT_BUILDING_PROPERTIES
+            dist_defaults = config.DEFAULT_DISTANCE_VALUES
+            hydro_defaults = config.DEFAULT_HYDROLOGICAL_VALUES
+
+        land_use = spatial_data.get('landcover_type', 'urban')
+
+        # Exposure 구조화
+        exposure = {
+            'location': {
+                'latitude': lat,
+                'longitude': lon,
+                'elevation_m': building_data.get('elevation_m', defaults.get('elevation_m', 0)),
+                'land_use': land_use,
+            },
+            'building': {
+                'floors_above': building_data.get('ground_floors', defaults.get('ground_floors', 3)),
+                'floors_below': building_data.get('basement_floors', defaults.get('basement_floors', 0)),
+                'ground_floors': building_data.get('ground_floors', defaults.get('ground_floors', 3)),
+                'total_area_m2': building_data.get('total_area_m2', defaults.get('total_area_m2', 0)),
+                'building_type': building_data.get('building_type', defaults.get('building_type', '주택')),
+                'main_purpose': building_data.get('main_purpose', defaults.get('main_purpose', '단독주택')),
+                'structure': building_data.get('structure', defaults.get('structure', '철근콘크리트조')),
+                'build_year': building_data.get('build_year', defaults.get('build_year', 1995)),
+                'building_age': building_data.get('building_age', defaults.get('building_age', 30)),
+                'has_piloti': building_data.get('has_piloti', defaults.get('has_piloti', False)),
+                'has_water_tank': building_data.get('has_water_tank'),
+                'water_tank_method': building_data.get('water_tank_method'),
+            },
+            'flood_exposure': {
+                'distance_to_river_m': building_data.get('distance_to_river_m', dist_defaults['distance_to_river_m']),
+                'proximity_category': self._calculate_river_flood_exposure_score(building_data.get('distance_to_river_m', dist_defaults['distance_to_river_m']))[0],
+                'score': self._calculate_river_flood_exposure_score(building_data.get('distance_to_river_m', dist_defaults['distance_to_river_m']))[1],
+                'distance_to_coast_m': building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m']),
+                'watershed_area_km2': building_data.get('watershed_area_km2', hydro_defaults['watershed_area_km2']),
+                'stream_order': building_data.get('stream_order', hydro_defaults['stream_order']),
+                'in_flood_zone': self._is_in_flood_zone(building_data),
+            },
+            'heat_exposure': {
+                'urban_heat_island': self._estimate_uhi_intensity(building_data),
+                'green_space_nearby': self._estimate_green_space_proximity(spatial_data),
+                'building_orientation': self._estimate_building_orientation(lat, lon),
+                'uhi_risk': self._classify_uhi_risk(spatial_data),
+            },
+            'urban_flood_exposure': {
+                'urban_intensity': self._calculate_urban_flood_exposure_score(building_data)[0],
+                'score': self._calculate_urban_flood_exposure_score(building_data)[1],
+                'imperviousness_percent': self._calculate_urban_flood_exposure_score(building_data)[2],
+                'impervious_surface_ratio': self._estimate_impervious_surface_ratio(spatial_data),
+                'drainage_capacity': self._estimate_drainage_capacity(building_data),
+                'urban_area': land_use in ['urban', 'commercial', 'residential', 'mixed-use', 'industrial'],
+            },
+            'drought_exposure': {
+                'annual_rainfall_mm': building_data.get('annual_rainfall_mm', hydro_defaults['annual_rainfall_mm']),
+                'water_dependency': self._classify_water_dependency(building_data),
+                'score': self._calculate_drought_exposure_score(self._classify_water_dependency(building_data), building_data.get('annual_rainfall_mm', hydro_defaults['annual_rainfall_mm'])),
+                'water_storage_capacity': self._estimate_water_storage(building_data),
+                'backup_water_supply': building_data.get('backup_water_supply', False),
+            },
+            'typhoon_exposure': {
+                'distance_to_coast_m': building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m']),
+                'coastal_exposure': building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m']) < 10000,
+                'coastal_distance_score': self._calculate_typhoon_distance_score(building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m'])),
+                'exposure_level': self._classify_typhoon_exposure_level(building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m'])),
+            },
+            'sea_level_rise_exposure': {
+                'distance_to_coast_m': building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m']),
+                'coastal_distance_score': self._calculate_coastal_distance_score(building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m'])),
+                'exposure_level': self._classify_coastal_exposure_level(building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m'])),
+            },
+            'wildfire_exposure': {
+                'distance_to_forest_m': self._calculate_forest_distance(spatial_data),
+                'proximity_category': self._calculate_wildfire_exposure_score(self._calculate_forest_distance(spatial_data))[0],
+                'score': self._calculate_wildfire_exposure_score(self._calculate_forest_distance(spatial_data))[1],
+                'vegetation_type': self._get_vegetation_type(spatial_data),
+                'slope_degree': self._calculate_slope_from_dem(building_data),
+            },
+            'metadata': {
+                'data_source': 'building_data_fetcher, spatial_data_loader',
+                'data_quality': self._assess_data_quality(building_data),
+                'tcfd_warnings': building_data.get('tcfd_warnings', []),
+            }
+        }
+        
+        return exposure
+
+    # --- Helper Methods ---
+
+    def _is_in_flood_zone(self, data: Dict) -> bool:
+        distance_to_river = data.get('distance_to_river_m', 1000)
+        elevation = data.get('elevation_m', 50)
+        return distance_to_river < 100 and elevation < 50
+
+    def _estimate_uhi_intensity(self, data: Dict) -> str:
+        building_type = data.get('building_type', '주택')
+        if '업무' in building_type or '상업' in building_type: return 'high'
+        elif '주택' in building_type: return 'medium'
+        else: return 'low'
+
+    def _estimate_green_space_proximity(self, landcover_data: Dict) -> bool:
+        land_use = landcover_data.get('landcover_type', 'urban')
+        vegetation_ratio = landcover_data.get('vegetation_ratio', 0.0)
+        return vegetation_ratio > 0.3 or land_use in ['agricultural', 'grassland', 'forest']
+
+    def _estimate_building_orientation(self, lat: float, lon: float) -> str:
+        if lat > 37.5: return 'north'
+        elif lat > 35: return 'mixed'
+        else: return 'south'
+
+    def _classify_uhi_risk(self, landcover_data: Dict) -> str:
+        land_use = landcover_data.get('landcover_type', 'urban')
+        if land_use in ['commercial', 'industrial']: return 'high'
+        elif land_use == 'residential': return 'medium'
+        else: return 'low'
+
+    def _calculate_forest_distance(self, landcover_data: Dict) -> float:
+        land_use = landcover_data.get('landcover_type', 'urban')
+        if land_use == 'forest': return 0
+        elif land_use == 'agricultural': return 300
+        elif land_use == 'grassland': return 500
+        elif land_use == 'residential': return 1500
+        else: return 2000
+
+    def _get_vegetation_type(self, landcover_data: Dict) -> str:
+        land_use = landcover_data.get('landcover_type', 'urban')
+        if land_use == 'forest': return 'dense_forest'
+        elif land_use == 'grassland': return 'grassland'
+        elif land_use == 'agricultural': return 'cultivated'
+        else: return 'urban'
+
+    def _calculate_slope_from_dem(self, data: Dict) -> float:
+        elevation = data.get('elevation_m', 0)
+        if elevation < 100: return 2
+        elif elevation < 300: return 8
+        elif elevation < 500: return 15
+        else: return 25
+
+    def _classify_water_dependency(self, data: Dict) -> str:
+        building_purpose = data.get('main_purpose', '주택')
+        if any(keyword in building_purpose for keyword in ['공장', '제조', '냉각', '세차', '목욕', '발전']): return 'high'
+        elif any(keyword in building_purpose for keyword in ['업무', '상업', '판매']): return 'medium'
+        else: return 'low'
+
+    def _estimate_water_storage(self, data: Dict) -> str:
+        ground_floors = data.get('ground_floors', 3)
+        if ground_floors > 10: return 'large'
+        elif ground_floors > 5: return 'medium'
+        else: return 'limited'
+
+    def _calculate_coastal_distance_score(self, distance_m: float) -> int:
+        if not config: return 10
+        thresholds = config.SEA_LEVEL_RISE_EXPOSURE_SCORES
+        if distance_m < thresholds['critical']['distance_m']: return thresholds['critical']['score']
+        elif distance_m < thresholds['high']['distance_m']: return thresholds['high']['score']
+        elif distance_m < thresholds['medium']['distance_m']: return thresholds['medium']['score']
+        else: return thresholds['low']['score']
+
+    def _classify_coastal_exposure_level(self, distance_m: float) -> str:
+        if not config: return 'low'
+        thresholds = config.SEA_LEVEL_RISE_EXPOSURE_SCORES
+        if distance_m < thresholds['critical']['distance_m']: return 'critical'
+        elif distance_m < thresholds['high']['distance_m']: return 'high'
+        elif distance_m < thresholds['medium']['distance_m']: return 'medium'
+        else: return 'low'
+
+    def _estimate_impervious_surface_ratio(self, landcover_data: Dict) -> float:
+        return landcover_data.get('impervious_ratio', 0.6)
+
+    def _estimate_drainage_capacity(self, data: Dict) -> str:
+        build_year = data.get('build_year')
+        current_year = 2025
+        if build_year is None: return 'standard'
+        building_age = current_year - build_year
+        if building_age < 10: return 'good'
+        elif building_age < 30: return 'standard'
+        else: return 'poor'
+
+    def _calculate_urban_flood_exposure_score(self, data: Dict) -> tuple:
+        # (risk_level, score, percent)
+        if not config: return 'low', 20, 35
+        building_type = data.get('building_type', '주택')
+        if '업무' in building_type or '상업' in building_type: return 'high', 80, 85
+        elif '주택' in building_type or '아파트' in building_type: return 'medium', 50, 65
+        else: return 'low', 20, 35
+
+    def _calculate_wildfire_exposure_score(self, distance_m: float) -> tuple:
+        if not config: return 'low', 10
+        thresholds = config.WILDFIRE_EXPOSURE_SCORES
+        if distance_m < thresholds['very_high']['distance_m']: return 'very_high', thresholds['very_high']['score']
+        elif distance_m < thresholds['high']['distance_m']: return 'high', thresholds['high']['score']
+        elif distance_m < thresholds['medium']['distance_m']: return 'medium', thresholds['medium']['score']
+        else: return 'low', thresholds['low']['score']
+
+    def _calculate_river_flood_exposure_score(self, distance_m: float) -> tuple:
+        if not config: return 'low', 10
+        thresholds = config.RIVER_FLOOD_EXPOSURE_SCORES
+        if distance_m < thresholds['very_high']['distance_m']: return 'very_high', thresholds['very_high']['score']
+        elif distance_m < thresholds['high']['distance_m']: return 'high', thresholds['high']['score']
+        elif distance_m < thresholds['medium']['distance_m']: return 'medium', thresholds['medium']['score']
+        else: return 'low', thresholds['low']['score']
+
+    def _calculate_drought_exposure_score(self, water_dependency: str, annual_rainfall_mm: float) -> int:
+        if water_dependency == 'high': score = 80
+        elif water_dependency == 'medium': score = 50
+        else: score = 30
+        if annual_rainfall_mm < 1000: score += 10
+        return score
+
+    def _calculate_typhoon_distance_score(self, distance_m: float) -> int:
+        if not config: return 10
+        thresholds = config.TYPHOON_EXPOSURE_SCORES
+        if distance_m < thresholds['very_high']['distance_m']: return thresholds['very_high']['score']
+        elif distance_m < thresholds['high']['distance_m']: return thresholds['high']['score']
+        elif distance_m < thresholds['medium']['distance_m']: return thresholds['medium']['score']
+        else: return thresholds['low']['score']
+
+    def _classify_typhoon_exposure_level(self, distance_m: float) -> str:
+        if not config: return 'low'
+        thresholds = config.TYPHOON_EXPOSURE_SCORES
+        if distance_m < thresholds['very_high']['distance_m']: return 'critical'
+        elif distance_m < thresholds['high']['distance_m']: return 'high'
+        elif distance_m < thresholds['medium']['distance_m']: return 'medium'
+        else: return 'low'
+
+    def _assess_data_quality(self, data: Dict) -> str:
+        required_fields = ['ground_floors', 'building_type', 'distance_to_river_m', 'distance_to_coast_m', 'elevation_m']
+        available = sum(1 for field in required_fields if field in data and data[field] is not None)
+        ratio = available / len(required_fields)
+        if ratio >= 0.9: return 'high'
+        elif ratio >= 0.7: return 'medium'
+        else: return 'low'

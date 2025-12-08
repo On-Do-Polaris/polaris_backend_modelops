@@ -116,3 +116,13 @@ scratch/wamis/*.json
 scratch/typhoon/*.csv
 *.nc
 *.NC
+
+# Spatial Data Files
+*.tif
+*.tiff
+*.img
+*.h5
+*.hdf
+*.shp
+*.shx
+*.dbf

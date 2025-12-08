@@ -7,7 +7,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gdal-bin \
     libgdal-dev \
-    libhdf4-dev \
     libhdf5-dev \
     libnetcdf-dev \
     gcc \
@@ -31,10 +30,9 @@ WORKDIR /app
 # Install runtime dependencies for geospatial libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gdal-bin \
-    libgdal32 \
-    libhdf4-0-alt \
-    libhdf5-103-1 \
-    libnetcdf19 \
+    libgdal34 \
+    libhdf5-103 \
+    libnetcdf-c++4-1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder

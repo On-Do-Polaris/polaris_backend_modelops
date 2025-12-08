@@ -1,0 +1,988 @@
+// ================================================================
+// SKALA Physical Risk AI - Datawarehouse ERD
+// ================================================================
+// Database: skala_datawarehouse (Port: 5434)
+// Services: FastAPI + ModelOPS
+// Total Tables: 45
+//
+// Last Modified: 2025-12-03
+// Version: v03
+// ================================================================
+
+Project skala_datawarehouse {
+  database_type: 'PostgreSQL'
+  Note: '''
+    SKALA Physical Risk AI 시스템 데이터웨어하우스
+    - 기후 데이터 저장 (SSP 시나리오)
+    - ModelOPS 계산 결과 저장
+    - 외부 API 캐시
+  '''
+} 
+
+// ============================================
+// 1. Location Tables (3개)
+// ============================================
+
+Table location_admin {
+  admin_id serial [pk, note: '행정구역 ID']
+  admin_code varchar(10) [unique, not null, note: '행정구역 코드 (10자리)']
+  admin_name varchar(100) [not null, note: '행정구역명']
+  sido_code varchar(2) [note: '시도코드 2자리']
+  sigungu_code varchar(5) [note: '시군구코드 5자리']
+  emd_code varchar(10) [note: '읍면동코드 10자리']
+  level smallint [not null, note: '1:시도, 2:시군구, 3:읍면동']
+  geom geometry [not null, note: 'MULTIPOLYGON EPSG:5174']
+  centroid geometry [note: 'POINT EPSG:5174']
+  population_2020 integer [note: '2020년 인구']
+  population_2025 integer [note: '2025년 추정 인구']
+  population_2030 integer [note: '2030년 추정 인구']
+  population_2035 integer [note: '2035년 추정 인구']
+  population_2040 integer [note: '2040년 추정 인구']
+  population_2045 integer [note: '2045년 추정 인구']
+  population_2050 integer [note: '2050년 인구']
+  population_change_2020_2050 integer [note: '2020-2050 순증감 (명)']
+  population_change_rate_percent numeric [note: '2020-2050 증감률 (%)']
+
+  Note: '행정구역 위치 정보 (5,259 rows) - 인구 전망 데이터 포함'
+
+  indexes {
+    admin_code
+    sido_code
+    sigungu_code
+    level
+    (geom) [type: gist]
+    (centroid) [type: gist]
+  }
+}
+
+Table location_grid {
+  grid_id serial [pk, note: '격자 ID']
+  longitude numeric(9,6) [not null, note: '경도 (124.5~132.0)']
+  latitude numeric(8,6) [not null, note: '위도 (33.0~39.0)']
+  geom geometry [note: 'POINT EPSG:4326']
+
+  Note: '격자점 위치 정보 (451,351 rows = 601 x 751)'
+
+  indexes {
+    (longitude, latitude)
+    (geom) [type: gist]
+  }
+}
+
+Table sea_level_grid {
+  grid_id serial [pk, note: '해수면 격자 ID']
+  longitude numeric(9,6) [not null, note: '경도']
+  latitude numeric(8,6) [not null, note: '위도']
+  geom geometry [note: 'POINT EPSG:4326']
+
+  Note: '해수면 격자점 위치 (80 rows = 10 x 8)'
+
+  indexes {
+    (longitude, latitude)
+    (geom) [type: gist]
+  }
+}
+
+// ============================================
+// 2. Climate Data - Daily (2개)
+// ============================================
+
+Table tamax_data {
+  time date [not null, note: '관측일']
+  admin_id integer [not null, ref: > location_admin.admin_id, note: '행정구역 ID']
+  ssp1 real [note: 'SSP1-2.6']
+  ssp2 real [note: 'SSP2-4.5']
+  ssp3 real [note: 'SSP3-7.0']
+  ssp5 real [note: 'SSP5-8.5']
+
+  Note: '일 최고기온 (Daily, ~7.63M rows)'
+
+  indexes {
+    (time, admin_id) [pk]
+    admin_id
+    time
+  }
+}
+
+Table tamin_data {
+  time date [not null, note: '관측일']
+  admin_id integer [not null, ref: > location_admin.admin_id, note: '행정구역 ID']
+  ssp1 real [note: 'SSP1-2.6']
+  ssp2 real [note: 'SSP2-4.5']
+  ssp3 real [note: 'SSP3-7.0']
+  ssp5 real [note: 'SSP5-8.5']
+
+  Note: '일 최저기온 (Daily, ~7.63M rows)'
+
+  indexes {
+    (time, admin_id) [pk]
+    admin_id
+    time
+  }
+}
+
+// ============================================
+// 3. Climate Data - Monthly (6개)
+// ============================================
+
+Table ta_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 평균기온 (°C)']
+  ssp2 real [note: 'SSP2-4.5 평균기온 (°C)']
+  ssp3 real [note: 'SSP3-7.0 평균기온 (°C)']
+  ssp5 real [note: 'SSP5-8.5 평균기온 (°C)']
+
+  Note: '평균기온 (Monthly, ~108M rows)'
+
+  indexes {
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
+  }
+}
+
+Table rn_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 강수량 (mm)']
+  ssp2 real [note: 'SSP2-4.5 강수량 (mm)']
+  ssp3 real [note: 'SSP3-7.0 강수량 (mm)']
+  ssp5 real [note: 'SSP5-8.5 강수량 (mm)']
+
+  Note: '강수량 (Monthly, ~108M rows)'
+
+  indexes {
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
+  }
+}
+
+Table ws_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 풍속 (m/s)']
+  ssp2 real [note: 'SSP2-4.5 풍속 (m/s)']
+  ssp3 real [note: 'SSP3-7.0 풍속 (m/s)']
+  ssp5 real [note: 'SSP5-8.5 풍속 (m/s)']
+
+  Note: '풍속 (Monthly, ~108M rows)'
+
+  indexes {
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
+  }
+}
+
+Table rhm_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 상대습도 (%)']
+  ssp2 real [note: 'SSP2-4.5 상대습도 (%)']
+  ssp3 real [note: 'SSP3-7.0 상대습도 (%)']
+  ssp5 real [note: 'SSP5-8.5 상대습도 (%)']
+
+  Note: '상대습도 (Monthly, ~108M rows)'
+
+  indexes {
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
+  }
+}
+
+Table si_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 일사량 (MJ/m²)']
+  ssp2 real [note: 'SSP2-4.5 일사량 (MJ/m²)']
+  ssp3 real [note: 'SSP3-7.0 일사량 (MJ/m²)']
+  ssp5 real [note: 'SSP5-8.5 일사량 (MJ/m²)']
+
+  Note: '일사량 (Monthly, ~108M rows)'
+
+  indexes {
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
+  }
+}
+
+Table spei12_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 SPEI-12']
+  ssp2 real [note: 'SSP2-4.5 SPEI-12']
+  ssp3 real [note: 'SSP3-7.0 SPEI-12']
+  ssp5 real [note: 'SSP5-8.5 SPEI-12']
+
+  Note: 'SPEI 12개월 (Monthly, ~108M rows)'
+
+  indexes {
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
+  }
+}
+
+// ============================================
+// 4. Climate Data - Yearly (8개)
+// ============================================
+
+Table csdi_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 CSDI (일)']
+  ssp2 real [note: 'SSP2-4.5 CSDI (일)']
+  ssp3 real [note: 'SSP3-7.0 CSDI (일)']
+  ssp5 real [note: 'SSP5-8.5 CSDI (일)']
+
+  Note: '한랭야 계속기간 지수 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table wsdi_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 WSDI (일)']
+  ssp2 real [note: 'SSP2-4.5 WSDI (일)']
+  ssp3 real [note: 'SSP3-7.0 WSDI (일)']
+  ssp5 real [note: 'SSP5-8.5 WSDI (일)']
+
+  Note: '온난야 계속기간 지수 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table rx1day_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 RX1DAY (mm)']
+  ssp2 real [note: 'SSP2-4.5 RX1DAY (mm)']
+  ssp3 real [note: 'SSP3-7.0 RX1DAY (mm)']
+  ssp5 real [note: 'SSP5-8.5 RX1DAY (mm)']
+
+  Note: '1일 최다강수량 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table rx5day_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 RX5DAY (mm)']
+  ssp2 real [note: 'SSP2-4.5 RX5DAY (mm)']
+  ssp3 real [note: 'SSP3-7.0 RX5DAY (mm)']
+  ssp5 real [note: 'SSP5-8.5 RX5DAY (mm)']
+
+  Note: '5일 최다강수량 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table cdd_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 CDD (일)']
+  ssp2 real [note: 'SSP2-4.5 CDD (일)']
+  ssp3 real [note: 'SSP3-7.0 CDD (일)']
+  ssp5 real [note: 'SSP5-8.5 CDD (일)']
+
+  Note: '연속 무강수일 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table rain80_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 RAIN80 (일)']
+  ssp2 real [note: 'SSP2-4.5 RAIN80 (일)']
+  ssp3 real [note: 'SSP3-7.0 RAIN80 (일)']
+  ssp5 real [note: 'SSP5-8.5 RAIN80 (일)']
+
+  Note: '80mm 이상 강수일수 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table sdii_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 SDII (mm/일)']
+  ssp2 real [note: 'SSP2-4.5 SDII (mm/일)']
+  ssp3 real [note: 'SSP3-7.0 SDII (mm/일)']
+  ssp5 real [note: 'SSP5-8.5 SDII (mm/일)']
+
+  Note: '강수강도 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+Table ta_yearly_data {
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  year integer [not null, note: '연도 (2021-2100)']
+  ssp1 real [note: 'SSP1-2.6 연평균 기온 (°C)']
+  ssp2 real [note: 'SSP2-4.5 연평균 기온 (°C)']
+  ssp3 real [note: 'SSP3-7.0 연평균 기온 (°C)']
+  ssp5 real [note: 'SSP5-8.5 연평균 기온 (°C)']
+
+  Note: '연평균 기온 (Yearly, ~9M rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+// ============================================
+// 5. Sea Level Data (1개)
+// ============================================
+
+Table sea_level_data {
+  grid_id integer [not null, ref: > sea_level_grid.grid_id, note: '해수면 격자 ID']
+  year integer [not null, note: '연도 (2015-2100)']
+  ssp1 real [note: 'SSP1-2.6 해수면 상승 (cm)']
+  ssp2 real [note: 'SSP2-4.5 해수면 상승 (cm)']
+  ssp3 real [note: 'SSP3-7.0 해수면 상승 (cm)']
+  ssp5 real [note: 'SSP5-8.5 해수면 상승 (cm)']
+
+  Note: '해수면 상승 (Yearly, ~1,720 rows)'
+
+  indexes {
+    (year, grid_id) [pk]
+    grid_id
+    year
+  }
+}
+
+// ============================================
+// 6. Raw Raster Tables (3개)
+// ============================================
+
+Table raw_dem {
+  rid serial [pk, note: '래스터 타일 ID']
+  rast raster [note: 'PostGIS RASTER 고도 데이터']
+  filename text [note: '원본 파일명']
+
+  Note: 'DEM 원시 래스터 (raster2pgsql 표준)'
+}
+
+Table raw_drought {
+  rid serial [pk, note: '래스터 타일 ID']
+  rast raster [note: 'PostGIS RASTER 가뭄 지수']
+  filename text [note: '원본 HDF/H5 파일명']
+
+  Note: '가뭄 데이터 (MODIS, SMAP)'
+}
+
+Table raw_landcover {
+  rid serial [pk, note: '래스터 타일 ID']
+  rast raster [note: 'PostGIS RASTER 토지피복']
+  filename text [note: '원본 GeoTIFF 파일명']
+
+  Note: '토지피복도 (환경부) - urban_flood 계산용'
+}
+
+// ============================================
+// 7. Reference Data Tables (3개)
+// ============================================
+
+Table weather_stations {
+  station_id serial [pk, note: '관측소 ID']
+  obscd varchar(10) [unique, note: '관측소 코드']
+  obsnm varchar(100) [note: '관측소명']
+  bbsnnm varchar(50) [note: '대권역 유역명']
+  basin_code integer [note: '유역 코드 (1~6)']
+  latitude numeric(10,7) [note: '위도']
+  longitude numeric(11,7) [note: '경도']
+  geom geometry [note: 'POINT EPSG:4326']
+
+  Note: '기상 관측소 정보 (1,086 rows)'
+
+  indexes {
+    obscd
+    basin_code
+    (geom) [type: gist]
+  }
+}
+
+Table grid_station_mappings {
+  mapping_id serial [pk, note: '매핑 ID']
+  grid_lat numeric(8,6) [note: '격자점 위도']
+  grid_lon numeric(9,6) [note: '격자점 경도']
+  station_rank smallint [note: '최근접 순위 (1~3)']
+  obscd varchar(10) [note: '관측소 코드']
+  distance_km numeric(8,4) [note: '거리 (km)']
+
+  Note: '격자-관측소 매핑 (~292k rows)'
+
+  indexes {
+    (grid_lat, grid_lon)
+    obscd
+  }
+}
+
+Table water_stress_rankings {
+  ranking_id serial [pk, note: '순위 ID']
+  gid_0 varchar(3) [note: '국가 코드 (ISO)']
+  name_0 varchar(100) [note: '국가명']
+  year integer [note: '전망 연도']
+  scenario varchar(20) [note: '시나리오 (opt/pes)']
+  indicator_name varchar(50) [note: '지표명 (bws)']
+  score numeric(12,8) [note: '스코어 (0~5)']
+  cat smallint [note: '카테고리 (0~4)']
+
+  Note: 'WRI Aqueduct 물 스트레스 순위 (161,731 rows)'
+
+  indexes {
+    gid_0
+    year
+    scenario
+  }
+}
+
+// ============================================
+// 8. Site Additional Data Tables (2개)
+// ============================================
+
+Table site_additional_data {
+  id uuid [pk, note: '레코드 ID']
+  site_id uuid [not null, note: '사업장 ID (Application DB)']
+  data_category varchar(50) [not null, note: '데이터 카테고리: building/asset/power/insurance/custom']
+  raw_text text [note: '원본 텍스트 (PDF 추출 등)']
+  structured_data jsonb [note: '정형화된 JSONB 데이터']
+  file_name varchar(255) [note: '업로드 파일명']
+  file_s3_key varchar(500) [note: 'S3 저장 키']
+  file_size bigint [note: '파일 크기 (bytes)']
+  file_mime_type varchar(100) [note: 'MIME 타입']
+  metadata jsonb [note: '추가 메타데이터']
+  uploaded_by uuid [note: '업로드 사용자 ID']
+  uploaded_at timestamp [note: '업로드 시점']
+  expires_at timestamp [note: '만료 시점']
+
+  Note: '''
+    사용자 추가 데이터 (JSONB 기반)
+    - power: 전력 사용량 데이터
+    - building: 건물 정보
+    - asset: 자산 가치 정보
+    - insurance: 보험 정보
+    - custom: 기타 사용자 데이터
+  '''
+
+  indexes {
+    site_id
+    data_category
+    (site_id, data_category) [unique]
+  }
+}
+
+Table batch_jobs {
+  batch_id uuid [pk, note: '배치 작업 ID']
+  job_type varchar(50) [not null, note: '작업 유형: site_recommendation/bulk_analysis/data_export']
+  status varchar(20) [not null, note: '상태: queued/running/completed/failed/cancelled']
+  progress integer [default: 0, note: '진행률 (0-100)']
+  total_items integer [note: '전체 항목 수']
+  completed_items integer [default: 0, note: '완료 항목 수']
+  failed_items integer [default: 0, note: '실패 항목 수']
+  input_params jsonb [note: '입력 파라미터']
+  results jsonb [note: '결과 데이터']
+  error_message text [note: '에러 메시지']
+  error_stack_trace text [note: '스택 트레이스']
+  estimated_duration_minutes integer [note: '예상 소요 시간']
+  actual_duration_seconds integer [note: '실제 소요 시간']
+  created_at timestamp [default: `now()`, note: '생성 시점']
+  started_at timestamp [note: '시작 시점']
+  completed_at timestamp [note: '완료 시점']
+  expires_at timestamp [note: '만료 시점']
+  created_by uuid [note: '생성 사용자 ID']
+
+  Note: '''
+    배치 작업 상태 추적
+    - 후보지 추천 작업
+    - 대량 분석 작업
+    - 데이터 내보내기 작업
+  '''
+
+  indexes {
+    job_type
+    status
+    created_by
+    created_at
+    (status, created_at)
+  }
+}
+
+// ============================================
+// 9. ModelOPS Tables (5개) - H x E x V = Risk
+// ============================================
+
+Table probability_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  aal real [note: '연간 평균 손실률 (0.0~1.0)']
+  bin_probabilities jsonb [note: 'bin별 발생확률 배열']
+  bin_data jsonb [note: '히스토그램 상세 (하위 호환)']
+  calculation_details jsonb [note: '계산 상세정보']
+  calculated_at timestamp [note: '계산 시점']
+
+  Note: '''
+    P(H) 확률 결과 (~4.06M rows)
+    bin_probabilities: [0.65, 0.25, 0.08, 0.015, 0.005]
+  '''
+
+  indexes {
+    (latitude, longitude, risk_type) [pk]
+    risk_type
+    (latitude, longitude)
+    aal
+    calculated_at
+  }
+}
+
+Table hazard_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  hazard_score real [not null, note: '원본 위험도 점수']
+  hazard_score_100 real [not null, note: '0-100 정규화 점수']
+  hazard_level varchar(20) [not null, note: '위험 등급: 낮음/보통/높음/매우높음']
+  calculated_at timestamp [note: '계산 시점']
+
+  Note: 'Hazard Score 결과 (H) (~4.06M rows)'
+
+  indexes {
+    (latitude, longitude, risk_type) [pk]
+    risk_type
+    (latitude, longitude)
+    hazard_level
+    hazard_score_100
+    calculated_at
+  }
+}
+
+Table exposure_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  exposure_score real [note: '노출도 점수 (0.0~1.0)']
+  proximity_factor real [note: '근접도 계수']
+  normalized_asset_value real [note: '정규화 자산가치']
+  calculated_at timestamp [note: '계산 시점']
+
+  Note: 'Exposure Score 결과 (E) (~4.06M rows)'
+
+  indexes {
+    (latitude, longitude, risk_type) [pk]
+    risk_type
+    (latitude, longitude)
+    exposure_score
+    calculated_at
+  }
+}
+
+Table vulnerability_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  vulnerability_score real [note: '취약성 점수 (0~100)']
+  vulnerability_level varchar(20) [note: '등급: very_low/low/medium/high/very_high']
+  factors jsonb [note: '취약성 요인 상세']
+  calculated_at timestamp [note: '계산 시점']
+
+  Note: 'Vulnerability Score 결과 (V) (~4.06M rows)'
+
+  indexes {
+    (latitude, longitude, risk_type) [pk]
+    risk_type
+    (latitude, longitude)
+    vulnerability_level
+    vulnerability_score
+    calculated_at
+  }
+}
+
+Table aal_scaled_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  base_aal real [note: '기본 AAL (probability_results.aal)']
+  vulnerability_scale real [note: 'F_vuln (0.9~1.1)']
+  final_aal real [note: '최종 AAL = base_aal × F_vuln × (1-insurance_rate)']
+  insurance_rate real [default: 0.0, note: '보험 보전율 (0~1)']
+  expected_loss bigint [note: '예상 손실액 (원)']
+  calculated_at timestamp [note: '계산 시점']
+
+  Note: '''
+    AAL 최종 결과 (~4.06M rows)
+    F_vuln = 0.9 + (V_score / 100) × 0.2
+    final_aal = base_aal × F_vuln × (1 - insurance_rate)
+  '''
+
+  indexes {
+    (latitude, longitude, risk_type) [pk]
+    risk_type
+    (latitude, longitude)
+    final_aal
+    expected_loss
+    calculated_at
+  }
+}
+
+// ============================================
+// 10. API Cache Tables (12개)
+// ============================================
+
+Table api_buildings {
+  building_id serial [pk, note: '건물 ID']
+  mgm_bld_pk varchar(100) [unique, note: '관리 건축물 PK']
+  platgb_cd varchar(10) [note: '대지구분코드']
+  sigungu_cd varchar(10) [note: '시군구코드']
+  bjdong_cd varchar(10) [note: '법정동코드']
+  bun varchar(10) [note: '번']
+  ji varchar(10) [note: '지']
+  na_ugrnd_cd varchar(10) [note: '지상지하코드']
+  na_bjdong_nm varchar(200) [note: '법정동명']
+  na_road_nm varchar(500) [note: '도로명주소']
+  dong_nm varchar(200) [note: '동명칭']
+  ho_nm varchar(100) [note: '호명칭']
+  main_atch_gb_cd varchar(10) [note: '주부속구분코드']
+  strct_cd varchar(10) [note: '구조코드']
+  strct_nm varchar(100) [note: '구조명']
+  etc_purps varchar(500) [note: '기타용도']
+  main_purp_cd varchar(10) [note: '주용도코드']
+  main_purp_cd_nm varchar(200) [note: '주용도코드명']
+  use_apr_day date [note: '사용승인일']
+  pmsday date [note: '허가일']
+  grnd_flr_cnt integer [note: '지상층수']
+  ugrnd_flr_cnt integer [note: '지하층수']
+  tot_area double [note: '연면적(㎡)']
+  arch_area double [note: '건축면적(㎡)']
+  plat_area double [note: '대지면적(㎡)']
+  bc_rat double [note: '건폐율(%)']
+  vlr_rat double [note: '용적률(%)']
+  heit double [note: '높이(m)']
+  cached_at timestamp [note: '캐시 시점']
+  api_response jsonb [note: 'API 응답 원본']
+
+  Note: '건축물대장 API - Vulnerability 계산용'
+
+  indexes {
+    sigungu_cd
+    bjdong_cd
+    use_apr_day
+    strct_cd
+  }
+}
+
+Table api_wamis {
+  id serial [pk]
+  api_type varchar(50) [not null, note: 'water_usage or daily_flow']
+  api_endpoint varchar(255) [not null]
+  basin varchar(10) [note: '권역 (1~6)']
+  year varchar(4) [note: '관측 년도']
+  output_format varchar(10)
+  response_data jsonb [not null]
+  cached_at timestamptz [note: '캐시 시점']
+  http_status integer
+
+  Note: 'WAMIS 용수이용량 - 물부족 Hazard 계산'
+
+  indexes {
+    api_type
+    basin
+  }
+}
+
+Table api_wamis_stations {
+  station_id serial [pk]
+  obs_code varchar(50) [unique, note: '관측소 코드']
+  obs_name varchar(200) [note: '관측소명']
+  river_name varchar(200) [note: '하천명']
+  basin_code varchar(20) [note: '권역코드']
+  basin_name varchar(100) [note: '권역명']
+  sido_name varchar(100) [note: '시도명']
+  address varchar(500) [note: '주소']
+  latitude double
+  longitude double
+  is_active boolean [note: '활성 여부']
+  cached_at timestamp
+  api_response jsonb
+
+  Note: 'WAMIS 유량 관측소'
+
+  indexes {
+    obs_code
+    basin_code
+  }
+}
+
+Table api_river_info {
+  river_id serial [pk]
+  river_code varchar(50) [unique, note: '하천 코드']
+  river_name varchar(200) [note: '하천명']
+  river_grade integer [note: '하천등급']
+  watershed_area_km2 double [note: '유역면적 (km²)']
+  river_length_km double [note: '하천연장 (km)']
+  start_point varchar(500) [note: '시점']
+  end_point varchar(500) [note: '종점']
+  management_org varchar(200) [note: '관리기관']
+  basin_name varchar(100) [note: '수계명']
+  sido_name varchar(100)
+  sigungu_name varchar(100)
+  cached_at timestamp
+  api_response jsonb
+
+  Note: '하천정보 - 하천홍수 Hazard 계산'
+
+  indexes {
+    river_name
+    river_grade
+    basin_name
+  }
+}
+
+Table api_emergency_messages {
+  message_id serial [pk]
+  msg_sn varchar(50) [unique, note: '메시지 일련번호']
+  msg_cn text [note: '메시지 내용']
+  msg_se_cd varchar(10) [note: '메시지 구분코드']
+  msg_se_nm varchar(100) [note: '메시지 구분명']
+  rcptn_rgn_nm text [note: '수신지역명']
+  rgn_cd varchar(20) [note: '지역코드']
+  crt_dt timestamp [note: '생성일시']
+  mdf_dt timestamp [note: '수정일시']
+  emrg_step_nm varchar(100) [note: '긴급단계명']
+  dst_se_nm varchar(100) [note: '재난유형명']
+  is_flood_related boolean [note: '홍수 관련']
+  is_typhoon_related boolean [note: '태풍 관련']
+  is_heat_related boolean [note: '폭염 관련']
+  is_cold_related boolean [note: '한파 관련']
+  is_fire_related boolean [note: '화재 관련']
+  cached_at timestamp
+  api_response jsonb
+
+  Note: '긴급재난문자 - 재난 이력 추적'
+
+  indexes {
+    crt_dt
+    rcptn_rgn_nm
+    dst_se_nm
+  }
+}
+
+Table api_typhoon_info {
+  typhoon_id serial [pk]
+  year integer [not null]
+  typ_seq integer [not null, note: '태풍번호']
+  typ_name varchar(100) [note: '한글명']
+  typ_en varchar(100) [note: '영문명']
+  tm_st timestamp [note: '발생시각 UTC']
+  tm_ed timestamp [note: '소멸시각 UTC']
+  now_status boolean [note: '진행 여부']
+  eff_korea boolean [note: '한반도 영향']
+  max_ps integer [note: '최저 중심기압 (hPa)']
+  max_ws double [note: '최대 풍속 (m/s)']
+  cached_at timestamp
+  api_response jsonb
+
+  Note: '태풍 기본정보 - AAL 분석'
+
+  indexes {
+    (year, typ_seq) [unique]
+    year
+    eff_korea
+  }
+}
+
+Table api_typhoon_track {
+  track_id serial [pk]
+  year integer [not null]
+  typ_seq integer [not null, note: '태풍번호']
+  seq integer [note: '발표번호']
+  ft_type integer [note: '0=분석, 1=예측']
+  tmd integer [note: '발표시분']
+  typ_tm timestamp [note: '분석시각 UTC']
+  ft_tm timestamp [note: '예측시각 UTC']
+  latitude double
+  longitude double
+  location geography [note: 'POINT 4326']
+  direction varchar(10) [note: '진행방향']
+  speed_kmh double [note: '이동속도 km/h']
+  pressure_hpa integer [note: '중심기압 hPa']
+  wind_speed_ms double [note: '최대풍속 m/s']
+  rad15_km double [note: '강풍반경 km']
+  rad25_km double [note: '폭풍반경 km']
+  grade varchar(10) [note: 'TD/TS/STS/TY/L']
+  cached_at timestamp
+  api_response jsonb
+
+  Note: '태풍 경로 추적 - AAL 분석'
+
+  indexes {
+    (year, typ_seq, seq, ft_type, tmd) [unique]
+    year
+    (location) [type: gist]
+    grade
+  }
+}
+
+Table api_typhoon_td {
+  td_id serial [pk]
+  year integer [not null]
+  td_num integer [not null, note: 'TD 번호']
+  td_name varchar(100)
+  tm_st timestamp
+  tm_ed timestamp
+  latitude double
+  longitude double
+  location geography [note: 'POINT 4326']
+  pressure_hpa integer
+  wind_speed_ms double
+  upgraded_to_typhoon boolean [note: '태풍 승격 여부']
+  typhoon_typ_seq integer
+  cached_at timestamp
+  api_response jsonb
+
+  Note: '열대저압부(TD) 정보'
+
+  indexes {
+    (year, td_num) [unique]
+    year
+    (location) [type: gist]
+  }
+}
+
+Table api_typhoon_besttrack {
+  besttrack_id serial [pk]
+  grade varchar(10) [note: 'TD/TS/STS/TY/L']
+  tcid varchar(10) [not null, note: '태풍호수']
+  year integer [not null]
+  month integer
+  day integer
+  hour integer
+  obs_datetime timestamp
+  lon double
+  lat double
+  geom geometry [note: 'Point 4326']
+  max_wind_speed double [note: 'm/s']
+  central_pressure double [note: 'hPa']
+  gale_long double [note: '강풍반경 장반경 km']
+  gale_short double [note: '강풍반경 단반경 km']
+  gale_dir varchar(10)
+  storm_long double [note: '폭풍반경 장반경 km']
+  storm_short double [note: '폭풍반경 단반경 km']
+  storm_dir varchar(10)
+  typhoon_name varchar(50)
+  cached_at timestamp
+
+  Note: '태풍 베스트트랙 (2015~2022) - AAL 정밀 분석'
+
+  indexes {
+    (tcid, year, month, day, hour) [unique]
+    tcid
+    year
+    grade
+    (geom) [type: gist]
+  }
+}
+
+Table api_disaster_yearbook {
+  yearbook_id serial [pk]
+  year integer [not null, note: '재해 연도']
+  admin_code varchar(10) [note: '행정구역 코드 (NULL=전국 통계)']
+  disaster_type varchar(50) [note: '재해유형 (태풍/호우/대설 등)']
+  typhoon_damage double [note: '태풍 피해 (억원)']
+  heavy_rain_damage double [note: '호우 피해 (억원)']
+  heavy_snow_damage double [note: '대설 피해']
+  strong_wind_damage double [note: '강풍 피해']
+  wind_wave_damage double [note: '풍랑 피해']
+  earthquake_damage double [note: '지진 피해']
+  other_damage double [note: '기타 피해']
+  total_damage double [note: '총 피해액 (억원)']
+  loss_amount_won bigint [note: '직접 손실액 (원)']
+  affected_buildings integer [note: '피해 건물 수']
+  affected_population integer [note: '피해 영향 인구 (명)']
+  data_source varchar(100) [note: '데이터 출처: 행정안전부 등']
+  major_disaster_type varchar(50) [note: '주요 재해 유형']
+  damage_level varchar(20) [note: '경미/보통/심각/대재해']
+  cached_at timestamp [note: '캐시 시점']
+  api_response jsonb [note: 'API 응답 원본']
+
+  Note: '''
+    재해연보 - 과거 피해 통계
+    - 전국 통계: admin_code=NULL
+    - 지역별 통계: admin_code=시군구코드
+    - 보고서 활용: 과거 피해 이력 기반 리스크 설명
+  '''
+
+  indexes {
+    (year, admin_code, disaster_type) [unique]
+    year
+    admin_code
+    total_damage
+  }
+}
+
+Table api_vworld_geocode {
+  geocode_id serial [pk]
+  latitude double [not null]
+  longitude double [not null]
+  location geography [note: 'POINT 4326']
+  sido varchar(100) [note: '시도명']
+  sigungu varchar(100) [note: '시군구명']
+  sigungu_cd varchar(10) [note: '시군구코드']
+  dong varchar(100) [note: '법정동명']
+  bjdong_cd varchar(10) [note: '법정동코드']
+  dong_code varchar(20) [note: '법정동코드 전체']
+  bun varchar(10) [note: '본번']
+  ji varchar(10) [note: '부번']
+  zipcode varchar(10) [note: '우편번호']
+  full_address varchar(500) [note: '전체 주소']
+  parcel_address varchar(500) [note: '지번 주소']
+  road_address varchar(500) [note: '도로명 주소']
+  cached_at timestamp
+  api_response jsonb
+
+  Note: 'VWorld 역지오코딩 캐시'
+
+  indexes {
+    (latitude, longitude) [unique]
+    (location) [type: gist]
+    sigungu_cd
+    bjdong_cd
+  }
+}

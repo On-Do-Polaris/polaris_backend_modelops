@@ -7,7 +7,7 @@ FastAPI 메인 앱
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import risk_assessment, health
+from modelops.api.routes import risk_assessment, health
 import logging
 
 # 로깅 설정

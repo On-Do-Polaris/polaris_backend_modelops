@@ -24,7 +24,10 @@ jobs:
   test:
     name: 코드 품질 검사
     runs-on: ubuntu-22.04
-    if: github.ref == 'refs/heads/develop' || github.event_name == 'pull_request'
+    # develop 브랜치 push 또는 main으로의 PR에서만 테스트 실행
+    if: >
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+      || github.event_name == 'pull_request'
     continue-on-error: true
 
     steps:
@@ -62,7 +65,7 @@ jobs:
   build-and-push:
     name: Docker 이미지 빌드 및 푸시
     runs-on: ubuntu-22.04
-    needs: test
+    #  main 브랜치로 push될 때만 빌드 & 푸시 수행
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read

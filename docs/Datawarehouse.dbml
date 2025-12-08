@@ -1,12 +1,12 @@
 // ================================================================
 // SKALA Physical Risk AI - Datawarehouse ERD
 // ================================================================
-// Database: datawarehouse (Port: 5432)
+// Database: skala_datawarehouse (Port: 5432)
 // Services: FastAPI + ModelOPS
-// Total Tables: 45
+// Total Tables: 44
 //
-// Last Modified: 2025-12-03
-// Version: v03
+// Last Modified: 2025-12-08
+// Version: v04
 // ================================================================
 
 Project skala_datawarehouse {
@@ -422,12 +422,17 @@ Table raw_landcover {
 
 Table weather_stations {
   station_id serial [pk, note: '관측소 ID']
-  obscd varchar(10) [unique, note: '관측소 코드']
-  obsnm varchar(100) [note: '관측소명']
+  obscd varchar(10) [unique, not null, note: '관측소 코드']
+  obsnm varchar(100) [not null, note: '관측소명']
   bbsnnm varchar(50) [note: '대권역 유역명']
+  sbsncd varchar(20) [note: '소권역 유역 코드']
+  mngorg varchar(100) [note: '관리기관']
+  minyear integer [note: '데이터 시작 연도']
+  maxyear integer [note: '데이터 종료 연도']
   basin_code integer [note: '유역 코드 (1~6)']
-  latitude numeric(10,7) [note: '위도']
-  longitude numeric(11,7) [note: '경도']
+  basin_name varchar(50) [note: '유역명']
+  latitude numeric(10,7) [not null, note: '위도']
+  longitude numeric(11,7) [not null, note: '경도']
   geom geometry [note: 'POINT EPSG:4326']
 
   Note: '기상 관측소 정보 (1,086 rows)'
@@ -436,41 +441,63 @@ Table weather_stations {
     obscd
     basin_code
     (geom) [type: gist]
+    (longitude, latitude)
   }
 }
 
 Table grid_station_mappings {
   mapping_id serial [pk, note: '매핑 ID']
-  grid_lat numeric(8,6) [note: '격자점 위도']
-  grid_lon numeric(9,6) [note: '격자점 경도']
-  station_rank smallint [note: '최근접 순위 (1~3)']
-  obscd varchar(10) [note: '관측소 코드']
+  grid_lat numeric(8,6) [not null, note: '격자점 위도']
+  grid_lon numeric(9,6) [not null, note: '격자점 경도']
+  basin_code integer [note: '유역 코드']
+  basin_name varchar(50) [note: '유역명']
+  station_rank smallint [not null, note: '최근접 순위 (1~3)']
+  obscd varchar(10) [not null, note: '관측소 코드']
+  obsnm varchar(100) [note: '관측소명']
+  station_lat numeric(10,7) [note: '관측소 위도']
+  station_lon numeric(11,7) [note: '관측소 경도']
   distance_km numeric(8,4) [note: '거리 (km)']
+  geom geometry [note: '격자점 POINT EPSG:4326']
 
   Note: '격자-관측소 매핑 (~292k rows)'
 
   indexes {
     (grid_lat, grid_lon)
     obscd
+    basin_code
+    station_rank
+    (geom) [type: gist]
+    (grid_lat, grid_lon, station_rank) [unique]
   }
 }
 
 Table water_stress_rankings {
   ranking_id serial [pk, note: '순위 ID']
-  gid_0 varchar(3) [note: '국가 코드 (ISO)']
-  name_0 varchar(100) [note: '국가명']
-  year integer [note: '전망 연도']
-  scenario varchar(20) [note: '시나리오 (opt/pes)']
-  indicator_name varchar(50) [note: '지표명 (bws)']
+  gid_0 varchar(3) [not null, note: '국가 코드 (ISO 3166-1 alpha-3)']
+  gid_1 varchar(20) [note: '지역 코드 (국가 내 세부 지역)']
+  name_0 varchar(100) [not null, note: '국가명']
+  name_1 varchar(200) [note: '지역명']
+  year integer [not null, note: '전망 연도 (2030, 2050, 2080)']
+  scenario varchar(20) [not null, note: '시나리오 (opt/pes)']
+  indicator_name varchar(50) [not null, note: '지표명 (bws: baseline water stress)']
+  weight varchar(20) [note: '가중치 유형 (Dom/Ind)']
   score numeric(12,8) [note: '스코어 (0~5)']
+  score_ranked integer [note: '순위 (전세계 대비)']
   cat smallint [note: '카테고리 (0~4)']
+  label varchar(100) [note: '레이블 (위험도 설명)']
+  un_region varchar(100) [note: 'UN 지역 구분']
+  wb_region varchar(100) [note: '세계은행 지역 구분']
 
-  Note: 'WRI Aqueduct 물 스트레스 순위 (161,731 rows)'
+  Note: 'WRI Aqueduct 4.0 물 스트레스 순위 (161,731 rows)'
 
   indexes {
     gid_0
+    gid_1
     year
     scenario
+    indicator_name
+    cat
+    (gid_0, year, scenario, indicator_name)
   }
 }
 
@@ -663,7 +690,7 @@ Table aal_scaled_results {
 }
 
 // ============================================
-// 10. API Cache Tables (12개)
+// 10. API Cache Tables (11개)
 // ============================================
 
 Table api_buildings {

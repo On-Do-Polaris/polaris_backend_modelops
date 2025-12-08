@@ -1,7 +1,7 @@
 # SKALA Physical Risk AI - 통합 ERD
 
-> 최종 수정일: 2025-12-03
-> 버전: v07 (인구 전망 + 지역별 재해연보 반영)
+> 최종 수정일: 2025-12-08
+> 버전: v08 (refresh_tokens 테이블 추가, Reference Data 컬럼 동기화)
 
 ---
 
@@ -433,7 +433,12 @@ PostGIS RASTER 타입으로 저장되는 원시 래스터 데이터입니다.
 | obscd | VARCHAR(10) UK | 관측소 코드 | WAMIS API 연계 키 |
 | obsnm | VARCHAR(100) | 관측소명 | 표시용 |
 | bbsnnm | VARCHAR(50) | 대권역 유역명 | 유역 분류 |
+| sbsncd | VARCHAR(20) | 소권역 유역 코드 | 상세 유역 분류 |
+| mngorg | VARCHAR(100) | 관리기관 | 기관 정보 |
+| minyear | INTEGER | 데이터 시작 연도 | 데이터 범위 |
+| maxyear | INTEGER | 데이터 종료 연도 | 데이터 범위 |
 | basin_code | INTEGER | 유역 코드 (1~6) | 권역별 필터링 |
+| basin_name | VARCHAR(50) | 유역명 | 표시용 |
 | latitude | NUMERIC(10,7) | 위도 | 공간 조인 |
 | longitude | NUMERIC(11,7) | 경도 | 공간 조인 |
 | geom | GEOMETRY | POINT EPSG:4326 | 공간 인덱스 |
@@ -455,9 +460,17 @@ PostGIS RASTER 타입으로 저장되는 원시 래스터 데이터입니다.
 | mapping_id | SERIAL PK | 매핑 ID | 내부 식별자 |
 | grid_lat | NUMERIC(8,6) | 격자점 위도 | 격자 위치 |
 | grid_lon | NUMERIC(9,6) | 격자점 경도 | 격자 위치 |
+| basin_code | INTEGER | 유역 코드 | 권역 분류 |
+| basin_name | VARCHAR(50) | 유역명 | 표시용 |
 | station_rank | SMALLINT | 최근접 순위 (1~3) | 가중치 계산용 |
 | obscd | VARCHAR(10) | 관측소 코드 | weather_stations 참조 |
+| obsnm | VARCHAR(100) | 관측소명 | 표시용 |
+| station_lat | NUMERIC(10,7) | 관측소 위도 | 관측소 위치 |
+| station_lon | NUMERIC(11,7) | 관측소 경도 | 관측소 위치 |
 | distance_km | NUMERIC(8,4) | 거리 (km) | 역거리 가중치 계산 |
+| geom | GEOMETRY | 격자점 POINT | 공간 조인 |
+
+**UNIQUE 제약조건:** (grid_lat, grid_lon, station_rank)
 
 **예상 데이터 규모:** ~292k rows (97,377 grids × 3 stations)
 
@@ -475,12 +488,19 @@ PostGIS RASTER 타입으로 저장되는 원시 래스터 데이터입니다.
 |--------|------|------|------|
 | ranking_id | SERIAL PK | 순위 ID | 내부 식별자 |
 | gid_0 | VARCHAR(3) | 국가 코드 (ISO) | 국가 필터링 (KOR) |
+| gid_1 | VARCHAR(20) | 지역 코드 | 국가 내 세부 지역 |
 | name_0 | VARCHAR(100) | 국가명 | 표시용 |
+| name_1 | VARCHAR(200) | 지역명 | 표시용 |
 | year | INTEGER | 전망 연도 | 2030, 2050, 2080 |
 | scenario | VARCHAR(20) | 시나리오 | opt (낙관), pes (비관) |
 | indicator_name | VARCHAR(50) | 지표명 | bws (baseline water stress) |
+| weight | VARCHAR(20) | 가중치 유형 | Dom (가정용), Ind (산업용) |
 | score | NUMERIC(12,8) | 스코어 (0~5) | 물 스트레스 정도 |
+| score_ranked | INTEGER | 순위 | 전세계 대비 순위 |
 | cat | SMALLINT | 카테고리 (0~4) | 위험도 단계 |
+| label | VARCHAR(100) | 레이블 | 위험도 설명 |
+| un_region | VARCHAR(100) | UN 지역 | UN 지역 구분 |
+| wb_region | VARCHAR(100) | 세계은행 지역 | WB 지역 구분 |
 
 **예상 데이터 규모:** 161,731 rows
 
@@ -589,20 +609,19 @@ PostGIS RASTER 타입으로 저장되는 원시 래스터 데이터입니다.
 
 | 카테고리 | 테이블 수 | 설명 |
 |----------|----------|------|
-| User | 2개 | 사용자 인증 (basic.dbml 기준) |
+| User | 3개 | 사용자 인증 (users, password_reset_tokens, refresh_tokens) |
 | Site | 1개 | 사업장 관리 (basic.dbml 기준) |
 | Analysis | 2개 | AI 분석 작업/결과 (SpringBoot Entity) |
 | Report | 1개 | 리포트 관리 (SpringBoot Entity) |
 | Meta | 2개 | 메타데이터 (SpringBoot Entity) |
-| **합계** | **8개** | 생성 완료 ✓ |
+| **합계** | **9개** | 생성 완료 ✓ |
 
 > **SQL 파일:**
-> - `01_create_basic_tables.sql` - users, sites, password_reset_tokens (basic.dbml 기준)
-> - `02_create_additional_tables.sql` - analysis_jobs, analysis_results, reports, industries, hazard_types
+> - `create_springboot_tables.sql` - 9개 테이블 모두 포함
 
 ---
 
-### 2.2 User Tables (basic.dbml 기준)
+### 2.2 User Tables (3개)
 
 #### users - 사용자 정보
 
@@ -638,7 +657,28 @@ PostGIS RASTER 타입으로 저장되는 원시 래스터 데이터입니다.
 
 ---
 
-### 2.3 Site Tables (basic.dbml 기준)
+#### refresh_tokens - 리프레시 토큰
+
+**필요 이유:** JWT 리프레시 토큰 관리 (로그인 세션 유지)
+
+**사용처:**
+- SpringBoot: AuthController (토큰 갱신, 로그아웃)
+- 멀티 디바이스 로그인 추적 및 관리
+
+| 컬럼명 | 타입 | 설명 | 역할 |
+|--------|------|------|------|
+| id | UUID PK | 토큰 ID | 내부 식별자 |
+| user_id | UUID FK | 사용자 ID | users 참조 (CASCADE 삭제) |
+| token | VARCHAR(500) UK | JWT 리프레시 토큰 | 토큰 값 |
+| expires_at | TIMESTAMP | 만료 시간 | 기본 7일 |
+| created_at | TIMESTAMP | 생성 시간 | 기본값 now() |
+| revoked | BOOLEAN | 무효화 여부 | 로그아웃 시 true |
+| device_info | VARCHAR(255) | User-Agent 정보 | 기기 추적 |
+| ip_address | VARCHAR(45) | 접속 IP | IPv4/IPv6 지원 |
+
+---
+
+### 2.3 Site Tables (1개)
 
 #### sites - 사업장 정보
 
@@ -923,11 +963,11 @@ WHERE g.longitude = ROUND(sites.longitude::numeric, 2)
 
 | 데이터베이스 | 테이블 수 | 상태 |
 |-------------|----------|------|
-| Datawarehouse | 41개 | ✓ 완료 |
-| Application | 8개 | ✓ 완료 |
-| **합계** | **49개** | ✓ |
+| Datawarehouse | 44개 | ✓ 완료 |
+| Application | 9개 | ✓ 완료 |
+| **합계** | **53개** | ✓ |
 
 ---
 
 *문서 작성: Claude Code*
-*최종 수정: 2025-12-03*
+*최종 수정: 2025-12-08*

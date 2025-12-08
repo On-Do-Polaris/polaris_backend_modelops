@@ -385,7 +385,7 @@ class DatabaseConnection:
     @staticmethod
     def fetch_base_aals(latitude: float, longitude: float) -> Dict[str, float]:
         """
-        base_aal 조회 (probability_results.probability)
+        base_aal 조회 (probability_results.aal)
 
         Args:
             latitude: 위도
@@ -397,7 +397,7 @@ class DatabaseConnection:
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT risk_type, probability AS base_aal
+                SELECT risk_type, aal AS base_aal
                 FROM probability_results
                 WHERE latitude = %s AND longitude = %s
             """, (latitude, longitude))

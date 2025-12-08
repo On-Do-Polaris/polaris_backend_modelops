@@ -1,6 +1,10 @@
 # Build stage
 FROM ubuntu:22.04 AS builder
 
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
+
 WORKDIR /app
 
 # Install Python 3.11 and system dependencies
@@ -33,6 +37,10 @@ RUN uv pip install --system --no-cache .
 
 # Production stage
 FROM ubuntu:22.04 AS production
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
 
 WORKDIR /app
 

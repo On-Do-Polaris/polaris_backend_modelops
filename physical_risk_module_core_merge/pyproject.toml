@@ -1,0 +1,21 @@
+[project]
+name = "physical-risk-calculator"
+version = "1.0.0"
+description = "TCFD-based physical climate risk assessment system."
+dependencies = [
+    "requests",
+    "xmltodict",
+    "python-dotenv",
+    "geopy",
+    "rasterio",
+    "numpy",
+    "scipy",
+    "pyproj",
+    "netCDF4",
+    "h5py",
+    "pyhdf",
+    "geopandas"
+]
+
+[tool.uv]
+# This section can be used for further uv configurations.

@@ -1,72 +1,157 @@
 '''
 파일명: typhoon_hscore_agent.py
-최종 수정일: 2025-11-24
-버전: v2
-파일 개요: 태풍 리스크 Hazard 점수(H) 산출 Agent
-변경 이력:
-	- 2025-11-21: v1 - H×E×V에서 H만 계산하도록 분리
-	- 2025-11-24: v2 - Physical_RISK_calculate 로직 반영 (극값 풍속 95p 증가율)
+설명: 태풍(Typhoon) 리스크 Hazard 점수(H) 산출 Agent
+업데이트: HazardCalculator 로직 통합 (TCI 기반)
 '''
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+import math
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
+try:
+    from modelops.config import hazard_config as config
+except ImportError:
+    config = None
 
 
 class TyphoonHScoreAgent(BaseHazardHScoreAgent):
-	"""
-	태풍 리스크 Hazard 점수(H) 산출 Agent
+    """
+    태풍(Typhoon) 리스크 Hazard 점수(H) 산출 Agent
 
-	계산 방법론:
-	- H = V_95p_future / V_95p_baseline (극값 백분위수 비율법)
-	- 근거: IPCC AR6, WMO Guidelines, S&P Global
+    계산 방법론:
+    - KMA 태풍 베스트트랙 데이터 기반 과거 태풍 영향 분석
+    - TCI (Typhoon Comprehensive Index) = 0.55×Wind + 0.45×Rain
+    - 거리 감쇠 적용
+    """
 
-	극값 풍속 기준:
-	- 일평균 풍속의 95th percentile 사용
-	- 일평균 → 일최대 변환계수 k = 1.7
-	- 근거: WMO Guidelines 표준
+    def __init__(self):
+        super().__init__(risk_type='typhoon')
 
-	Hazard 해석:
-	- H = 1.00: 변화 없음
-	- H = 1.10: 10% 증가 (경미한 위험)
-	- H = 1.29: 29% 증가 (중간 위험)
-	- H = 1.50+: 50% 이상 증가 (극심한 위험)
+    def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
+        """
+        태풍 Hazard 점수 계산
 
-	데이터 출처:
-	- wind_95p_baseline: 기준 95th percentile 풍속 (m/s)
-	- wind_95p_future: 미래 95th percentile 풍속 (m/s)
-	"""
+        Args:
+            collected_data: 수집된 데이터 딕셔너리
+                - typhoon_data: typhoons 리스트 포함
+                - latitude, longitude: 분석 위치
 
-	def __init__(self):
-		super().__init__(risk_type='typhoon')
+        Returns:
+            Hazard 점수 (0.0 ~ 1.0)
+        """
+        typhoon_data_dict = collected_data.get('typhoon_data', {})
+        typhoons = typhoon_data_dict.get('typhoons', [])
+        
+        lat = collected_data.get('latitude')
+        lon = collected_data.get('longitude')
+        
+        if not typhoons or lat is None or lon is None:
+            # 데이터 없음 Fallback
+            return 0.1
 
-	def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
-		"""
-		태풍 Hazard 점수 계산
+        try:
+            # TCI 값 수집
+            impacts = []
+            max_wind_speeds = []
+            
+            # config 로드
+            if config and hasattr(config, 'TYPHOON_HAZARD_PARAMS'):
+                params = config.TYPHOON_HAZARD_PARAMS
+            else:
+                # 기본값 하드코딩 (fallback_constants 참고)
+                params = {
+                    'gale_radius_km': 300,
+                    'wind_norm_max_ms': 50,
+                    'rain_norm_max_mm': 500,
+                    'estimated_rx1day': {'strong': 400, 'medium': 200, 'weak': 100}
+                }
 
-		Args:
-			collected_data: 기후 데이터
-				- climate_data:
-					- wind_95p_baseline: 기준 95p 풍속 (m/s)
-					- wind_95p_future: 미래 95p 풍속 (m/s)
+            # TODO: SSP 시나리오 Rx1day 데이터 사용 가능 시 연동
+            rx1day_mm = None 
+            
+            for typhoon in typhoons:
+                tci, wind_speed, _ = self._calculate_typhoon_impact(lat, lon, typhoon, params, rx1day_mm)
+                if tci > 0:
+                    impacts.append(tci)
+                    max_wind_speeds.append(wind_speed)
+            
+            # 통계 계산
+            if impacts:
+                avg_impact = sum(impacts) / len(impacts)
+                
+                # 상세 결과 기록
+                if 'calculation_details' not in collected_data:
+                    collected_data['calculation_details'] = {}
+                
+                collected_data['calculation_details']['typhoon'] = {
+                    'hazard_score': min(avg_impact, 1.0),
+                    'impact_count': len(impacts),
+                    'max_wind_speed_avg': sum(max_wind_speeds) / len(max_wind_speeds) if max_wind_speeds else 0
+                }
+                
+                return round(min(avg_impact, 1.0), 4)
+            else:
+                return 0.1 # 영향권 내 태풍 없음
 
-		Returns:
-			Hazard 점수 (0.0 ~ 1.0)
-		"""
-		climate_data = collected_data.get('climate_data', {})
+        except Exception as e:
+            self.logger.error(f"Typhoon 계산 중 오류 발생: {e}")
+            return 0.1
 
-		# 데이터 추출
-		wind_95p_baseline = climate_data.get('wind_95p_baseline', 12.0)
-		wind_95p_future = climate_data.get('wind_95p_future', 15.5)
+    def _calculate_typhoon_impact(
+        self, lat: float, lon: float, typhoon: Dict, params: Dict, rx1day_mm: float = None
+    ) -> Tuple[float, int, Dict]:
+        """
+        위치별 태풍 영향도 계산 (TCI 방식)
+        """
+        try:
+            typhoon_lat = typhoon.get('lat', 0)
+            typhoon_lon = typhoon.get('lon', 0)
+            max_wind = typhoon.get('max_wind_speed', 0)  # m/s
 
-		# Hazard 비율 계산
-		# 근거: TCFD Framework - 시나리오 간 상대적 변화 비율로 리스크 증가 정량화
-		if wind_95p_baseline > 0:
-			H_ratio = wind_95p_future / wind_95p_baseline
-		else:
-			H_ratio = 1.0
+            # 태풍 중심까지의 거리 계산
+            distance_km = self._haversine_distance(lat, lon, typhoon_lat, typhoon_lon)
 
-		# 정규화 (1.0 기준, 최대 2.0까지)
-		# H = 1.0: 변화 없음 → 0.0
-		# H = 2.0: 100% 증가 → 1.0
-		hazard_score = min((H_ratio - 1.0), 1.0)
+            # 강풍 반경
+            gale_radius = params.get('gale_radius_km', 300)
 
-		return round(hazard_score, 4)
+            if distance_km >= gale_radius:
+                return 0, 0, {}
+
+            # 1. Wind 정규화
+            wind_max_ref = params.get('wind_norm_max_ms', 50)
+            wind_normalized = min(max_wind / wind_max_ref, 1.0)
+
+            # 2. Rain 정규화
+            rain_max_ref = params.get('rain_norm_max_mm', 500)
+            if rx1day_mm is not None:
+                rain_normalized = min(rx1day_mm / rain_max_ref, 1.0)
+            else:
+                # Fallback: 태풍 등급 기반 추정
+                estimates = params.get('estimated_rx1day', {'strong': 400, 'medium': 200, 'weak': 100})
+                if max_wind >= 33:
+                    est_rain = estimates['strong']
+                elif max_wind >= 25:
+                    est_rain = estimates['medium']
+                else:
+                    est_rain = estimates['weak']
+                rain_normalized = min(est_rain / rain_max_ref, 1.0)
+
+            # TCI 계산 (0.55:0.45)
+            tci = 0.55 * wind_normalized + 0.45 * rain_normalized
+
+            # 거리 감쇠 적용
+            distance_factor = 1.0 - (distance_km / gale_radius)
+            tci_adjusted = tci * distance_factor
+
+            return tci_adjusted, max_wind, {}
+
+        except Exception:
+            return 0, 0, {}
+
+    def _haversine_distance(self, lat1, lon1, lat2, lon2):
+        """두 지점 간 거리 계산 (km)"""
+        R = 6371  # 지구 반지름 (km)
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * \
+            math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c

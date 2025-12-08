@@ -1,97 +1,108 @@
 '''
 파일명: wildfire_hscore_agent.py
-최종 수정일: 2025-11-24
-버전: v2
-파일 개요: 산불 리스크 Hazard 점수(H) 산출 Agent
-변경 이력:
-	- 2025-11-21: v1 - H×E×V에서 H만 계산하도록 분리
-	- 2025-11-24: v2 - Physical_RISK_calculate 로직 반영 (FWI, 건조일수)
+설명: 산불(Wildfire) 리스크 Hazard 점수(H) 산출 Agent
+업데이트: HazardCalculator 로직 통합 (Canadian FWI 시스템 기반)
 '''
 from typing import Dict, Any
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
 
 
 class WildfireHScoreAgent(BaseHazardHScoreAgent):
-	"""
-	산불 리스크 Hazard 점수(H) 산출 Agent
+    """
+    산불(Wildfire) 리스크 Hazard 점수(H) 산출 Agent
 
-	계산 방법론:
-	- H = 0.60 × (FWI 증가율) + 0.40 × (건조일수 증가율)
-	- 근거: IPCC AR6(2022), 캐나다 FWI System(1987), 한국 산림청(2023)
+    계산 방법론:
+    - Canadian FWI (Fire Weather Index) 시스템 기반
+    - 기온, 습도, 풍속, 강수량 등을 종합하여 화재 기상 지수 산출
+    - FWI 값을 0~100 스케일로 변환 후 정규화
+    """
 
-	FWI 기준 (Fire Weather Index):
-	- 캐나다 산림청 표준 산불 위험 지수
-	- FWI > 30: 고위험
-	- FWI > 45: 극위험
-	- SSP5-8.5에서 최대 40% 증가 예상
+    def __init__(self):
+        super().__init__(risk_type='wildfire')
 
-	건조일수 기준:
-	- 연속 무강수 일수 (< 1mm)
-	- 7일 이상: 산불 위험 급증 (80%)
-	- 14일 이상: 산불 확률 95%
-	- 50% 증가 시 산불 위험 배가
+    def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
+        """
+        산불 Hazard 점수 계산
 
-	데이터 출처:
-	- fwi_baseline_max: 기준 FWI 최대값
-	- fwi_future_max: 미래 FWI 최대값
-	- dry_days_baseline: 기준 최대 연속 건조일수
-	- dry_days_future: 미래 최대 연속 건조일수
-	"""
+        Args:
+            collected_data: 수집된 데이터 딕셔너리
+                - climate_data: temperature, relative_humidity, wind_speed, annual_rainfall_mm 등
+                - spatial_data: landcover_type, ndvi 등
 
-	def __init__(self):
-		super().__init__(risk_type='wildfire')
+        Returns:
+            Hazard 점수 (0.0 ~ 1.0)
+        """
+        climate_data = collected_data.get('climate_data', {})
+        spatial_data = collected_data.get('spatial_data', {})
 
-	def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
-		"""
-		산불 Hazard 점수 계산
+        try:
+            # 1. 데이터 추출
+            temp = climate_data.get('temperature', 25.0)
+            rh = climate_data.get('relative_humidity', 50.0)
+            wind_speed = climate_data.get('wind_speed', 3.0) # m/s
+            annual_rainfall = climate_data.get('annual_rainfall_mm', 1200.0)
+            
+            landcover_type = spatial_data.get('landcover_type', 'mixed')
+            
+            # 2. Canadian FWI 계산 (간단 근사 버전)
+            
+            # FFMC (Fine Fuel Moisture Code): 세밀한 연료 수분
+            # 온도와 습도에 의존
+            ffmc = 85 - (rh / 100) * 50 + (temp / 50) * 15
+            ffmc = max(0, min(101, ffmc))
 
-		Args:
-			collected_data: 기후 데이터
-				- climate_data:
-					- fwi_baseline_max: 기준 FWI 최대값
-					- fwi_future_max: 미래 FWI 최대값
-					- dry_days_baseline: 기준 건조일수
-					- dry_days_future: 미래 건조일수
+            # DC (Drought Code): 깊은 토양 건조도
+            if annual_rainfall < 500:
+                dc = 400
+            elif annual_rainfall < 1000:
+                dc = 250
+            elif annual_rainfall < 1500:
+                dc = 150
+            else:
+                dc = 50
 
-		Returns:
-			Hazard 점수 (0.0 ~ 1.0)
-		"""
-		climate_data = collected_data.get('climate_data', {})
+            # ISI (Initial Spread Index): 초기 확산 지수
+            # 풍속과 온도에 의존
+            isi = (wind_speed / 5) * 20 + (temp / 40) * 15
+            isi = max(0, min(37, isi))
 
-		# 데이터 추출
-		fwi_baseline = climate_data.get('fwi_baseline_max', 30.0)
-		fwi_future = climate_data.get('fwi_future_max', 40.0)
-		dry_days_baseline = climate_data.get('dry_days_baseline', 10)
-		dry_days_future = climate_data.get('dry_days_future', 14)
+            # BUI (Buildup Index): 연료 축적 지수
+            bui = dc * 0.8
 
-		# 1. FWI 증가율 점수
-		# 근거: IPCC AR6 - SSP5-8.5에서 FWI 최대 40% 증가 예상
-		fwi_increase_pct = ((fwi_future - fwi_baseline) / fwi_baseline) * 100
+            # FWI (Fire Weather Index): 최종 화재 기상 지수
+            # 근사식: 정규화된 지수 계산
+            fwi_normalized = (ffmc / 101) * 0.4 + (isi / 37) * 0.3 + (bui / 292) * 0.3
+            fwi = fwi_normalized * 81  # 0-81 범위로 정규화
 
-		if fwi_increase_pct >= 40:
-			fwi_score = 100.0
-		elif fwi_increase_pct <= 0:
-			fwi_score = 0.0
-		else:
-			fwi_score = (fwi_increase_pct / 40.0) * 100
+            # 3. 위험도 지수 계산 (0-100 스케일)
+            wildfire_risk_index = (fwi / 81) * 100
 
-		# 2. 건조일수 증가율 점수
-		# 근거: 한국 산림청(2023) - 건조일수 50% 증가 시 산불 위험 배가
-		if dry_days_baseline > 0:
-			dry_days_increase_pct = ((dry_days_future - dry_days_baseline) / dry_days_baseline) * 100
-		else:
-			dry_days_increase_pct = 0.0
+            # 토지피복도에 따른 조정
+            if landcover_type == 'forest':
+                wildfire_risk_index *= 1.3
+            elif landcover_type == 'grassland':
+                wildfire_risk_index *= 1.2
+            elif landcover_type == 'agricultural':
+                wildfire_risk_index *= 0.8
 
-		if dry_days_increase_pct >= 50:
-			dry_days_score = 100.0
-		elif dry_days_increase_pct <= 0:
-			dry_days_score = 0.0
-		else:
-			dry_days_score = (dry_days_increase_pct / 50.0) * 100
+            wildfire_risk_index = min(wildfire_risk_index, 100)
+            
+            # Hazard Score (0~1)
+            hazard_score = wildfire_risk_index / 100.0
 
-		# 3. H 통합
-		# 근거: IPCC AR6(2022) - FWI 60%, 건조일수 40%
-		H_raw = (fwi_score * 0.60) + (dry_days_score * 0.40)
-		H_norm = min(H_raw / 100.0, 1.0)
+            # 상세 결과 기록
+            if 'calculation_details' not in collected_data:
+                collected_data['calculation_details'] = {}
+            
+            collected_data['calculation_details']['wildfire'] = {
+                'hazard_score': hazard_score,
+                'fwi': fwi,
+                'wildfire_risk_index': wildfire_risk_index,
+                'sub_indices': {'ffmc': ffmc, 'dc': dc, 'isi': isi, 'bui': bui}
+            }
 
-		return round(H_norm, 4)
+            return round(hazard_score, 4)
+
+        except Exception as e:
+            self.logger.error(f"Wildfire 계산 중 오류 발생: {e}")
+            return 0.3

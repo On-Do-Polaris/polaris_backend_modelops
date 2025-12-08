@@ -1,106 +1,124 @@
 '''
 파일명: drought_hscore_agent.py
-최종 수정일: 2025-11-24
-버전: v2
-파일 개요: 가뭄 리스크 Hazard 점수(H) 산출 Agent
-변경 이력:
-	- 2025-11-21: v1 - H×E×V에서 H만 계산하도록 분리
-	- 2025-11-24: v2 - Physical_RISK_calculate 로직 반영 (SPEI 기반 가뭄 평가)
+설명: 가뭄(Drought) 리스크 Hazard 점수(H) 산출 Agent
+업데이트: HazardCalculator 로직 통합 (SPEI-12 기반)
 '''
 from typing import Dict, Any
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
+try:
+    from modelops.config import hazard_config as config
+except ImportError:
+    # config 로드 실패 시 기본값 사용을 위해 try-except 처리
+    config = None
 
 
 class DroughtHScoreAgent(BaseHazardHScoreAgent):
-	"""
-	가뭄 리스크 Hazard 점수(H) 산출 Agent
+    """
+    가뭄(Drought) 리스크 Hazard 점수(H) 산출 Agent
 
-	계산 방법론:
-	- SPEI (Standardized Precipitation Evapotranspiration Index) 기반
-	- H = min(100, |SPEI| / 2.5 × 100)
-	- 근거: Vicente-Serrano et al. (2010), S&P Global Physical Risk (2025)
+    계산 방법론:
+    - SPEI-12 (Standardized Precipitation Evapotranspiration Index) 기반
+    - SPEI = (P - ET - μ) / σ
+    - 범위: -3 to +3 (일반적), 낮을수록 가뭄 심각
+    
+    점수 변환 (Hazard Score):
+    - SPEI 값을 0~1 Hazard Score로 역변환
+    - SPEI ≤ -2.0 → Score 1.0 (Extreme)
+    - SPEI ≥ 0.0 → Score 0.0 (Normal/Wet)
+    """
 
-	SPEI 기준:
-	- SPEI ≤ -2.5: 극심한 가뭄 (100점)
-	- SPEI ≤ -2.0: 심한 가뭄 (80점)
-	- SPEI ≤ -1.5: 중간 가뭄 (60점)
-	- SPEI ≤ -1.0: 약한 가뭄 (40점)
-	- SPEI ≥ 0: 정상 (0점)
+    def __init__(self):
+        super().__init__(risk_type='drought')
 
-	데이터 출처:
-	- annual_rainfall_mm: 연강수량 (mm)
-	- consecutive_dry_days: 연속 무강수일수 (일)
-	- soil_moisture: 토양수분 (0~1)
-	- spi_index: SPI/SPEI 지수
-	"""
+    def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
+        """
+        가뭄 Hazard 점수 계산
 
-	def __init__(self):
-		super().__init__(risk_type='drought')
+        Args:
+            collected_data: 수집된 데이터 딕셔너리
+                - climate_data: ClimateDataLoader 데이터 (spei12_index, annual_rainfall_mm 등)
+                - spatial_data: SpatialDataLoader 데이터 (soil_moisture 등)
 
-	def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
-		"""
-		가뭄 Hazard 점수 계산
+        Returns:
+            Hazard 점수 (0.0 ~ 1.0)
+        """
+        climate_data = collected_data.get('climate_data', {})
+        spatial_data = collected_data.get('spatial_data', {})
 
-		Args:
-			collected_data: 기후 데이터
-				- climate_data:
-					- annual_rainfall_mm: 연강수량
-					- consecutive_dry_days: 연속 무강수일수
-					- rainfall_intensity: 강우 강도
-					- soil_moisture: 토양수분 (0~1)
-					- drought_indicator: 가뭄 지표
-					- drought_frequency: 가뭄 빈도
-					- drought_duration_months: 가뭄 지속기간 (월)
-					- spi_index: SPI/SPEI 지수
+        # 데이터 부재 시 기본값
+        if not climate_data:
+            return 0.2  # 평년 수준
 
-		Returns:
-			Hazard 점수 (0.0 ~ 1.0)
-		"""
-		climate_data = collected_data.get('climate_data', {})
+        try:
+            # 1. 데이터 추출
+            spei12 = climate_data.get('spei12_index')
+            annual_rainfall = climate_data.get('annual_rainfall_mm', 1200.0)
+            cdd = climate_data.get('consecutive_dry_days', 15)
+            
+            final_spei = 0.0
+            
+            # 2. SPEI-12 값 결정 (실제 데이터 vs Fallback 추정)
+            if spei12 is not None:
+                # KMA SPEI-12 데이터 사용
+                final_spei = float(spei12)
+                final_spei = max(-3.0, min(3.0, final_spei))
+            else:
+                # Fallback: 강수량 기반 SPI 추정
+                # config에서 파라미터 로드
+                if config and hasattr(config, 'DROUGHT_HAZARD_PARAMS'):
+                    params = config.DROUGHT_HAZARD_PARAMS
+                    korea_mean_rainfall = params.get('korea_mean_rainfall', 1300.0)
+                    korea_std_rainfall = params.get('korea_std_rainfall', 300.0)
+                    cdd_norm_avg = params.get('cdd_norm_avg', 10.0)
+                    cdd_norm_std = params.get('cdd_norm_std', 10.0)
+                else:
+                    # 하드코딩된 기본값
+                    korea_mean_rainfall = 1300.0
+                    korea_std_rainfall = 300.0
+                    cdd_norm_avg = 10.0
+                    cdd_norm_std = 10.0
 
-		# 데이터 추출
-		consecutive_dry_days = climate_data.get('consecutive_dry_days', 0)
-		spi_index = climate_data.get('spi_index', 0.0)
-		soil_moisture = climate_data.get('soil_moisture', 0.3)
-		drought_duration = climate_data.get('drought_duration_months', 0)
+                # SPI 추정
+                if korea_std_rainfall > 0:
+                    spi_estimated = (annual_rainfall - korea_mean_rainfall) / korea_std_rainfall
+                else:
+                    spi_estimated = 0.0
+                
+                # CDD 정규화
+                if cdd_norm_std > 0:
+                    cdd_normalized = (cdd - cdd_norm_avg) / cdd_norm_std
+                else:
+                    cdd_normalized = 0.0
+                
+                # 가뭄 지수는 CDD가 길수록(-), 강수량이 적을수록(-) 심각해야 함
+                # SPI는 양수면 습함, 음수면 건조
+                # CDD 정규화값은 양수면 건조함. 따라서 부호 반대로 적용해야 SPI와 스케일 맞음
+                # 복합 가뭄지수 = SPI(60%) - CDD_norm(40%)
+                final_spei = (spi_estimated * 0.6) - (cdd_normalized * 0.4)
+                final_spei = max(-3.0, min(3.0, final_spei))
 
-		# 1. SPEI/SPI 기반 위해성 계산
-		# 근거: Vicente-Serrano et al. (2010) - SPEI가 SPI보다 정확
-		if spi_index != 0:
-			# SPEI 값이 있는 경우
-			spei_score = min(abs(spi_index) / 2.5, 1.0)
-		else:
-			# SPEI 없으면 연속 무강수일수로 추정
-			# 근거: 30일 이상 무강수 시 극심한 가뭄
-			if consecutive_dry_days > 30:
-				spei_score = 1.0  # 극심한 가뭄
-			elif consecutive_dry_days > 20:
-				spei_score = 0.8  # 심한 가뭄
-			elif consecutive_dry_days > 15:
-				spei_score = 0.6  # 보통 가뭄
-			elif consecutive_dry_days > 10:
-				spei_score = 0.4  # 경미한 가뭄
-			else:
-				spei_score = consecutive_dry_days / 30.0
+            # 3. Hazard Score 변환 (0.0 ~ 1.0)
+            # SPEI -2.5 이하일 때 1.0 (Extreme)
+            # SPEI 0.0 이상일 때 0.0 (Normal)
+            # 선형 변환: Score = -SPEI / 2.5
+            if final_spei >= 0:
+                hazard_score = 0.0
+            else:
+                hazard_score = min(1.0, -final_spei / 2.5)
 
-		# 2. 토양수분 부족도
-		# 근거: NASA SMAP (2018) - 토양수분 < 20% 시 극심한 가뭄
-		if soil_moisture < 0.1:
-			soil_score = 1.0
-		elif soil_moisture < 0.2:
-			soil_score = 0.8
-		elif soil_moisture < 0.3:
-			soil_score = 0.5
-		else:
-			soil_score = max(0, (0.3 - soil_moisture) / 0.2)
+            # 상세 결과 기록
+            if 'calculation_details' not in collected_data:
+                collected_data['calculation_details'] = {}
+            
+            collected_data['calculation_details']['drought'] = {
+                'spei12': final_spei,
+                'hazard_score_raw': hazard_score,
+                'annual_rainfall': annual_rainfall,
+                'cdd': cdd
+            }
 
-		# 3. 가뭄 지속기간
-		# 근거: 3개월 이상 지속 시 심각한 가뭄
-		duration_score = min(drought_duration / 6.0, 1.0)  # 6개월 기준
+            return round(hazard_score, 4)
 
-		# 4. H 통합
-		# 가중치: SPEI(60%), 토양수분(30%), 지속기간(10%)
-		H_raw = 0.6 * spei_score + 0.3 * soil_score + 0.1 * duration_score
-		H_norm = min(H_raw, 1.0)
-
-		return round(H_norm, 4)
+        except Exception as e:
+            self.logger.error(f"Drought 계산 중 오류 발생: {e}")
+            return 0.2

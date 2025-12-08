@@ -216,16 +216,26 @@ async def websocket_progress(websocket: WebSocket, request_id: str):
 @router.get("/results/{latitude}/{longitude}")
 async def get_cached_results(latitude: float, longitude: float):
     """
-    저장된 E, V, AAL 결과 조회
+    저장된 H, E, V, AAL 결과 조회 및 통합 리스크 계산
 
     Response:
         {
             "latitude": 37.5665,
             "longitude": 126.9780,
-            "exposure": {risk_type: {...}},
-            "vulnerability": {risk_type: {...}},
-            "aal_scaled": {risk_type: {...}},
-            "summary": {...},
+            "hazard": {risk_type: {"hazard_score": 0.4, "hazard_score_100": 40, ...}},
+            "exposure": {risk_type: {"exposure_score": 80, ...}},
+            "vulnerability": {risk_type: {"vulnerability_score": 50, ...}},
+            "integrated_risk": {risk_type: {"h_score": 40, "e_score": 80, "v_score": 50, "integrated_risk_score": 16.0, ...}},
+            "aal_scaled": {risk_type: {"base_aal": 0.01, "final_aal": 0.011, ...}},
+            "summary": {
+                "average_hazard": 35.5,
+                "average_exposure": 45.0,
+                "average_vulnerability": 50.0,
+                "average_integrated_risk": 12.5,
+                "highest_integrated_risk": {"risk_type": "river_flood", "integrated_risk_score": 25.0, "risk_level": "Low"},
+                "total_final_aal": 0.09,
+                "risk_count": 9
+            },
             "calculated_at": "2025-12-01T10:30:00Z"
         }
     """
@@ -233,6 +243,14 @@ async def get_cached_results(latitude: float, longitude: float):
         # DB에서 조회
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
+
+            # Hazard 조회 (추가)
+            cursor.execute("""
+                SELECT risk_type, hazard_score, hazard_score_100, hazard_level, calculated_at
+                FROM hazard_results
+                WHERE latitude = %s AND longitude = %s
+            """, (latitude, longitude))
+            hazard_rows = cursor.fetchall()
 
             # Exposure 조회
             cursor.execute("""
@@ -260,32 +278,83 @@ async def get_cached_results(latitude: float, longitude: float):
             aal_rows = cursor.fetchall()
 
         # 데이터가 없으면 404
-        if not exposure_rows and not vulnerability_rows and not aal_rows:
+        if not hazard_rows and not exposure_rows and not vulnerability_rows and not aal_rows:
             raise HTTPException(
                 status_code=404,
                 detail=f"No results found for location ({latitude}, {longitude})"
             )
 
         # 결과 변환
+        hazard = {row['risk_type']: dict(row) for row in hazard_rows}
         exposure = {row['risk_type']: dict(row) for row in exposure_rows}
         vulnerability = {row['risk_type']: dict(row) for row in vulnerability_rows}
         aal_scaled = {row['risk_type']: dict(row) for row in aal_rows}
 
+        # Integrated Risk 계산 (H × E × V / 10000)
+        integrated_risk = {}
+        for risk_type in hazard.keys():
+            h_score = hazard[risk_type].get('hazard_score_100', 0.0)
+            e_score = exposure.get(risk_type, {}).get('exposure_score', 0.0)
+            v_score = vulnerability.get(risk_type, {}).get('vulnerability_score', 0.0)
+
+            # H × E × V 계산
+            risk_score = (h_score * e_score * v_score) / 10000.0
+
+            # 위험도 등급 분류
+            if risk_score >= 80:
+                risk_level = 'Very High'
+            elif risk_score >= 60:
+                risk_level = 'High'
+            elif risk_score >= 40:
+                risk_level = 'Medium'
+            elif risk_score >= 20:
+                risk_level = 'Low'
+            else:
+                risk_level = 'Very Low'
+
+            integrated_risk[risk_type] = {
+                'h_score': round(h_score, 2),
+                'e_score': round(e_score, 2),
+                'v_score': round(v_score, 2),
+                'integrated_risk_score': round(risk_score, 2),
+                'risk_level': risk_level,
+                'formula': f'{h_score:.2f} × {e_score:.2f} × {v_score:.2f} / 10000 = {risk_score:.2f}'
+            }
+
         # 요약 통계 계산
-        if aal_scaled:
-            total_final_aal = sum(aal['final_aal'] for aal in aal_scaled.values())
+        if hazard and vulnerability and integrated_risk:
+            avg_hazard = sum(h['hazard_score_100'] for h in hazard.values()) / len(hazard) if hazard else 0
+            avg_exposure = sum(e['exposure_score'] for e in exposure.values()) / len(exposure) if exposure else 0
             avg_vulnerability = sum(v['vulnerability_score'] for v in vulnerability.values()) / len(vulnerability) if vulnerability else 0
+            avg_integrated_risk = sum(ir['integrated_risk_score'] for ir in integrated_risk.values()) / len(integrated_risk) if integrated_risk else 0
+
+            # 최고 통합 리스크
+            if integrated_risk:
+                highest_risk = max(integrated_risk.items(), key=lambda x: x[1]['integrated_risk_score'])
+                highest_integrated_risk = {
+                    'risk_type': highest_risk[0],
+                    'integrated_risk_score': highest_risk[1]['integrated_risk_score'],
+                    'risk_level': highest_risk[1]['risk_level']
+                }
+            else:
+                highest_integrated_risk = None
 
             summary = {
-                'total_final_aal': round(total_final_aal, 6),
+                'average_hazard': round(avg_hazard, 2),
+                'average_exposure': round(avg_exposure, 2),
                 'average_vulnerability': round(avg_vulnerability, 2),
-                'risk_count': len(aal_scaled)
+                'average_integrated_risk': round(avg_integrated_risk, 2),
+                'highest_integrated_risk': highest_integrated_risk,
+                'total_final_aal': round(sum(aal['final_aal'] for aal in aal_scaled.values()), 6) if aal_scaled else 0,
+                'risk_count': len(hazard)
             }
         else:
             summary = None
 
         # 가장 최근 계산 시각
         all_timestamps = []
+        if hazard_rows:
+            all_timestamps.append(hazard_rows[0]['calculated_at'])
         if exposure_rows:
             all_timestamps.append(exposure_rows[0]['calculated_at'])
         if vulnerability_rows:
@@ -298,8 +367,10 @@ async def get_cached_results(latitude: float, longitude: float):
         return {
             'latitude': latitude,
             'longitude': longitude,
+            'hazard': hazard,
             'exposure': exposure,
             'vulnerability': vulnerability,
+            'integrated_risk': integrated_risk,
             'aal_scaled': aal_scaled,
             'summary': summary,
             'calculated_at': calculated_at

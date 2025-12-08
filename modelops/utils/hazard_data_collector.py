@@ -15,9 +15,18 @@ try:
     from modelops.data_loaders.wamis_fetcher import WamisFetcher
     from modelops.utils.fwi_calculator import FWICalculator
     from modelops.config import hazard_config as config
+    DATA_LOADERS_AVAILABLE = True
 except ImportError as e:
     logger.error(f"Failed to import data loaders: {e}")
-    # 개발 환경에서 일부 파일이 없을 수 있으므로 예외 처리 강화 필요할 수 있음
+    DATA_LOADERS_AVAILABLE = False
+    # Mock classes for graceful degradation
+    BuildingDataFetcher = None
+    DisasterAPIFetcher = None
+    ClimateDataLoader = None
+    SpatialDataLoader = None
+    WamisFetcher = None
+    FWICalculator = None
+    config = None
 
 
 class HazardDataCollector:
@@ -36,20 +45,53 @@ class HazardDataCollector:
         self.target_year = target_year
         self._load_environment()
 
+        if not DATA_LOADERS_AVAILABLE:
+            logger.warning("데이터 로더를 사용할 수 없습니다. Mock 모드로 실행됩니다.")
+            self.building_fetcher = None
+            self.disaster_fetcher = None
+            self.climate_loader = None
+            self.spatial_loader = None
+            self.wamis_fetcher = None
+            self.fwi_calculator = None
+            return
+
         # 데이터 로더 초기화 (Lazy loading을 고려할 수도 있으나, 현재는 생성 시 초기화)
-        self.building_fetcher = BuildingDataFetcher()
-        self.disaster_fetcher = DisasterAPIFetcher()
-        
+        try:
+            self.building_fetcher = BuildingDataFetcher() if BuildingDataFetcher else None
+        except Exception as e:
+            logger.warning(f"BuildingDataFetcher 초기화 실패: {e}")
+            self.building_fetcher = None
+
+        try:
+            self.disaster_fetcher = DisasterAPIFetcher() if DisasterAPIFetcher else None
+        except Exception as e:
+            logger.warning(f"DisasterAPIFetcher 초기화 실패: {e}")
+            self.disaster_fetcher = None
+
         # ClimateDataLoader는 scenario 의존성 있음
         try:
-            self.climate_loader = ClimateDataLoader(scenario=scenario)
+            self.climate_loader = ClimateDataLoader(scenario=scenario) if ClimateDataLoader else None
         except Exception as e:
             logger.warning(f"ClimateDataLoader 초기화 실패: {e}")
             self.climate_loader = None
 
-        self.spatial_loader = SpatialDataLoader()
-        self.wamis_fetcher = WamisFetcher()
-        self.fwi_calculator = FWICalculator()
+        try:
+            self.spatial_loader = SpatialDataLoader() if SpatialDataLoader else None
+        except Exception as e:
+            logger.warning(f"SpatialDataLoader 초기화 실패: {e}")
+            self.spatial_loader = None
+
+        try:
+            self.wamis_fetcher = WamisFetcher() if WamisFetcher else None
+        except Exception as e:
+            logger.warning(f"WamisFetcher 초기화 실패: {e}")
+            self.wamis_fetcher = None
+
+        try:
+            self.fwi_calculator = FWICalculator() if FWICalculator else None
+        except Exception as e:
+            logger.warning(f"FWICalculator 초기화 실패: {e}")
+            self.fwi_calculator = None
 
         # KMA API Key 확인
         self.kma_api_key = os.getenv("KMA_API_KEY")

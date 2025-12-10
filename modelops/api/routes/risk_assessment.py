@@ -246,14 +246,25 @@ async def websocket_progress(websocket: WebSocket, request_id: str):
 
 
 @router.get("/results")
-async def get_cached_results(latitude: float, longitude: float):
+async def get_cached_results(
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    site_id: Optional[str] = None
+):
     """
     저장된 H, E, V, AAL 결과 조회 및 통합 리스크 계산
+
+    Query Parameters:
+        - latitude, longitude: 위경도로 조회
+        - site_id: 사업장 ID로 조회 (우선순위)
+
+    Note: site_id 또는 (latitude, longitude) 중 하나는 필수
 
     Response:
         {
             "latitude": 37.5665,
             "longitude": 126.9780,
+            "site_id": "SITE-2025-001",  (optional)
             "hazard": {risk_type: {"hazard_score": 0.4, "hazard_score_100": 40, ...}},
             "exposure": {risk_type: {"exposure_score": 80, ...}},
             "vulnerability": {risk_type: {"vulnerability_score": 50, ...}},
@@ -271,50 +282,74 @@ async def get_cached_results(latitude: float, longitude: float):
             "calculated_at": "2025-12-01T10:30:00Z"
         }
     """
+    # 파라미터 검증
+    if not site_id and not (latitude is not None and longitude is not None):
+        raise HTTPException(
+            status_code=400,
+            detail="site_id 또는 (latitude, longitude) 중 하나는 필수입니다"
+        )
     try:
         # DB에서 조회
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Hazard 조회 (추가)
-            cursor.execute("""
-                SELECT risk_type, hazard_score, hazard_score_100, hazard_level, calculated_at
+            # site_id 우선 조회, 없으면 lat/lon으로 조회
+            if site_id:
+                where_clause = "WHERE site_id = %s"
+                params = (site_id,)
+            else:
+                where_clause = "WHERE latitude = %s AND longitude = %s"
+                params = (latitude, longitude)
+
+            # Hazard 조회
+            cursor.execute(f"""
+                SELECT risk_type, hazard_score, hazard_score_100, hazard_level,
+                       calculated_at, site_id, latitude, longitude
                 FROM hazard_results
-                WHERE latitude = %s AND longitude = %s
-            """, (latitude, longitude))
+                {where_clause}
+            """, params)
             hazard_rows = cursor.fetchall()
 
             # Exposure 조회
-            cursor.execute("""
-                SELECT risk_type, exposure_score, proximity_factor, calculated_at
+            cursor.execute(f"""
+                SELECT risk_type, exposure_score, proximity_factor, calculated_at,
+                       site_id, latitude, longitude
                 FROM exposure_results
-                WHERE latitude = %s AND longitude = %s
-            """, (latitude, longitude))
+                {where_clause}
+            """, params)
             exposure_rows = cursor.fetchall()
 
             # Vulnerability 조회
-            cursor.execute("""
-                SELECT risk_type, vulnerability_score, vulnerability_level, factors, calculated_at
+            cursor.execute(f"""
+                SELECT risk_type, vulnerability_score, vulnerability_level, factors,
+                       calculated_at, site_id, latitude, longitude
                 FROM vulnerability_results
-                WHERE latitude = %s AND longitude = %s
-            """, (latitude, longitude))
+                {where_clause}
+            """, params)
             vulnerability_rows = cursor.fetchall()
 
             # AAL 조회
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT risk_type, base_aal, vulnerability_scale, final_aal,
-                       insurance_rate, expected_loss, calculated_at
+                       insurance_rate, expected_loss, calculated_at,
+                       site_id, latitude, longitude
                 FROM aal_scaled_results
-                WHERE latitude = %s AND longitude = %s
-            """, (latitude, longitude))
+                {where_clause}
+            """, params)
             aal_rows = cursor.fetchall()
 
         # 데이터가 없으면 404
         if not hazard_rows and not exposure_rows and not vulnerability_rows and not aal_rows:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No results found for location ({latitude}, {longitude})"
-            )
+            if site_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No results found for site_id: {site_id}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No results found for location ({latitude}, {longitude})"
+                )
 
         # 결과 변환
         hazard = {row['risk_type']: dict(row) for row in hazard_rows}
@@ -396,7 +431,7 @@ async def get_cached_results(latitude: float, longitude: float):
 
         calculated_at = max(all_timestamps) if all_timestamps else None
 
-        return {
+        response_data = {
             'latitude': latitude,
             'longitude': longitude,
             'hazard': hazard,
@@ -407,6 +442,12 @@ async def get_cached_results(latitude: float, longitude: float):
             'summary': summary,
             'calculated_at': calculated_at
         }
+
+        # site_id가 요청에 포함된 경우 응답에도 포함
+        if site_id:
+            response_data['site_id'] = site_id
+
+        return response_data
 
     except HTTPException:
         raise

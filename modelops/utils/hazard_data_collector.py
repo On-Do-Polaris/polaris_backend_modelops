@@ -135,7 +135,7 @@ class HazardDataCollector:
             'extra_data': {}
         }
 
-        # 2. 건물 정보 (모든 리스크 분석의 기초가 될 수 있으므로 기본 수집 고려, 
+        # 2. 건물 정보 (모든 리스크 분석의 기초가 될 수 있으므로 기본 수집 고려,
         #    하지만 성능을 위해 필요할 때만 수집하는 것이 좋을 수 있음.
         #    HazardCalculator에서는 fetch_all_building_data를 항상 호출했음.)
         try:

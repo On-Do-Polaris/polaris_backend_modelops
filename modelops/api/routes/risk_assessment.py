@@ -34,19 +34,29 @@ async def calculate_risk_assessment(request: RiskAssessmentRequest):
     Request:
         {
             "latitude": 37.5665,
-            "longitude": 126.9780
+            "longitude": 126.9780,
+            "site_id": "SITE-2025-001",  (optional)
+            "building_info": {...},  (optional)
+            "asset_info": {...}  (optional)
         }
 
     Response:
         {
             "request_id": "req-uuid-12345",
             "status": "queued",
-            "websocket_url": "ws://localhost:8001/api/v1/risk-assessment/ws/req-uuid-12345"
+            "websocket_url": "ws://localhost:8001/api/v1/risk-assessment/ws/req-uuid-12345",
+            "site_id": "SITE-2025-001"
         }
     """
     request_id = f"req-{uuid.uuid4()}"
 
     logger.info(f"새로운 계산 요청: {request_id} - ({request.latitude}, {request.longitude})")
+    if request.site_id:
+        logger.info(f"  site_id: {request.site_id}")
+    if request.building_info:
+        logger.info(f"  커스텀 건물 정보 제공됨")
+    if request.asset_info:
+        logger.info(f"  커스텀 자산 정보 제공됨")
 
     # 초기 상태 저장
     progress_store[request_id] = {
@@ -56,23 +66,39 @@ async def calculate_risk_assessment(request: RiskAssessmentRequest):
         'current_risk': None,
         'results': None,
         'error': None,
-        'created_at': datetime.now().isoformat()
+        'created_at': datetime.now().isoformat(),
+        'site_id': request.site_id
     }
 
     # 백그라운드에서 계산 시작
     asyncio.create_task(
-        _execute_calculation(request_id, request.latitude, request.longitude)
+        _execute_calculation(
+            request_id,
+            request.latitude,
+            request.longitude,
+            request.site_id,
+            request.building_info,
+            request.asset_info
+        )
     )
 
     return RiskAssessmentResponse(
         request_id=request_id,
         status="queued",
         websocket_url=f"ws://localhost:8001/api/v1/risk-assessment/ws/{request_id}",
-        message="계산이 큐에 등록되었습니다. WebSocket으로 실시간 진행상황을 확인하세요."
+        message="계산이 큐에 등록되었습니다. WebSocket으로 실시간 진행상황을 확인하세요.",
+        site_id=request.site_id
     )
 
 
-async def _execute_calculation(request_id: str, latitude: float, longitude: float):
+async def _execute_calculation(
+    request_id: str,
+    latitude: float,
+    longitude: float,
+    site_id: Optional[str] = None,
+    building_info: Optional[Dict] = None,
+    asset_info: Optional[Dict] = None
+):
     """백그라운드 계산 실행"""
     agent = IntegratedRiskAgent(database_connection=DatabaseConnection)
 
@@ -84,7 +110,8 @@ async def _execute_calculation(request_id: str, latitude: float, longitude: floa
             'total': total,
             'current_risk': risk_type,
             'results': None,
-            'error': None
+            'error': None,
+            'site_id': site_id
         }
         logger.info(f"[{request_id}] Progress: {current}/{total} - {risk_type}")
 
@@ -98,6 +125,10 @@ async def _execute_calculation(request_id: str, latitude: float, longitude: floa
             progress_callback=progress_callback
         )
 
+        # site_id를 결과에 추가
+        if site_id:
+            results['site_id'] = site_id
+
         # 완료 상태 업데이트
         progress_store[request_id] = {
             'status': 'completed',
@@ -105,7 +136,8 @@ async def _execute_calculation(request_id: str, latitude: float, longitude: floa
             'total': 9,
             'current_risk': None,
             'results': results,
-            'error': None
+            'error': None,
+            'site_id': site_id
         }
 
         logger.info(f"[{request_id}] 계산 완료")

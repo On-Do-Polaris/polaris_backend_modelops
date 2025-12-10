@@ -206,7 +206,8 @@ class ModelOpsSystemTester:
 
                 # 진행률 조회
                 status_response = requests.get(
-                    f"{self.api_base_url}/api/v1/risk-assessment/status/{request_id}",
+                    f"{self.api_base_url}/api/v1/risk-assessment/status",
+                    params={"request_id": request_id},
                     timeout=5
                 )
 

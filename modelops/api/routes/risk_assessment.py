@@ -213,7 +213,7 @@ async def websocket_progress(websocket: WebSocket, request_id: str):
             logger.info(f"Progress store 삭제: {request_id}")
 
 
-@router.get("/results/{latitude}/{longitude}")
+@router.get("/results")
 async def get_cached_results(latitude: float, longitude: float):
     """
     저장된 H, E, V, AAL 결과 조회 및 통합 리스크 계산

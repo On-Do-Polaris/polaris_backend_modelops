@@ -431,7 +431,8 @@ class ModelOpsSystemTester:
             logger.info(f"   위치: ({latitude}, {longitude})")
 
             response = requests.get(
-                f"{self.api_base_url}/api/v1/risk-assessment/results/{latitude}/{longitude}",
+                f"{self.api_base_url}/api/v1/risk-assessment/results",
+                params={"latitude": latitude, "longitude": longitude},
                 timeout=10
             )
 

@@ -44,9 +44,9 @@ app = FastAPI(
 
     ## API Endpoints
     - POST `/api/v1/risk-assessment/calculate`: 계산 시작
-    - GET `/api/v1/risk-assessment/status/{request_id}`: 진행상황 조회
+    - GET `/api/v1/risk-assessment/status?request_id=...`: 진행상황 조회
     - WebSocket `/api/v1/risk-assessment/ws/{request_id}`: 실시간 진행상황
-    - GET `/api/v1/risk-assessment/results/{lat}/{lon}`: 저장된 결과 조회
+    - GET `/api/v1/risk-assessment/results?latitude=...&longitude=...`: 저장된 결과 조회
     - GET `/health`: 서버 상태 확인
     - GET `/health/db`: 데이터베이스 연결 확인
     """,
@@ -104,9 +104,9 @@ async def root():
         ],
         "endpoints": {
             "calculate": "POST /api/v1/risk-assessment/calculate",
-            "status": "GET /api/v1/risk-assessment/status/{request_id}",
+            "status": "GET /api/v1/risk-assessment/status?request_id=...",
             "websocket": "WS /api/v1/risk-assessment/ws/{request_id}",
-            "results": "GET /api/v1/risk-assessment/results/{lat}/{lon}"
+            "results": "GET /api/v1/risk-assessment/results?latitude=...&longitude=..."
         }
     }
 

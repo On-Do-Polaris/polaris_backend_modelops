@@ -10,14 +10,52 @@ from datetime import datetime
 
 class RiskAssessmentRequest(BaseModel):
     """리스크 평가 계산 요청"""
+    # Required fields
     latitude: float = Field(..., ge=-90, le=90, description="위도")
     longitude: float = Field(..., ge=-180, le=180, description="경도")
+
+    # Optional fields
+    site_id: Optional[str] = Field(None, max_length=255, description="사업장 ID (추적용)")
+
+    building_info: Optional[Dict[str, Any]] = Field(None, description="""
+        커스텀 건물 정보 (제공 시 API 호출 생략)
+        - ground_floors: int (지상층수)
+        - basement_floors: int (지하층수)
+        - total_area_m2: float (연면적)
+        - building_age: int (건축년수)
+        - structure: str (구조: 철근콘크리트/철골 등)
+        - main_purpose: str (주용도: 업무시설/공장 등)
+        - has_piloti: bool (필로티 여부)
+        - has_water_tank: bool (물탱크 여부)
+        - distance_to_river_m: float (하천거리)
+        - distance_to_coast_m: float (해안거리)
+    """)
+
+    asset_info: Optional[Dict[str, Any]] = Field(None, description="""
+        커스텀 자산 정보
+        - total_asset_value: float (총 자산가치, 원)
+        - insurance_coverage_rate: float (보험 보전율, 0~1)
+        - floor_area: float (전용면적, ㎡)
+    """)
 
     class Config:
         json_schema_extra = {
             "example": {
                 "latitude": 37.5665,
-                "longitude": 126.9780
+                "longitude": 126.9780,
+                "site_id": "SITE-2025-001",
+                "building_info": {
+                    "ground_floors": 10,
+                    "basement_floors": 2,
+                    "total_area_m2": 5000.0,
+                    "building_age": 15,
+                    "structure": "철근콘크리트",
+                    "main_purpose": "업무시설"
+                },
+                "asset_info": {
+                    "total_asset_value": 50000000000,
+                    "insurance_coverage_rate": 0.7
+                }
             }
         }
 
@@ -28,6 +66,7 @@ class RiskAssessmentResponse(BaseModel):
     status: str = Field(..., description="상태 (queued, processing, completed, failed)")
     websocket_url: Optional[str] = Field(None, description="WebSocket URL")
     message: Optional[str] = Field(None, description="메시지")
+    site_id: Optional[str] = Field(None, description="사업장 ID (요청 시 제공된 경우)")
 
     class Config:
         json_schema_extra = {
@@ -35,7 +74,8 @@ class RiskAssessmentResponse(BaseModel):
                 "request_id": "req-12345-67890",
                 "status": "queued",
                 "websocket_url": "ws://localhost:8001/api/v1/risk-assessment/ws/req-12345-67890",
-                "message": "계산이 큐에 등록되었습니다"
+                "message": "계산이 큐에 등록되었습니다",
+                "site_id": "SITE-2025-001"
             }
         }
 

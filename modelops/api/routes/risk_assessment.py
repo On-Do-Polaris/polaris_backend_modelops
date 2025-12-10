@@ -16,7 +16,7 @@ import asyncio
 import uuid
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 

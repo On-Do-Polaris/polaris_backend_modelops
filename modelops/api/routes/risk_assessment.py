@@ -123,7 +123,7 @@ async def _execute_calculation(request_id: str, latitude: float, longitude: floa
         }
 
 
-@router.get("/status/{request_id}")
+@router.get("/status")
 async def get_calculation_status(request_id: str):
     """
     계산 진행 상황 조회 (HTTP Polling 방식)

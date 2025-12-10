@@ -33,7 +33,7 @@ class AALScalingAgent:
         - final_aal = base_aal × F_vuln × (1 - insurance_rate)
 
         Args:
-            base_aal: 기본 AAL (probability_results.probability)
+            base_aal: 기본 AAL (probability_results.aal)
             vulnerability_score: 취약성 점수 (0-100)
             insurance_rate: 보험 보전율 (0-1, 기본값 0.0)
             asset_value: 자산 가치 (원, 선택사항)

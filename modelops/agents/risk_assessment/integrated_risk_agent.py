@@ -452,7 +452,7 @@ class IntegratedRiskAgent:
 
     def _fetch_base_aals(self, latitude: float, longitude: float) -> Dict[str, float]:
         """
-        base_aal 조회 (probability_results.probability)
+        base_aal 조회 (probability_results.aal)
 
         DB 연결이 없으면 빈 딕셔너리 반환
         """

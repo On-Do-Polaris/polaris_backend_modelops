@@ -1,9 +1,12 @@
 '''
 파일명: sea_level_rise_probability_agent.py
-최종 수정일: 2025-11-24
-버전: v2
+최종 수정일: 2025-12-11
+버전: v3
 파일 개요: 해수면 상승 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-11: v3 - DEM 데이터를 collected_data에서 받도록 수정
+		* _load_dem_min_elevation 메서드 제거
+		* collected_data['ocean_data']['dem_data']에서 DEM 데이터 직접 사용
 	- 2025-11-24: v2 - DEM 데이터 기반 ground_level 사용
 		* ground_level 기본값 5m → DEM 최저 고도 사용
 		* DEM 경로에서 모든 .txt 파일 읽어 최저 고도 추출
@@ -16,7 +19,6 @@
 '''
 from typing import Dict, Any
 import numpy as np
-from pathlib import Path
 from .base_probability_agent import BaseProbabilityAgent
 
 
@@ -65,46 +67,29 @@ class SeaLevelRiseProbabilityAgent(BaseProbabilityAgent):
 			dr_intensity=dr_intensity
 		)
 
-	def _load_dem_min_elevation(self, dem_path: str) -> float:
+	def _extract_min_elevation_from_dem(self, dem_data: list) -> float:
 		"""
 		DEM 데이터에서 최저 고도 추출
 
 		Args:
-			dem_path: DEM 파일 또는 디렉토리 경로
+			dem_data: DEM 데이터 리스트 [{'x': float, 'y': float, 'z': float}, ...]
 
 		Returns:
 			최저 고도 (meters)
 		"""
-		dem_path_obj = Path(dem_path)
-
-		if dem_path_obj.is_file():
-			dem_files = [dem_path_obj]
-		elif dem_path_obj.is_dir():
-			dem_files = list(dem_path_obj.glob('*.txt'))
-		else:
-			self.logger.warning(f"DEM 경로를 찾을 수 없습니다: {dem_path}, 기본값 0m 사용")
-			return 0.0
-
-		if not dem_files:
-			self.logger.warning(f"DEM 파일이 없습니다: {dem_path}, 기본값 0m 사용")
+		if not dem_data:
+			self.logger.warning("DEM 데이터가 없습니다. 기본값 0m 사용")
 			return 0.0
 
 		min_elevation = float('inf')
 
-		for dem_file in dem_files:
+		for point in dem_data:
 			try:
-				with open(dem_file, 'r', encoding='utf-8') as f:
-					for line in f:
-						parts = line.strip().split()
-						if len(parts) >= 3:
-							try:
-								elevation = float(parts[2])  # Z 값
-								if elevation < min_elevation:
-									min_elevation = elevation
-							except ValueError:
-								continue
+				elevation = point.get('z')
+				if elevation is not None and elevation < min_elevation:
+					min_elevation = elevation
 			except Exception as e:
-				self.logger.warning(f"DEM 파일 읽기 실패 ({dem_file}): {e}")
+				self.logger.warning(f"DEM 데이터 파싱 실패: {e}")
 				continue
 
 		if min_elevation == float('inf'):
@@ -120,22 +105,20 @@ class SeaLevelRiseProbabilityAgent(BaseProbabilityAgent):
 
 		Args:
 			collected_data: 수집된 해양 및 지형 데이터
-				- zos_data: 연도별 시점별 zos 데이터
-					각 원소는 {'year': int, 'zos_values': [m values]}
-				- ground_level: 사이트 지반고도 (m) - DEM 데이터로부터 계산
-				- dem_path: DEM 파일 경로 (ground_level 없을 경우)
+				- ocean_data:
+					- zos_data: 연도별 시점별 zos 데이터
+						각 원소는 {'year': int, 'zos_values': [m values]}
+					- dem_data: DEM 데이터 [{'x': float, 'y': float, 'z': float}, ...]
 
 		Returns:
 			연도별 최대 침수 깊이 값 배열 (m)
 		"""
 		ocean_data = collected_data.get('ocean_data', {})
 		zos_data = ocean_data.get('zos_data', [])
+		dem_data = ocean_data.get('dem_data', [])
 
-		# ground_level을 DEM 데이터로부터 가져오기
-		ground_level = ocean_data.get('ground_level')
-		if ground_level is None:
-			dem_path = ocean_data.get('dem_path', 'scratch/dem')
-			ground_level = self._load_dem_min_elevation(dem_path)
+		# DEM 데이터에서 최저 고도 추출
+		ground_level = self._extract_min_elevation_from_dem(dem_data)
 
 		if not zos_data:
 			self.logger.warning("ZOS 데이터가 없습니다. 기본값 0으로 설정합니다.")

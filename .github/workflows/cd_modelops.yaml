@@ -83,6 +83,22 @@ jobs:
               -e DW_NAME=${{ secrets.DW_NAME }} \
               -e DW_USER=${{ secrets.DW_USER }} \
               -e DW_PASSWORD=${{ secrets.DW_PASSWORD }} \
+              -e KMA_API_KEY=${{ secrets.KMA_API_KEY }} \
+              -e VWORLD_API_KEY=${{ secrets.VWORLD_API_KEY }} \
+              -e BUILDING_API_KEY=${{ secrets.BUILDING_API_KEY }} \
+              -e RIVER_API_KEY=${{ secrets.RIVER_API_KEY }} \
+              -e EMERGENCYMESSAGE_API_KEY=${{ secrets.EMERGENCYMESSAGE_API_KEY }} \
+              -e DISASTERAREA_API_KEY=${{ secrets.DISASTERAREA_API_KEY }} \
+              -e PROBABILITY_SCHEDULE_MONTH=${{ secrets.PROBABILITY_SCHEDULE_MONTH || '1' }} \
+              -e PROBABILITY_SCHEDULE_DAY=${{ secrets.PROBABILITY_SCHEDULE_DAY || '1' }} \
+              -e PROBABILITY_SCHEDULE_HOUR=${{ secrets.PROBABILITY_SCHEDULE_HOUR || '2' }} \
+              -e PROBABILITY_SCHEDULE_MINUTE=${{ secrets.PROBABILITY_SCHEDULE_MINUTE || '0' }} \
+              -e HAZARD_SCHEDULE_MONTH=${{ secrets.HAZARD_SCHEDULE_MONTH || '1' }} \
+              -e HAZARD_SCHEDULE_DAY=${{ secrets.HAZARD_SCHEDULE_DAY || '1' }} \
+              -e HAZARD_SCHEDULE_HOUR=${{ secrets.HAZARD_SCHEDULE_HOUR || '4' }} \
+              -e HAZARD_SCHEDULE_MINUTE=${{ secrets.HAZARD_SCHEDULE_MINUTE || '0' }} \
+              -e PARALLEL_WORKERS=${{ secrets.PARALLEL_WORKERS || '4' }} \
+              -e BATCH_SIZE=${{ secrets.BATCH_SIZE || '1000' }} \
               ${IMAGE}
 
             # Health check - FastAPI health 엔드포인트 확인

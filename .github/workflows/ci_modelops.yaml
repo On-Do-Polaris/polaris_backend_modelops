@@ -25,7 +25,7 @@ jobs:
     name: 코드 품질 검사
     runs-on: ubuntu-22.04
     # develop 브랜치 push 또는 main으로의 PR에서만 테스트 실행
-    if: >
+    if: 
       (github.event_name == 'push' && github.ref == 'refs/heads/develop')
       || github.event_name == 'pull_request'
     continue-on-error: true

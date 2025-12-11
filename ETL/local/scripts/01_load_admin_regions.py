@@ -134,6 +134,7 @@ def load_admin_regions() -> None:
                         level = 1  # 시도
 
                     # 테이블 SRID가 5174이므로 좌표 변환 수행
+                    # ST_Multi()로 Polygon을 MultiPolygon으로 변환 (테이블 타입 호환성)
                     cursor.execute("""
                         INSERT INTO location_admin (
                             admin_code, admin_name, level,
@@ -141,7 +142,7 @@ def load_admin_regions() -> None:
                             geom, centroid
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s,
-                            ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 5174),
+                            ST_Multi(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 5174)),
                             ST_Centroid(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 5174))
                         )
                     """, (
@@ -153,6 +154,7 @@ def load_admin_regions() -> None:
 
                 except Exception as e:
                     error_count += 1
+                    conn.rollback()  # 트랜잭션 롤백으로 연쇄 오류 방지
                     if error_count <= 5:
                         logger.warning(f"피처 처리 오류: {e}")
 

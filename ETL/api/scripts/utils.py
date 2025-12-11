@@ -21,8 +21,8 @@ from psycopg2.extensions import connection as Connection
 from psycopg2.extras import Json
 from dotenv import load_dotenv
 
-# .env 파일 로드 (프로젝트 루트에서)
-env_path = Path(__file__).parent.parent.parent.parent / ".env"
+# .env 파일 로드 (etl 디렉토리에서)
+env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(env_path)
 
 

@@ -78,11 +78,11 @@ jobs:
               --network web \
               --restart unless-stopped \
               -p 8001:8001 \
-              -e DATABASE_HOST=${{ secrets.DW_HOST }}
-              -e DATABASE_PORT=${{ secrets.DW_PORT }}
-              -e DATABASE_NAME=${{ secrets.DW_NAME }}
-              -e DATABASE_USER=${{ secrets.DW_USER }}
-              -e DATABASE_PASSWORD=${{ secrets.DW_PASSWORD }}
+              -e DATABASE_HOST=${{ secrets.DW_HOST }} \
+              -e DATABASE_PORT=${{ secrets.DW_PORT }} \
+              -e DATABASE_NAME=${{ secrets.DW_NAME }} \
+              -e DATABASE_USER=${{ secrets.DW_USER }} \
+              -e DATABASE_PASSWORD=${{ secrets.DW_PASSWORD }} \
               -e KMA_API_KEY=${{ secrets.KMA_API_KEY }} \
               -e VWORLD_API_KEY=${{ secrets.VWORLD_API_KEY }} \
               -e BUILDING_API_KEY=${{ secrets.BUILDING_API_KEY }} \

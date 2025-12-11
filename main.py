@@ -1,13 +1,13 @@
 """
-ModelOps Risk Assessment API
-E, V, AAL 계산 API with Real-time Progress
+ModelOps Site Assessment API
+사업장 리스크 평가 및 이전 후보지 추천 API
 
 FastAPI 메인 앱
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from modelops.api.routes import risk_assessment, health, site_assessment
+from modelops.api.routes import health, site_assessment
 from modelops.batch.probability_scheduler import ProbabilityScheduler
 from modelops.batch.hazard_scheduler import HazardScheduler
 import logging
@@ -26,18 +26,25 @@ hazard_scheduler = None
 
 # FastAPI 앱 생성
 app = FastAPI(
-    title="ModelOps Risk Assessment API",
+    title="ModelOps Site Assessment API",
     description="""
-    H (Hazard), E (Exposure), V (Vulnerability), AAL (Average Annual Loss) 통합 계산 API
+    사업장 리스크 평가 및 이전 후보지 추천 API
 
     ## Features
-    - **H × E × V 통합 리스크 계산**: 9개 기후 리스크 통합 점수 산출
-    - **사업장 리스크 계산**: 건물 정보 기반 사업장별 리스크 평가
+    - **사업장 리스크 계산**: 건물 정보 기반 9개 기후 리스크 통합 평가
     - **이전 후보지 추천**: ~1000개 후보 격자를 평가하여 최적 입지 추천
-    - **실시간 계산**: WebSocket을 통한 실시간 진행상황 제공
-    - **Mini-batch 처리**: 9개 리스크 순차 계산
-    - **자동 데이터 수집**: DB에서 필요한 데이터 자동 조회
+    - **AAL 기반 의사결정**: 기후 리스크와 건물 취약성을 결합한 연평균 손실 계산
+    - **자동 배치 처리**: Hazard, Probability 스케줄러로 전국 격자 데이터 자동 계산
     - **결과 저장**: 계산 결과 자동 DB 저장
+
+    ## 계산 프로세스
+    1. **H (Hazard)**: DB 조회 (스케줄러가 미리 계산)
+    2. **E (Exposure)**: 건물 정보 기반 노출도 계산
+    3. **V (Vulnerability)**: 건물 특성 기반 취약성 계산
+    4. **통합 리스크**: H × E × V / 10000
+    5. **AAL 계산**: base_aal × F_vuln × (1 - insurance_rate)
+       - base_aal: DB 조회 (기후만 고려)
+       - F_vuln: 0.9 + (V_score / 100) × 0.2
 
     ## 9개 Physical Risks
     1. extreme_heat (극한 고온)
@@ -51,12 +58,6 @@ app = FastAPI(
     9. typhoon (태풍)
 
     ## API Endpoints
-    ### Risk Assessment (일반 리스크 계산)
-    - POST `/api/v1/risk-assessment/calculate`: 계산 시작
-    - GET `/api/v1/risk-assessment/status?request_id=...`: 진행상황 조회
-    - WebSocket `/api/v1/risk-assessment/ws/{request_id}`: 실시간 진행상황
-    - GET `/api/v1/risk-assessment/results?latitude=...&longitude=...`: 저장된 결과 조회
-
     ### Site Assessment (사업장 리스크 평가)
     - POST `/api/v1/site-assessment/calculate`: 사업장 리스크 계산
     - POST `/api/v1/site-assessment/recommend-locations`: 이전 후보지 추천
@@ -65,7 +66,7 @@ app = FastAPI(
     - GET `/health`: 서버 상태 확인
     - GET `/health/db`: 데이터베이스 연결 확인
     """,
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -80,7 +81,6 @@ app.add_middleware(
 )
 
 # 라우터 등록
-app.include_router(risk_assessment.router)
 app.include_router(site_assessment.router)
 app.include_router(health.router)
 
@@ -91,7 +91,7 @@ async def startup_event():
     global probability_scheduler, hazard_scheduler
 
     logger.info("=" * 60)
-    logger.info("ModelOps Risk Assessment API 시작")
+    logger.info("ModelOps Site Assessment API 시작")
     logger.info("=" * 60)
     logger.info("API 문서: http://localhost:8001/docs")
     logger.info("Health Check: http://localhost:8001/health")
@@ -125,36 +125,36 @@ async def shutdown_event():
         hazard_scheduler.stop()
         logger.info("Hazard 배치 스케줄러 종료")
 
-    logger.info("ModelOps Risk Assessment API 종료")
+    logger.info("ModelOps Site Assessment API 종료")
 
 
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {
-        "service": "ModelOps Risk Assessment API",
-        "version": "1.0.0",
-        "description": "H × E × V 통합 리스크 계산 API with Real-time Progress",
+        "service": "ModelOps Site Assessment API",
+        "version": "2.0.0",
+        "description": "사업장 리스크 평가 및 이전 후보지 추천 API",
         "docs": "/docs",
         "health": "/health",
         "features": [
-            "H (Hazard) 점수 계산",
-            "E (Exposure) 점수 계산",
-            "V (Vulnerability) 점수 계산",
-            "H × E × V 통합 리스크 점수 계산",
-            "AAL (Average Annual Loss) 스케일링"
+            "사업장 리스크 계산 (건물 정보 기반 H × E × V)",
+            "이전 후보지 추천 (~1000개 격자 평가)",
+            "AAL 기반 의사결정 (base_aal × F_vuln)",
+            "자동 배치 처리 (Hazard, Probability 스케줄러)"
         ],
+        "calculation_process": {
+            "1_hazard": "DB 조회 (스케줄러가 미리 계산)",
+            "2_exposure": "건물 정보 기반 노출도 계산",
+            "3_vulnerability": "건물 특성 기반 취약성 계산",
+            "4_integrated_risk": "H × E × V / 10000",
+            "5_aal": "base_aal × F_vuln × (1 - insurance_rate)"
+        },
         "endpoints": {
-            "risk_assessment": {
-                "calculate": "POST /api/v1/risk-assessment/calculate",
-                "status": "GET /api/v1/risk-assessment/status?request_id=...",
-                "websocket": "WS /api/v1/risk-assessment/ws/{request_id}",
-                "results": "GET /api/v1/risk-assessment/results?latitude=...&longitude=..."
-            },
-            "site_assessment": {
-                "calculate_site_risk": "POST /api/v1/site-assessment/calculate",
-                "recommend_locations": "POST /api/v1/site-assessment/recommend-locations"
-            }
+            "calculate_site_risk": "POST /api/v1/site-assessment/calculate",
+            "recommend_locations": "POST /api/v1/site-assessment/recommend-locations",
+            "health": "GET /health",
+            "health_db": "GET /health/db"
         }
     }
 

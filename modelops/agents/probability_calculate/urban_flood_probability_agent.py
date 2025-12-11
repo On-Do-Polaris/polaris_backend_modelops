@@ -133,13 +133,3 @@ class UrbanFloodProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 4  # bin5: ≥8일 (고빈도 홍수 지역)
 
 		return bin_indices
-
-	def get_bin_labels(self) -> List[str]:
-		"""bin 레이블 반환"""
-		return [
-			'위험 거의 없음 (0일)',
-			'저빈도 호우 (1-2일)',
-			'중간 위험 (3-4일)',
-			'반복적 침수 (5-7일)',
-			'고빈도 홍수 (≥8일)'
-		]

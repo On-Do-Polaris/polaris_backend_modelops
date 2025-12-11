@@ -1,9 +1,14 @@
 '''
 파일명: base_probability_agent.py
-최종 수정일: 2025-11-22
-버전: v1.1
+최종 수정일: 2025-12-11
+버전: v1.2
 파일 개요: 위험 발생확률 P(H) 계산 Base Agent
 변경 이력:
+	- 2025-12-11: v1.2 - KDE 방식 개선 및 메타데이터 추가
+		* threshold 3 → 30으로 상향 조정
+		* _probability_method 플래그 추가 (사용한 계산 방식 추적)
+		* calculation_details에 실제 사용한 방식(kde/count) 표시
+		* bin_details에 각 bin의 실제 샘플 수 추가 (디버깅용)
 	- 2025-11-22: v1.1 - 연별/월별 데이터 모두 처리 가능하도록 개선
 		* time_unit 파라미터 추가 ('yearly' | 'monthly')
 		* 월별 데이터의 경우 P_r[i] = (해당 bin 월 수) / (전체 월 수)
@@ -24,6 +29,9 @@ from scipy.integrate import quad
 
 logger = logging.getLogger(__name__)
 
+# KDE 방식 사용을 위한 최소 샘플 수
+MIN_SAMPLES_FOR_KDE = 3
+
 
 class BaseProbabilityAgent(ABC):
 	"""
@@ -32,7 +40,7 @@ class BaseProbabilityAgent(ABC):
 	공통 프레임워크:
 	- 강도지표 X_r(t) 계산
 	- bin 분류
-	- bin별 발생확률 P_r[i] = (해당 bin 샘플 수) / (전체 샘플 수)
+	- bin별 발생확률 P_r[i] 계산 (KDE 기반 또는 이산적 방식)
 	  * yearly: 연도 기반 (폭염, 한파, 홍수 등)
 	  * monthly: 월 기반 (가뭄, 산불 등)
 	- bin별 기본 손상률 DR_intensity_r[i] (취약성 스케일링 적용 전)
@@ -59,7 +67,8 @@ class BaseProbabilityAgent(ABC):
 		self.dr_intensity = dr_intensity
 		self.time_unit = time_unit
 		self.logger = logger
-		self.logger.info(f"{risk_type} 확률 계산 Agent 초기화 (v1.1, {time_unit})")
+		self._probability_method = None  # 'kde' 또는 'count'
+		self.logger.info(f"{risk_type} 확률 계산 Agent 초기화 (v1.2, {time_unit})")
 
 	def calculate_probability(
 		self,
@@ -172,8 +181,15 @@ class BaseProbabilityAgent(ABC):
 		Returns:
 			bin별 발생확률 리스트 (연속적인 값)
 		"""
-		if len(intensity_values) < 3:
+		sample_count = len(intensity_values)
+
+		if sample_count < MIN_SAMPLES_FOR_KDE:
 			# 샘플이 너무 적으면 기존 방식 사용
+			self.logger.info(
+				f"샘플 수({sample_count})가 MIN_SAMPLES_FOR_KDE({MIN_SAMPLES_FOR_KDE})보다 적음. "
+				f"이산적 방식(count) 사용"
+			)
+			self._probability_method = 'count'
 			return self._calculate_bin_probabilities_count(intensity_values)
 
 		try:
@@ -208,10 +224,13 @@ class BaseProbabilityAgent(ABC):
 			if total > 0:
 				probabilities = [p / total for p in probabilities]
 
+			self._probability_method = 'kde'
+			self.logger.info(f"KDE 방식으로 확률 계산 완료 (샘플 {sample_count}개)")
 			return probabilities
 
 		except Exception as e:
 			logger.warning(f"KDE 계산 실패, 기존 방식으로 전환: {e}")
+			self._probability_method = 'count'
 			return self._calculate_bin_probabilities_count(intensity_values)
 
 	def _calculate_bin_probabilities_count(self, intensity_values: np.ndarray) -> List[float]:
@@ -271,28 +290,52 @@ class BaseProbabilityAgent(ABC):
 		Returns:
 			계산 상세 내역 딕셔너리
 		"""
+		# bin별 실제 샘플 수 계산 (디버깅용)
+		bin_indices = self._classify_into_bins(intensity_values)
+		bin_sample_counts = []
+		for i in range(len(self.bins)):
+			count = int(np.sum(bin_indices == i))
+			bin_sample_counts.append(count)
+
+		# bin 상세 정보 생성
 		bin_details = []
 		for i in range(len(self.bins)):
 			bin_details.append({
 				'bin': i + 1,
 				'range': f"{self.bins[i][0]} ~ {self.bins[i][1]}",
 				'probability': round(bin_probabilities[i], 4),
+				'sample_count': bin_sample_counts[i],  # 실제 샘플 수 추가
 				'base_damage_rate': round(self.dr_intensity[i], 4)
 			})
 
 		total_samples = len(intensity_values)
 
+		# 실제 사용한 계산 방식에 따라 formula 설정
+		if self._probability_method == 'kde':
+			formula = 'P_r[i] = ∫[bin_min~bin_max] KDE(x) dx (Kernel Density Estimation)'
+			method_description = 'Gaussian KDE를 사용한 연속적 확률 분포 추정'
+		else:  # 'count'
+			if self.time_unit == 'monthly':
+				formula = 'P_r[i] = (해당 bin 월 수) / (전체 월 수)'
+			else:
+				formula = 'P_r[i] = (해당 bin 연도 수) / (전체 연도 수)'
+			method_description = '이산적 샘플 카운트 기반 확률 계산'
+
 		if self.time_unit == 'monthly':
 			return {
-				'formula': 'P_r[i] = (해당 bin 월 수) / (전체 월 수)',
+				'method': self._probability_method,
+				'method_description': method_description,
+				'formula': formula,
 				'time_unit': 'monthly',
 				'total_months': total_samples,
-				'total_years': total_samples // 12,
+				'total_years': total_samples,
 				'bins': bin_details
 			}
 		else:
 			return {
-				'formula': 'P_r[i] = (해당 bin 연도 수) / (전체 연도 수)',
+				'method': self._probability_method,
+				'method_description': method_description,
+				'formula': formula,
 				'time_unit': 'yearly',
 				'total_years': total_samples,
 				'bins': bin_details

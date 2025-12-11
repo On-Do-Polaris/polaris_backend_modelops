@@ -698,6 +698,321 @@ class ClimateDataLoader:
                 except:
                     pass
 
+    # ========== Timeseries 메서드 (probability_calculate용) ==========
+
+    def _extract_timeseries(self, variable: str, lat: float, lon: float,
+                           start_year: int = 2021, end_year: int = 2100) -> np.ndarray:
+        """
+        NetCDF 파일에서 연도별 시계열 데이터 추출 (내부 헬퍼 메서드)
+
+        Args:
+            variable: 변수명 (TXx, SU25, WSDIx, RX1DAY 등)
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도
+            end_year: 종료 연도
+
+        Returns:
+            연도별 값 배열
+        """
+        if not NETCDF_AVAILABLE:
+            return np.array([])
+
+        try:
+            # 캐시 확인
+            cache_key = f"{variable}"
+            if cache_key in self._cache:
+                dataset = self._cache[cache_key]
+            else:
+                # NetCDF 파일 로드
+                filename = f"{self.scenario}_{variable}_gridraw_yearly_2021-2100.nc"
+                filepath = os.path.join(self.kma_dir, filename)
+
+                if not os.path.exists(filepath):
+                    return np.array([])
+
+                # _extract_value에서 사용하는 로드 로직 재사용
+                # 파일 로드는 _extract_value에서 캐시에 저장됨
+                _ = self._extract_value(variable, lat, lon, 2021)
+                dataset = self._cache.get(cache_key)
+
+                if dataset is None:
+                    return np.array([])
+
+            # 좌표 인덱스 찾기
+            lats = dataset.variables['latitude'][:]
+            lons = dataset.variables['longitude'][:]
+            lat_idx = np.abs(lats - lat).argmin()
+            lon_idx = np.abs(lons - lon).argmin()
+
+            # 연도 범위 계산
+            start_idx = max(0, start_year - 2021)
+            end_idx = min(80, end_year - 2021 + 1)
+
+            # 시계열 데이터 추출 (time, latitude, longitude)
+            if variable in dataset.variables:
+                data_array = dataset.variables[variable][start_idx:end_idx, lat_idx, lon_idx]
+
+                # Masked array 처리
+                if hasattr(data_array, 'filled'):
+                    data_array = data_array.filled(np.nan)
+
+                return np.array(data_array, dtype=float)
+            else:
+                return np.array([])
+
+        except Exception as e:
+            print(f"⚠️ [TCFD 경고] {variable} 시계열 추출 실패: {e}")
+            return np.array([])
+
+    def _extract_monthly_timeseries(self, variable: str, lat: float, lon: float,
+                                    start_year: int = 2021, end_year: int = 2100) -> np.ndarray:
+        """
+        월별 NetCDF 파일에서 시계열 데이터 추출 (내부 헬퍼 메서드)
+
+        Args:
+            variable: 변수명 (SPEI12, TA, RHM, WS, RN 등)
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도
+            end_year: 종료 연도
+
+        Returns:
+            월별 값 배열
+        """
+        if not NETCDF_AVAILABLE:
+            return np.array([])
+
+        try:
+            # 캐시 확인
+            cache_key = f"{variable}_monthly"
+            if cache_key in self._cache:
+                dataset = self._cache[cache_key]
+            else:
+                # 첫 호출로 캐시 로드
+                _ = self._extract_monthly_value(variable, lat, lon, 2021, 1)
+                dataset = self._cache.get(cache_key)
+
+                if dataset is None:
+                    return np.array([])
+
+            # 좌표 인덱스 찾기
+            lats = dataset.variables['latitude'][:]
+            lons = dataset.variables['longitude'][:]
+            lat_idx = np.abs(lats - lat).argmin()
+            lon_idx = np.abs(lons - lon).argmin()
+
+            # 시간 인덱스 계산
+            start_month_idx = (start_year - 2021) * 12
+            end_month_idx = (end_year - 2021 + 1) * 12
+
+            start_month_idx = max(0, start_month_idx)
+            end_month_idx = min(960, end_month_idx)
+
+            # 월별 시계열 데이터 추출
+            if variable in dataset.variables:
+                data_array = dataset.variables[variable][start_month_idx:end_month_idx, lat_idx, lon_idx]
+
+                # Masked array 처리
+                if hasattr(data_array, 'filled'):
+                    data_array = data_array.filled(np.nan)
+
+                return np.array(data_array, dtype=float)
+            else:
+                return np.array([])
+
+        except Exception as e:
+            print(f"⚠️ [TCFD 경고] {variable} 월별 시계열 추출 실패: {e}")
+            return np.array([])
+
+    def get_extreme_heat_timeseries(self, lat: float, lon: float,
+                                   start_year: int = 2021, end_year: int = 2100) -> Dict:
+        """
+        극심한 고온 시계열 데이터 추출 (probability_calculate용)
+
+        Args:
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도 (기본 2021)
+            end_year: 종료 연도 (기본 2100)
+
+        Returns:
+            {
+                'wsdi': [연도별 WSDI 배열],
+                'su25': [연도별 SU25 배열],
+                'tr25': [연도별 TR25 배열],
+                'txx': [연도별 TXx 배열],
+                'years': [연도 리스트]
+            }
+        """
+        wsdi_array = self._extract_timeseries('WSDIx', lat, lon, start_year, end_year)
+        su25_array = self._extract_timeseries('SU25', lat, lon, start_year, end_year)
+        tr25_array = self._extract_timeseries('TR25', lat, lon, start_year, end_year)
+        txx_array = self._extract_timeseries('TXx', lat, lon, start_year, end_year)
+
+        years = list(range(start_year, end_year + 1))
+
+        return {
+            'wsdi': wsdi_array.tolist() if len(wsdi_array) > 0 else [],
+            'su25': su25_array.tolist() if len(su25_array) > 0 else [],
+            'tr25': tr25_array.tolist() if len(tr25_array) > 0 else [],
+            'txx': txx_array.tolist() if len(txx_array) > 0 else [],
+            'years': years
+        }
+
+    def get_extreme_cold_timeseries(self, lat: float, lon: float,
+                                   start_year: int = 2021, end_year: int = 2100) -> Dict:
+        """
+        극심한 한파 시계열 데이터 추출 (probability_calculate용)
+
+        Args:
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도 (기본 2021)
+            end_year: 종료 연도 (기본 2100)
+
+        Returns:
+            {
+                'csdi': [연도별 CSDI 배열],
+                'fd': [연도별 FD 배열],
+                'tnn': [연도별 TNn 배열],
+                'years': [연도 리스트]
+            }
+        """
+        csdi_array = self._extract_timeseries('CSDIx', lat, lon, start_year, end_year)
+        fd_array = self._extract_timeseries('FD', lat, lon, start_year, end_year)
+        tnn_array = self._extract_timeseries('TNn', lat, lon, start_year, end_year)
+
+        years = list(range(start_year, end_year + 1))
+
+        return {
+            'csdi': csdi_array.tolist() if len(csdi_array) > 0 else [],
+            'fd': fd_array.tolist() if len(fd_array) > 0 else [],
+            'tnn': tnn_array.tolist() if len(tnn_array) > 0 else [],
+            'years': years
+        }
+
+    def get_drought_timeseries(self, lat: float, lon: float,
+                              start_year: int = 2021, end_year: int = 2100) -> Dict:
+        """
+        가뭄 시계열 데이터 추출 (probability_calculate용)
+
+        Args:
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도 (기본 2021)
+            end_year: 종료 연도 (기본 2100)
+
+        Returns:
+            {
+                'spei12': [월별 SPEI12 배열],
+                'months_count': int,
+                'years_count': int
+            }
+        """
+        spei12_array = self._extract_monthly_timeseries('SPEI12', lat, lon, start_year, end_year)
+
+        years_count = end_year - start_year + 1
+        months_count = years_count * 12
+
+        return {
+            'spei12': spei12_array.tolist() if len(spei12_array) > 0 else [],
+            'months_count': months_count,
+            'years_count': years_count
+        }
+
+    def get_wildfire_timeseries(self, lat: float, lon: float,
+                               start_year: int = 2021, end_year: int = 2100) -> Dict:
+        """
+        산불 FWI 입력 데이터 시계열 추출 (probability_calculate용)
+
+        Args:
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도 (기본 2021)
+            end_year: 종료 연도 (기본 2100)
+
+        Returns:
+            {
+                'ta': [월별 기온 배열],
+                'rhm': [월별 습도 배열],
+                'ws': [월별 풍속 배열],
+                'rn': [월별 강수 배열]
+            }
+        """
+        ta_array = self._extract_monthly_timeseries('TA', lat, lon, start_year, end_year)
+        rhm_array = self._extract_monthly_timeseries('RHM', lat, lon, start_year, end_year)
+        ws_array = self._extract_monthly_timeseries('WS', lat, lon, start_year, end_year)
+        rn_array = self._extract_monthly_timeseries('RN', lat, lon, start_year, end_year)
+
+        return {
+            'ta': ta_array.tolist() if len(ta_array) > 0 else [],
+            'rhm': rhm_array.tolist() if len(rhm_array) > 0 else [],
+            'ws': ws_array.tolist() if len(ws_array) > 0 else [],
+            'rn': rn_array.tolist() if len(rn_array) > 0 else []
+        }
+
+    def get_flood_timeseries(self, lat: float, lon: float,
+                            start_year: int = 2021, end_year: int = 2100) -> Dict:
+        """
+        홍수 시계열 데이터 추출 (probability_calculate용)
+
+        Args:
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도 (기본 2021)
+            end_year: 종료 연도 (기본 2100)
+
+        Returns:
+            {
+                'rx1day': [연도별 RX1DAY 배열],
+                'rx5day': [연도별 RX5DAY 배열],
+                'years': [연도 리스트]
+            }
+        """
+        rx1day_array = self._extract_timeseries('RX1DAY', lat, lon, start_year, end_year)
+        rx5day_array = self._extract_timeseries('RX5DAY', lat, lon, start_year, end_year)
+
+        years = list(range(start_year, end_year + 1))
+
+        return {
+            'rx1day': rx1day_array.tolist() if len(rx1day_array) > 0 else [],
+            'rx5day': rx5day_array.tolist() if len(rx5day_array) > 0 else [],
+            'years': years
+        }
+
+    def get_sea_level_rise_timeseries(self, lat: float, lon: float,
+                                     start_year: int = 2021, end_year: int = 2100) -> Dict:
+        """
+        해수면 상승 시계열 데이터 추출 (probability_calculate용)
+
+        Args:
+            lat: 위도
+            lon: 경도
+            start_year: 시작 연도 (기본 2021)
+            end_year: 종료 연도 (기본 2100)
+
+        Returns:
+            {
+                'slr': [연도별 SLR 배열 (cm)],
+                'years': [연도 리스트]
+            }
+        """
+        # 해수면 상승은 별도 NetCDF 파일 사용
+        # 각 연도별로 get_sea_level_rise_data 호출
+        slr_values = []
+        years = list(range(start_year, end_year + 1))
+
+        for year in years:
+            slr_data = self.get_sea_level_rise_data(lat, lon, year)
+            slr_cm = slr_data.get('slr_increase_cm', 0.0)  # 기준연도 대비 증가량
+            slr_values.append(slr_cm)
+
+        return {
+            'slr': slr_values,
+            'years': years
+        }
+
 
 # 테스트 코드
 if __name__ == '__main__':

@@ -1,9 +1,13 @@
 '''
 파일명: drought_probability_agent.py
-최종 수정일: 2025-11-22
-버전: v1.1
+최종 수정일: 2025-12-11
+버전: v2.0
 파일 개요: 가뭄 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-11: v2.0 - 월별 SPEI12에서 연도별 최솟값으로 변경
+		* 강도지표: X_drought(t) = min SPEI12(t,m) (연도별 최솟값)
+		* 연도별 AAL 계산으로 다른 에이전트와 통일
+		* time_unit='monthly' 제거
 	- 2025-11-22: v1.1 - flat list 데이터 형식 지원 추가
 		* spei12 (flat list) 또는 spei12_monthly (nested dict) 모두 처리
 	- 2025-11-21: v1 - AAL에서 확률 계산으로 분리
@@ -23,8 +27,7 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 	가뭄 리스크 확률 P(H) 계산 Agent
 
 	사용 데이터: KMA SPEI12 (Standardized Precipitation-Evapotranspiration Index 12개월)
-	강도지표: X_drought(t,m) = SPEI12(t,m) (월별)
-	월 기반 발생확률: P_drought[i] = (해당 bin에 속한 월 수) / (총 월 수)
+	강도지표: X_drought(t) = min SPEI12(t,m) (연도별 최솟값 - 가장 심한 가뭄)
 	"""
 
 	def __init__(self):
@@ -42,10 +45,6 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 			- bin2: 2%
 			- bin3: 7%
 			- bin4: 20%
-
-		참고:
-			- 월 기반 발생확률 사용
-			- P_drought[i] = (해당 bin에 속한 월 수) / (총 월 수)
 		"""
 		bins = [
 			(-1, float('inf')),   # SPEI12 > -1
@@ -64,49 +63,104 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 		super().__init__(
 			risk_type='drought',
 			bins=bins,
-			dr_intensity=dr_intensity,
-			time_unit='monthly'
+			dr_intensity=dr_intensity
 		)
 
 	def calculate_intensity_indicator(self, collected_data: Dict[str, Any]) -> np.ndarray:
 		"""
-		가뭄 강도지표 X_drought(t,m) 계산
-		X_drought(t,m) = SPEI12(t,m) (월별)
+		가뭄 강도지표 X_drought(t) 계산
+		X_drought(t) = min SPEI12(t,m) (연도별 최솟값 - 가장 심한 가뭄)
 
 		Args:
 			collected_data: 수집된 기후 데이터
-				- spei12: 월별 SPEI12 flat list [v1, v2, ...] (권장)
-				- spei12_monthly: 연도별 월별 SPEI12 데이터 리스트 (레거시)
-					각 원소는 {'year': int, 'months': [spei12_values]}
+				- climate_data:
+					- spei12: 월별 SPEI12 flat list [v1, v2, ...] (권장)
+					  (연도별로 12개월씩 정렬된 것으로 가정)
+					- spei12_monthly: 연도별 월별 SPEI12 데이터 리스트 (레거시)
+						각 원소는 {'year': int, 'months': [spei12_values]}
 
 		Returns:
-			월별 SPEI12 값 배열 (전체 월을 평탄화하여 반환)
+			연도별 최솟값 SPEI12 값 배열
 		"""
 		climate_data = collected_data.get('climate_data', {})
 
 		# 1. flat list 형식 (우선)
 		spei12_flat = climate_data.get('spei12', [])
 		if spei12_flat:
-			spei12_array = np.array(spei12_flat, dtype=float)
-			self.logger.info(f"SPEI12 데이터 (flat): {len(spei12_array)}개 월, 범위: {spei12_array.min():.2f} ~ {spei12_array.max():.2f}")
-			return spei12_array
+			# 연도별 최솟값 계산 (12개월씩 묶음)
+			yearly_min_spei12 = self._calculate_yearly_min(spei12_flat)
+
+			self.logger.info(
+				f"SPEI12 데이터 (flat): {len(spei12_flat)}개 월 → {len(yearly_min_spei12)}개 연도, "
+				f"범위: {yearly_min_spei12.min():.2f} ~ {yearly_min_spei12.max():.2f}"
+			)
+			return yearly_min_spei12
 
 		# 2. nested dict 형식 (레거시)
 		spei12_monthly = climate_data.get('spei12_monthly', [])
 		if spei12_monthly:
-			all_monthly_spei12 = []
-			for year_data in spei12_monthly:
-				monthly_values = year_data.get('months', [])
-				if monthly_values:
-					all_monthly_spei12.extend(monthly_values)
+			yearly_min_spei12 = []
 
-			if all_monthly_spei12:
-				spei12_array = np.array(all_monthly_spei12, dtype=float)
-				self.logger.info(f"SPEI12 데이터 (nested): {len(spei12_array)}개 월, 범위: {spei12_array.min():.2f} ~ {spei12_array.max():.2f}")
+			for year_data in spei12_monthly:
+				months = year_data.get('months', [])
+
+				# 해당 연도의 최솟값 SPEI12 (가장 심한 가뭄)
+				if months:
+					yearly_min_spei12.append(min(months))
+				else:
+					yearly_min_spei12.append(0.0)
+
+			if yearly_min_spei12:
+				spei12_array = np.array(yearly_min_spei12, dtype=float)
+				self.logger.info(
+					f"SPEI12 데이터 (nested): {len(yearly_min_spei12)}개 연도, "
+					f"범위: {spei12_array.min():.2f} ~ {spei12_array.max():.2f}"
+				)
 				return spei12_array
 
 		self.logger.warning("SPEI12 데이터가 없습니다. 기본값 0으로 설정합니다.")
 		return np.array([0.0])
+
+	def _calculate_yearly_min(self, monthly_spei12: list) -> np.ndarray:
+		"""
+		월별 SPEI12 데이터를 연도별 최솟값으로 변환
+
+		Args:
+			monthly_spei12: 월별 SPEI12 값 리스트 (12개월 단위로 정렬됨)
+
+		Returns:
+			연도별 최솟값 SPEI12 값 배열
+		"""
+		if not monthly_spei12:
+			return np.array([0.0])
+
+		# 12개월씩 묶어서 최솟값 계산
+		n_years = len(monthly_spei12) // 12
+		yearly_min = []
+
+		for year_idx in range(n_years):
+			start_idx = year_idx * 12
+			end_idx = start_idx + 12
+			year_months = monthly_spei12[start_idx:end_idx]
+
+			if year_months:
+				yearly_min.append(min(year_months))
+			else:
+				yearly_min.append(0.0)
+
+		# 나머지 월이 있으면 (12로 나누어떨어지지 않는 경우)
+		remaining_months = len(monthly_spei12) % 12
+		if remaining_months > 0:
+			self.logger.warning(
+				f"월별 SPEI12 데이터가 12로 나누어떨어지지 않습니다. "
+				f"전체 {len(monthly_spei12)}개월 중 마지막 {remaining_months}개월은 별도 연도로 처리됩니다. "
+				f"데이터 정합성을 확인하세요."
+			)
+			remaining_spei12 = monthly_spei12[n_years * 12:]
+			if remaining_spei12:
+				yearly_min.append(min(remaining_spei12))
+
+		return np.array(yearly_min, dtype=float)
 
 	def _classify_into_bins(self, intensity_values: np.ndarray) -> np.ndarray:
 		"""

@@ -32,6 +32,7 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
         Args:
             collected_data: 수집된 데이터 딕셔너리
                 - typhoon_data: typhoons 리스트 포함
+                - climate_data: Rx1day 데이터 포함 (max_1day_precipitation)
                 - latitude, longitude: 분석 위치
 
         Returns:
@@ -39,10 +40,11 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
         """
         typhoon_data_dict = collected_data.get('typhoon_data', {})
         typhoons = typhoon_data_dict.get('typhoons', [])
-        
+        climate_data = collected_data.get('climate_data', {})
+
         lat = collected_data.get('latitude')
         lon = collected_data.get('longitude')
-        
+
         if not typhoons or lat is None or lon is None:
             # 데이터 없음 Fallback
             return 0.1
@@ -51,7 +53,7 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
             # TCI 값 수집
             impacts = []
             max_wind_speeds = []
-            
+
             # config 로드
             if config and hasattr(config, 'TYPHOON_HAZARD_PARAMS'):
                 params = config.TYPHOON_HAZARD_PARAMS
@@ -64,8 +66,8 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
                     'estimated_rx1day': {'strong': 400, 'medium': 200, 'weak': 100}
                 }
 
-            # TODO: SSP 시나리오 Rx1day 데이터 사용 가능 시 연동
-            rx1day_mm = None 
+            # Rx1day 데이터 연동 (climate_data에서 실제 데이터 가져오기)
+            rx1day_mm = climate_data.get('max_1day_precipitation') or climate_data.get('rx1day') 
             
             for typhoon in typhoons:
                 tci, wind_speed, _ = self._calculate_typhoon_impact(lat, lon, typhoon, params, rx1day_mm)
@@ -76,17 +78,19 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
             # 통계 계산
             if impacts:
                 avg_impact = sum(impacts) / len(impacts)
-                
+
                 # 상세 결과 기록
                 if 'calculation_details' not in collected_data:
                     collected_data['calculation_details'] = {}
-                
+
                 collected_data['calculation_details']['typhoon'] = {
                     'hazard_score': min(avg_impact, 1.0),
                     'impact_count': len(impacts),
-                    'max_wind_speed_avg': sum(max_wind_speeds) / len(max_wind_speeds) if max_wind_speeds else 0
+                    'max_wind_speed_avg': sum(max_wind_speeds) / len(max_wind_speeds) if max_wind_speeds else 0,
+                    'rx1day_mm': rx1day_mm,
+                    'rx1day_source': 'climate_data' if rx1day_mm else 'estimated'
                 }
-                
+
                 return round(min(avg_impact, 1.0), 4)
             else:
                 return 0.1 # 영향권 내 태풍 없음

@@ -198,12 +198,3 @@ class ExtremeHeatProbabilityAgent(BaseProbabilityAgent):
 
 		return bin_indices
 
-	def get_bin_labels(self) -> List[str]:
-		"""bin 레이블 반환"""
-		return [
-			'일반 (<Q80)',
-			'상위 20% (Q80-Q90)',
-			'상위 10% (Q90-Q95)',
-			'상위 5% (Q95-Q99)',
-			'극한 1% (≥Q99)'
-		]

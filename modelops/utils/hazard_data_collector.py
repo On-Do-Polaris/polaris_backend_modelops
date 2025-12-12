@@ -178,15 +178,50 @@ class HazardDataCollector:
 
     def _collect_heat_data(self, lat: float, lon: float, data: Dict):
         if self.climate_loader:
-            data['climate_data'] = self.climate_loader.get_extreme_heat_data(lat, lon, self.target_year)
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_data = self.climate_loader.get_extreme_heat_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (시계열 데이터)
+            timeseries_data = self.climate_loader.get_extreme_heat_timeseries(lat, lon, 2021, 2100)
+            baseline_data = self.climate_loader.get_extreme_heat_timeseries(lat, lon, 1991, 2020)
+
+            # 병합: 기존 단일값 + 시계열 배열
+            data['climate_data'] = {
+                **single_year_data,      # heat_wave_duration, heatwave_days_per_year 등
+                **timeseries_data        # wsdi, su25, tr25 배열 등
+            }
+            data['baseline_wsdi'] = baseline_data.get('wsdi', [])
 
     def _collect_cold_data(self, lat: float, lon: float, data: Dict):
         if self.climate_loader:
-            data['climate_data'] = self.climate_loader.get_extreme_cold_data(lat, lon, self.target_year)
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_data = self.climate_loader.get_extreme_cold_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (시계열 데이터)
+            timeseries_data = self.climate_loader.get_extreme_cold_timeseries(lat, lon, 2021, 2100)
+            baseline_data = self.climate_loader.get_extreme_cold_timeseries(lat, lon, 1991, 2020)
+
+            # 병합
+            data['climate_data'] = {
+                **single_year_data,
+                **timeseries_data
+            }
+            data['baseline_csdi'] = baseline_data.get('csdi', [])
 
     def _collect_drought_data(self, lat: float, lon: float, data: Dict):
         if self.climate_loader:
-            data['climate_data'] = self.climate_loader.get_drought_data(lat, lon, self.target_year)
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_data = self.climate_loader.get_drought_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (월별 시계열 데이터)
+            timeseries_data = self.climate_loader.get_drought_timeseries(lat, lon, 2021, 2100)
+
+            # 병합
+            data['climate_data'] = {
+                **single_year_data,
+                **timeseries_data
+            }
+
         if self.spatial_loader:
             data['spatial_data'] = self.spatial_loader.get_soil_moisture_data(lat, lon)
 
@@ -194,25 +229,44 @@ class HazardDataCollector:
         # TWI 계산을 위한 데이터 등 (Spatial Loader 기능 확인 필요)
         if self.spatial_loader:
             data['spatial_data'] = self.spatial_loader.get_landcover_data(lat, lon)
-            # TWI 계산 로직은 HazardCalculator 내부에 있었음. 
-            # 이를 Agent로 옮길지, 여기서 미리 계산해서 줄지 결정 필요.
-            # Agent 로직이 복잡하므로 Agent로 옮기는 것이 원칙이나, 
-            # 데이터 수집 단계에서 가공된 데이터를 주는 것이 더 깔끔할 수 있음.
-            # 일단 원본 데이터를 최대한 제공하는 방향으로 작성.
-        
+
         if self.disaster_fetcher:
             data['disaster_data'] = self.disaster_fetcher.get_nearest_river_info(lat, lon)
-        
+
         if self.climate_loader:
-            data['climate_data'] = self.climate_loader.get_flood_data(lat, lon, self.target_year)
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_data = self.climate_loader.get_flood_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (시계열 데이터)
+            timeseries_data = self.climate_loader.get_flood_timeseries(lat, lon, 2021, 2100)
+            baseline_data = self.climate_loader.get_flood_timeseries(lat, lon, 1991, 2020)
+
+            # 병합
+            data['climate_data'] = {
+                **single_year_data,
+                **timeseries_data
+            }
+            data['baseline_rx1day'] = baseline_data.get('rx1day', [])
 
     def _collect_urban_flood_data(self, lat: float, lon: float, data: Dict):
         if self.spatial_loader:
             data['spatial_data'] = self.spatial_loader.get_landcover_data(lat, lon)
-        
+
         if self.climate_loader:
-            data['climate_data'] = self.climate_loader.get_flood_data(lat, lon, self.target_year)
-            
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_data = self.climate_loader.get_flood_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (시계열 데이터)
+            timeseries_data = self.climate_loader.get_flood_timeseries(lat, lon, 2021, 2100)
+            baseline_data = self.climate_loader.get_flood_timeseries(lat, lon, 1991, 2020)
+
+            # 병합
+            data['climate_data'] = {
+                **single_year_data,
+                **timeseries_data
+            }
+            data['baseline_rx1day'] = baseline_data.get('rx1day', [])
+
         # 건물 밀도 등을 위한 building_count는 이미 building_data에 포함되어 있다고 가정
         # data['building_data']['building_count'] 확인 필요
 
@@ -221,8 +275,18 @@ class HazardDataCollector:
         # SpatialLoader가 이를 제공하는지 확인 필요. 없다면 BuildingFetcher나 외부 API 사용해야 함.
         # 여기서는 일단 ClimateLoader 호출
         if self.climate_loader:
-            data['climate_data'] = self.climate_loader.get_sea_level_rise_data(lat, lon, self.target_year)
-        
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_data = self.climate_loader.get_sea_level_rise_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (시계열 데이터)
+            timeseries_data = self.climate_loader.get_sea_level_rise_timeseries(lat, lon, 2021, 2100)
+
+            # 병합
+            data['climate_data'] = {
+                **single_year_data,
+                **timeseries_data
+            }
+
         # 해안 거리 정보가 building_data나 spatial_data에 있어야 함.
         # 예시: data['extra_data']['distance_to_coast_m'] = ...
 
@@ -260,13 +324,21 @@ class HazardDataCollector:
         if self.spatial_loader:
             data['spatial_data'].update(self.spatial_loader.get_ndvi_data(lat, lon))
             data['spatial_data'].update(self.spatial_loader.get_landcover_data(lat, lon))
-        
+
         if self.climate_loader:
-            # FWI Input Data
-            data['climate_data'] = self.climate_loader.get_fwi_input_data(lat, lon, self.target_year)
-            # 가뭄 데이터도 필요함
-            drought = self.climate_loader.get_drought_data(lat, lon, self.target_year)
-            data['climate_data'].update(drought) # 병합
+            # hazard_calculate용 (단일 연도 데이터)
+            single_year_fwi = self.climate_loader.get_fwi_input_data(lat, lon, self.target_year)
+            single_year_drought = self.climate_loader.get_drought_data(lat, lon, self.target_year)
+
+            # probability_calculate용 (월별 시계열 데이터)
+            timeseries_data = self.climate_loader.get_wildfire_timeseries(lat, lon, 2021, 2100)
+
+            # 병합
+            data['climate_data'] = {
+                **single_year_fwi,
+                **single_year_drought,
+                **timeseries_data
+            }
 
     def _collect_water_stress_data(self, lat: float, lon: float, data: Dict):
         if self.wamis_fetcher:

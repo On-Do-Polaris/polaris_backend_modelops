@@ -28,14 +28,14 @@ class ExtremeColdProbabilityAgent(BaseProbabilityAgent):
 	의미: 평년 기준 하위 분위수 이하 저온이 연속적으로 지속된 기간의 연간 합
 
 	bin 설정 (분위수 기반, 국제 연구 관행):
-		- bin1: CSDI > Q20 (거의 한파 아님)
-		- bin2: Q10 < CSDI ≤ Q20 (약한 한파)
-		- bin3: Q5 < CSDI ≤ Q10 (중간 한파)
-		- bin4: Q1 < CSDI ≤ Q5 (강한 한파)
-		- bin5: CSDI ≤ Q1 (극한 한파)
+		- bin1: CSDI < Q80 (거의 한파 아님)
+		- bin2: Q80 ≤ CSDI < Q90 (약한 한파)
+		- bin3: Q90 ≤ CSDI < Q95 (중간 한파)
+		- bin4: Q95 ≤ CSDI < Q99 (강한 한파)
+		- bin5: CSDI ≥ Q99 (극한 한파)
 
-	참고: CSDI는 값이 클수록 한파가 심함 (고온과 반대 방향)
-	      따라서 상위 분위수가 더 심각한 한파를 의미
+	참고: CSDI는 값이 클수록 한파가 심함
+	      따라서 상위 분위수(Q80, Q90, Q95, Q99)가 더 심각한 한파를 의미
 	"""
 
 	# 분위수 임계값 (백분위) - 상위 분위수 기준
@@ -203,12 +203,3 @@ class ExtremeColdProbabilityAgent(BaseProbabilityAgent):
 
 		return bin_indices
 
-	def get_bin_labels(self) -> List[str]:
-		"""bin 레이블 반환"""
-		return [
-			'거의 한파 아님 (<Q80)',
-			'약한 한파 (Q80-Q90)',
-			'중간 한파 (Q90-Q95)',
-			'강한 한파 (Q95-Q99)',
-			'극한 한파 (≥Q99)'
-		]

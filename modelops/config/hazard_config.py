@@ -78,10 +78,17 @@ SEA_LEVEL_RISE_EXPOSURE_SCORES = {
 }
 
 WILDFIRE_EXPOSURE_SCORES = {
-    'very_high': {'distance_m': 100, 'score': 90},
-    'high': {'distance_m': 500, 'score': 70},
-    'medium': {'distance_m': 1000, 'score': 40},
-    'low': {'score': 10},
+    'extreme': {'distance_m': 30, 'score': 100},
+    'high': {'distance_m': 100, 'score': 70},
+    'medium': {'distance_m': 500, 'score': 40},
+    'low': {'distance_m': 1000, 'score': 10},
+    'safe': {'score': 0},
+}
+
+EXTREME_HEAT_EXPOSURE_SCORES = {
+    'high': 70,
+    'medium': 50,
+    'low': 30,
 }
 
 # ============================================================================

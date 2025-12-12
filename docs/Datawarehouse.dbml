@@ -1,15 +1,15 @@
 // ================================================================
 // SKALA Physical Risk AI - Datawarehouse ERD
 // ================================================================
-// Database: skala_datawarehouse (Port: 5432)
+// Database: datawarehouse (Port: 5432)
 // Services: FastAPI + ModelOPS
-// Total Tables: 44
+// Total Tables: 47
 //
-// Last Modified: 2025-12-08
-// Version: v04
+// Last Modified: 2025-12-10
+// Version: v06 (site_id 추가 + Site Risk 테이블 3개 추가)
 // ================================================================
 
-Project skala_datawarehouse {
+Project datawarehouse {
   database_type: 'PostgreSQL'
   Note: '''
     SKALA Physical Risk AI 시스템 데이터웨어하우스
@@ -625,6 +625,7 @@ Table exposure_results {
   latitude decimal(9,6) [not null, note: '격자 위도']
   longitude decimal(9,6) [not null, note: '격자 경도']
   risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  site_id uuid [note: 'Application DB sites.id 참조 (사업장 ID)']
   exposure_score real [note: '노출도 점수 (0.0~1.0)']
   proximity_factor real [note: '근접도 계수']
   normalized_asset_value real [note: '정규화 자산가치']
@@ -636,6 +637,7 @@ Table exposure_results {
     (latitude, longitude, risk_type) [pk]
     risk_type
     (latitude, longitude)
+    site_id
     exposure_score
     calculated_at
   }
@@ -645,6 +647,7 @@ Table vulnerability_results {
   latitude decimal(9,6) [not null, note: '격자 위도']
   longitude decimal(9,6) [not null, note: '격자 경도']
   risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  site_id uuid [note: 'Application DB sites.id 참조 (사업장 ID)']
   vulnerability_score real [note: '취약성 점수 (0~100)']
   vulnerability_level varchar(20) [note: '등급: very_low/low/medium/high/very_high']
   factors jsonb [note: '취약성 요인 상세']
@@ -656,6 +659,7 @@ Table vulnerability_results {
     (latitude, longitude, risk_type) [pk]
     risk_type
     (latitude, longitude)
+    site_id
     vulnerability_level
     vulnerability_score
     calculated_at
@@ -666,6 +670,7 @@ Table aal_scaled_results {
   latitude decimal(9,6) [not null, note: '격자 위도']
   longitude decimal(9,6) [not null, note: '격자 경도']
   risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  site_id uuid [note: 'Application DB sites.id 참조 (사업장 ID)']
   base_aal real [note: '기본 AAL (probability_results.aal)']
   vulnerability_scale real [note: 'F_vuln (0.9~1.1)']
   final_aal real [note: '최종 AAL = base_aal × F_vuln × (1-insurance_rate)']
@@ -682,6 +687,7 @@ Table aal_scaled_results {
   indexes {
     (latitude, longitude, risk_type) [pk]
     risk_type
+    site_id
     (latitude, longitude)
     final_aal
     expected_loss
@@ -693,45 +699,46 @@ Table aal_scaled_results {
 // 10. API Cache Tables (11개)
 // ============================================
 
-Table api_buildings {
-  building_id serial [pk, note: '건물 ID']
-  mgm_bld_pk varchar(100) [unique, note: '관리 건축물 PK']
-  platgb_cd varchar(10) [note: '대지구분코드']
-  sigungu_cd varchar(10) [note: '시군구코드']
-  bjdong_cd varchar(10) [note: '법정동코드']
-  bun varchar(10) [note: '번']
-  ji varchar(10) [note: '지']
-  na_ugrnd_cd varchar(10) [note: '지상지하코드']
-  na_bjdong_nm varchar(200) [note: '법정동명']
-  na_road_nm varchar(500) [note: '도로명주소']
-  dong_nm varchar(200) [note: '동명칭']
-  ho_nm varchar(100) [note: '호명칭']
-  main_atch_gb_cd varchar(10) [note: '주부속구분코드']
-  strct_cd varchar(10) [note: '구조코드']
-  strct_nm varchar(100) [note: '구조명']
-  etc_purps varchar(500) [note: '기타용도']
-  main_purp_cd varchar(10) [note: '주용도코드']
-  main_purp_cd_nm varchar(200) [note: '주용도코드명']
-  use_apr_day date [note: '사용승인일']
-  pmsday date [note: '허가일']
-  grnd_flr_cnt integer [note: '지상층수']
-  ugrnd_flr_cnt integer [note: '지하층수']
-  tot_area double [note: '연면적(㎡)']
-  arch_area double [note: '건축면적(㎡)']
-  plat_area double [note: '대지면적(㎡)']
-  bc_rat double [note: '건폐율(%)']
-  vlr_rat double [note: '용적률(%)']
-  heit double [note: '높이(m)']
-  cached_at timestamp [note: '캐시 시점']
-  api_response jsonb [note: 'API 응답 원본']
+Table building_aggregate_cache {
+  cache_id uuid [pk, note: '캐시 ID (UUID)']
+  sigungu_cd varchar(10) [not null, note: '시군구코드']
+  bjdong_cd varchar(10) [not null, note: '법정동코드']
+  bun varchar(10) [not null, note: '번 (4자리)']
+  ji varchar(10) [not null, note: '지 (4자리)']
+  jibun_address varchar(500) [note: '지번 주소']
+  road_address varchar(500) [note: '도로명 주소']
+  building_count integer [not null, note: '해당 번지의 총 건물 수']
+  structure_types jsonb [note: '구조 종류 배열: ["철근콘크리트구조", "철골구조"]']
+  purpose_types jsonb [note: '용도 종류 배열: ["교육연구시설", "업무시설"]']
+  max_ground_floors integer [note: '최대 지상 층수']
+  max_underground_floors integer [note: '최대 지하 층수']
+  min_underground_floors integer [note: '최소 지하 층수']
+  buildings_with_seismic integer [note: '내진설계 적용 건물 수']
+  buildings_without_seismic integer [note: '내진설계 미적용 건물 수']
+  oldest_approval_date date [note: '가장 오래된 건물 사용승인일']
+  newest_approval_date date [note: '가장 최근 건물 사용승인일']
+  oldest_building_age_years integer [note: '가장 오래된 건물 연식 (년)']
+  total_floor_area_sqm numeric(15,2) [note: '총 연면적 (m²)']
+  total_building_area_sqm numeric(15,2) [note: '총 건축면적 (m²)']
+  floor_details jsonb [note: '층별 정보 샘플 (최대 100개)']
+  floor_purpose_types jsonb [note: '층별 용도 종류 (중복 제거)']
+  cached_at timestamp [note: '캐시 생성 시간']
+  updated_at timestamp [note: '캐시 갱신 시간']
+  api_call_count integer [note: 'API 호출 횟수 (비용 추적)']
+  data_quality_score numeric(3,2) [note: '데이터 품질 점수 (0~1)']
 
-  Note: '건축물대장 API - Vulnerability 계산용'
+  Note: '''
+    건축물 집계 캐시 (번지 단위) - Vulnerability 계산용
+    - 하나의 번지에 있는 여러 건물을 집계하여 1개 row로 저장
+    - 구조 종류, 용도 종류를 JSONB 배열로 저장
+    - 24시간 캐시 유효기간
+  '''
 
   indexes {
-    sigungu_cd
-    bjdong_cd
-    use_apr_day
-    strct_cd
+    (sigungu_cd, bjdong_cd, bun, ji) [unique, name: 'uk_building_aggregate']
+    (sigungu_cd, bjdong_cd, bun, ji) [name: 'idx_building_agg_location']
+    cached_at [name: 'idx_building_agg_cached_at']
+    (sigungu_cd, bjdong_cd) [name: 'idx_building_agg_region']
   }
 }
 
@@ -803,31 +810,26 @@ Table api_river_info {
 }
 
 Table api_emergency_messages {
-  message_id serial [pk]
-  msg_sn varchar(50) [unique, note: '메시지 일련번호']
-  msg_cn text [note: '메시지 내용']
-  msg_se_cd varchar(10) [note: '메시지 구분코드']
-  msg_se_nm varchar(100) [note: '메시지 구분명']
-  rcptn_rgn_nm text [note: '수신지역명']
-  rgn_cd varchar(20) [note: '지역코드']
-  crt_dt timestamp [note: '생성일시']
-  mdf_dt timestamp [note: '수정일시']
-  emrg_step_nm varchar(100) [note: '긴급단계명']
-  dst_se_nm varchar(100) [note: '재난유형명']
-  is_flood_related boolean [note: '홍수 관련']
-  is_typhoon_related boolean [note: '태풍 관련']
-  is_heat_related boolean [note: '폭염 관련']
-  is_cold_related boolean [note: '한파 관련']
-  is_fire_related boolean [note: '화재 관련']
-  cached_at timestamp
-  api_response jsonb
+  id bigserial [pk, note: 'PK, 고유 식별자']
+  alert_date date [not null, note: '재난문자 발령 일자 (YYYY-MM-DD, 시간 제외)']
+  disaster_type varchar(50) [not null, note: '재난 유형 (9종 제한: 강풍/풍랑/호우/대설/건조/지진해일/한파/태풍/황사/폭염)']
+  severity varchar(10) [not null, note: '강도 (주의보/경보 키워드 매칭)']
+  region text [not null, note: '수신 지역명 (복수 지역 쉼표 구분 가능)']
+  created_at timestamp [not null, default: `CURRENT_TIMESTAMP`, note: '레코드 생성 시각']
+  updated_at timestamp [note: '레코드 수정 시각']
 
-  Note: '긴급재난문자 - 재난 이력 추적'
+  Note: '''
+    긴급재난문자 - 재난 이력 추적 (9종 재난 유형별 발생 이력)
+    - 재난 유형 9종: 강풍, 풍랑, 호우, 대설, 건조, 지진해일, 한파, 태풍, 황사, 폭염
+    - 강도: 주의보, 경보 (내용에서 키워드 검색)
+    - 날짜: YYYY-MM-DD 형식만 (시간 제외)
+  '''
 
   indexes {
-    crt_dt
-    rcptn_rgn_nm
-    dst_se_nm
+    alert_date
+    disaster_type
+    severity
+    (alert_date, disaster_type, severity, region) [unique, name: 'uk_emergency_messages']
   }
 }
 
@@ -922,8 +924,8 @@ Table api_typhoon_besttrack {
   day integer
   hour integer
   obs_datetime timestamp
-  lon double
-  lat double
+  longitude double
+  latitude double
   geom geometry [note: 'Point 4326']
   max_wind_speed double [note: 'm/s']
   central_pressure double [note: 'hPa']
@@ -1013,3 +1015,125 @@ Table api_vworld_geocode {
     bjdong_cd
   }
 }
+
+// ============================================
+// 12. Site Risk Tables (3개) - v06 추가
+// ============================================
+
+Table site_risk_results {
+  site_id uuid [not null, note: 'Application DB sites.id 참조']
+  risk_type varchar(50) [not null, note: '9가지 리스크 타입']
+
+  // Physical Risk Score (H × E × V)
+  hazard_score real [not null, note: 'H: 0.0~1.0']
+  exposure_score real [not null, note: 'E: 0.0~1.0']
+  vulnerability_score real [not null, note: 'V: 0.0~1.0']
+  physical_risk_score real [not null, note: 'H×E×V: 0.0~1.0']
+  physical_risk_score_100 real [not null, note: '0~100 스케일']
+
+  // AAL 분석 결과
+  vulnerability_scale real [note: 'F_vuln: 0.7~1.3']
+  insurance_rate real [default: 0.0, note: '보험 보전율: 0.0~1.0']
+  aal_percentage real [note: 'AAL: 0.0~100.0 (%)']
+
+  // 통합 점수
+  combined_score real [note: '(physical×50%) + (aal×10×50%)']
+
+  // 등급
+  risk_level varchar(20) [not null, note: 'Very High/High/Medium/Low/Very Low']
+  aal_level varchar(20) [note: 'Critical/High/Moderate/Low/Minimal']
+
+  // 상세 정보
+  calculation_details jsonb [note: '계산 상세 (선택적)']
+
+  // 메타데이터
+  calculated_at timestamp [note: '계산 시점']
+  analysis_job_id uuid [note: '분석 작업 ID']
+
+  Note: 'Site별 최종 리스크 결과 (H×E×V + AAL) - 사이트당 최대 9개 행'
+
+  indexes {
+    (site_id, risk_type) [pk]
+    site_id
+    risk_type
+    physical_risk_score_100
+    aal_percentage
+    combined_score
+    risk_level
+    calculated_at
+  }
+}
+
+Table site_risk_summary {
+  site_id uuid [pk, note: 'Application DB sites.id 참조']
+
+  // 전체 통합 점수
+  total_physical_risk_score real [note: '9개 평균']
+  total_aal_percentage real [note: '9개 합계 (%)']
+  total_combined_score real [note: '9개 평균']
+
+  // 최고 위험
+  highest_risk_type varchar(50) [note: '가장 높은 리스크 타입']
+  highest_risk_score real [note: '해당 점수']
+
+  // 전체 등급
+  overall_risk_grade varchar(20) [note: 'A/B/C/D/F']
+
+  // 메타데이터
+  calculated_at timestamp [note: '계산 시점']
+  analysis_job_id uuid [note: '분석 작업 ID']
+
+  Note: 'Site별 리스크 요약 (9개 리스크 타입 통합) - 사이트당 1개 행'
+
+  indexes {
+    overall_risk_grade
+    total_combined_score
+    calculated_at
+  }
+}
+
+Table candidate_sites {
+  id uuid [pk, note: '후보지 ID']
+
+  // 기본 정보
+  name varchar(255) [not null, note: '후보지 이름']
+  road_address varchar(500) [note: '도로명 주소']
+  jibun_address varchar(500) [note: '지번 주소']
+  city varchar(100) [note: '도시']
+  latitude decimal(10,8) [not null, note: '위도']
+  longitude decimal(11,8) [not null, note: '경도']
+
+  // 리스크 점수 (FastAPI가 계산)
+  risk_score integer [note: '종합 리스크 점수 (0-100)']
+  risk_level varchar(20) [note: 'low/medium/high/critical']
+  risks jsonb [note: '개별 리스크 점수 {flood, typhoon, heatwave, ...}']
+
+  // 재무 지표
+  aal decimal(15,2) [note: '연평균 손실 (AAL)']
+  cvar decimal(15,2) [note: '조건부 VaR']
+  estimated_cost decimal(15,2) [note: '이전 예상 비용']
+  carbon_impact decimal(15,2) [note: '탄소 영향']
+  cost_change decimal(15,2) [note: '비용 변화']
+
+  // 특성 정보
+  location_summary text [note: '위치 요약 설명']
+  advantages "text[]" [note: '장점 배열']
+  disadvantages "text[]" [note: '단점 배열']
+
+  // 상태 관리
+  is_active boolean [default: true, note: '활성 여부']
+  created_at timestamp [note: '생성 시점']
+  updated_at timestamp [note: '수정 시점']
+
+  Note: '사업장 이전 후보지 정보 (FastAPI/AI Agent 관리)'
+
+  indexes {
+    (latitude, longitude)
+    risk_level
+    city
+    is_active
+  }
+}
+
+// Site Risk Relationships
+Ref: site_risk_results.site_id > site_risk_summary.site_id

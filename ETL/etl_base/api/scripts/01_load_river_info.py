@@ -140,7 +140,7 @@ def load_river_info(sample_limit: int = None):
     # 데이터 수집
     all_data = []
     page_no = 1
-    num_of_rows = 100
+    num_of_rows = 1000  # API 최대 허용
 
     while True:
         raw_data = fetch_river_info(client, api_key, logger, page_no, num_of_rows)

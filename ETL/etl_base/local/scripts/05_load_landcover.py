@@ -2,22 +2,27 @@
 SKALA Physical Risk AI System - 토지피복 데이터 적재
 GeoTIFF 파일에서 토지피복 래스터를 raw_landcover 테이블에 로드
 
-데이터 소스: landcover/*.tif
+데이터 소스: landcover/**/*.tif + landcover/**/*.zip (ZIP 내 TIF 포함)
 대상 테이블: raw_landcover
-예상 데이터: 약 200개 타일
+예상 데이터: 약 239개 타일
 
-최종 수정일: 2025-12-03
-버전: v02
+최종 수정일: 2025-12-12
+버전: v03 - ZIP 압축 해제 지원
 """
 
 import sys
 import subprocess
 import tempfile
 import os
+import zipfile
+import shutil
 from pathlib import Path
 from tqdm import tqdm
 
 from utils import setup_logging, get_db_connection, get_data_dir, table_exists, get_row_count
+
+# SAMPLE_LIMIT: TIF 파일 개수 제한 (테스트용)
+SAMPLE_LIMIT = int(os.environ.get('SAMPLE_LIMIT', 0))  # 0 = 전체
 
 
 def get_tif_srid(tif_path: Path) -> str:
@@ -71,10 +76,10 @@ def load_tif_to_postgres(tif_path: Path, table_name: str, append: bool = False, 
     """
     try:
         db_host = os.getenv("DW_HOST", "localhost")
-        db_port = os.getenv("DW_PORT", "5434")
-        db_name = os.getenv("DW_NAME", "skala_datawarehouse")
-        db_user = os.getenv("DW_USER", "skala_dw_user")
-        db_password = os.getenv("DW_PASSWORD", "skala_dw_2025")
+        db_port = os.getenv("DW_PORT", "5555")
+        db_name = os.getenv("DW_NAME", "datawarehouse")
+        db_user = os.getenv("DW_USER", "skala")
+        db_password = os.getenv("DW_PASSWORD", "skala1234")
 
         # SRID 자동 감지
         if srid is None:
@@ -83,9 +88,14 @@ def load_tif_to_postgres(tif_path: Path, table_name: str, append: bool = False, 
                 logger.info(f"   SRID 감지: {srid}")
 
         # raster2pgsql 명령 구성
+        # 주의: -C (constraints) 옵션은 첫 파일의 extent로 제약조건을 만들어
+        # 다른 영역의 파일 삽입을 막으므로 사용하지 않음
         cmd = ["raster2pgsql"]
-        cmd.append("-a" if append else "-c")  # append or create
-        cmd.extend(["-I", "-C", "-M", "-F", "-t", "100x100", "-s", srid])
+        if append:
+            cmd.extend(["-a", "-F", "-t", "100x100", "-s", srid])
+        else:
+            # create 모드: 인덱스만 생성 (-I), 제약조건(-C) 제외
+            cmd.extend(["-c", "-I", "-M", "-F", "-t", "100x100", "-s", srid])
         cmd.extend([str(tif_path), table_name])
 
         raster_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -120,7 +130,7 @@ def load_tif_to_postgres(tif_path: Path, table_name: str, append: bool = False, 
 
 
 def load_landcover() -> None:
-    """토지피복 GeoTIFF를 raw_landcover 테이블에 로드"""
+    """토지피복 GeoTIFF를 raw_landcover 테이블에 로드 (ZIP 압축 해제 포함)"""
     logger = setup_logging("load_landcover")
     logger.info("=" * 60)
     logger.info("토지피복 데이터 로딩 시작")
@@ -144,12 +154,50 @@ def load_landcover() -> None:
         conn.close()
         sys.exit(1)
 
-    tif_files = list(landcover_dir.glob("**/*.tif"))
-    logger.info(f"{len(tif_files)}개 TIF 파일 발견")
+    # 1. 직접 TIF 파일 찾기
+    direct_tif_files = list(landcover_dir.glob("**/*.tif"))
+    logger.info(f"직접 TIF 파일: {len(direct_tif_files)}개")
+
+    # 2. ZIP 파일 찾기 및 압축 해제 (직접 TIF가 충분하면 건너뛰기)
+    zip_files = list(landcover_dir.glob("**/*.zip"))
+    logger.info(f"ZIP 파일: {len(zip_files)}개")
+
+    # 임시 디렉토리에 ZIP 압축 해제
+    tmp_dir = Path(tempfile.mkdtemp(prefix="landcover_"))
+    extracted_tif_files = []
+
+    # 직접 TIF가 ZIP 파일 수보다 많으면 이미 압축 해제된 것으로 판단
+    if zip_files and len(direct_tif_files) <= len(zip_files):
+        logger.info("ZIP 파일 압축 해제 중...")
+        for zip_path in tqdm(zip_files, desc="ZIP 압축 해제"):
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    for name in zf.namelist():
+                        if name.lower().endswith('.tif'):
+                            # TIF 파일만 추출
+                            zf.extract(name, tmp_dir)
+                            extracted_tif_files.append(tmp_dir / name)
+            except Exception as e:
+                logger.warning(f"ZIP 압축 해제 실패 ({zip_path.name}): {e}")
+
+        logger.info(f"ZIP에서 추출한 TIF: {len(extracted_tif_files)}개")
+    elif zip_files:
+        logger.info("직접 TIF 파일이 충분함 - ZIP 압축 해제 건너뜀")
+
+    # 3. 모든 TIF 파일 합치기
+    tif_files = direct_tif_files + extracted_tif_files
+    logger.info(f"총 TIF 파일: {len(tif_files)}개")
+
+    # SAMPLE_LIMIT 적용
+    if SAMPLE_LIMIT > 0 and len(tif_files) > SAMPLE_LIMIT:
+        tif_files = tif_files[:SAMPLE_LIMIT]
+        logger.info(f"SAMPLE_LIMIT={SAMPLE_LIMIT} 적용 → {len(tif_files)}개 처리")
 
     if not tif_files:
         logger.warning("TIF 파일이 없습니다")
         conn.close()
+        # 임시 디렉토리 정리
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return
 
     conn.close()
@@ -157,10 +205,10 @@ def load_landcover() -> None:
     # 기존 테이블 삭제 (psql로 직접 실행해야 raster2pgsql이 새 테이블 생성 가능)
     logger.info("기존 테이블 삭제")
     db_host = os.getenv("DW_HOST", "localhost")
-    db_port = os.getenv("DW_PORT", "5434")
-    db_name = os.getenv("DW_NAME", "skala_datawarehouse")
-    db_user = os.getenv("DW_USER", "skala_dw_user")
-    db_password = os.getenv("DW_PASSWORD", "skala_dw_2025")
+    db_port = os.getenv("DW_PORT", "5555")
+    db_name = os.getenv("DW_NAME", "datawarehouse")
+    db_user = os.getenv("DW_USER", "skala")
+    db_password = os.getenv("DW_PASSWORD", "skala1234")
 
     drop_env = os.environ.copy()
     drop_env["PGPASSWORD"] = db_password
@@ -188,6 +236,10 @@ def load_landcover() -> None:
             first_file = False
         else:
             error_count += 1
+
+    # 임시 디렉토리 정리
+    logger.info("임시 파일 정리 중...")
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # 결과 확인
     conn = get_db_connection()

@@ -1,398 +1,281 @@
-# SKALA Physical Risk AI - ETL Pipeline
+# SKALA Physical Risk AI System - ETL Pipeline
 
-> 최종 수정일: 2025-12-03
-> 버전: v02
-
----
-
-## 개요
-
-SKALA Physical Risk AI 시스템의 ETL(Extract, Transform, Load) 파이프라인입니다.
-
-### ETL 구조
-
-| ETL 유형 | 디렉토리 | 데이터 소스 | 대상 테이블 |
-|----------|----------|-------------|-------------|
-| **Local ETL** | `local/` | 로컬 파일 (GeoJSON, NetCDF, CSV) | 26개 |
-| **API ETL** | `api/` | 외부 OpenAPI | 12개 |
-
----
+SKALA Physical Risk AI 시스템의 데이터 수집 및 적재(ETL) 파이프라인입니다.
+기후 데이터, 지리 정보, 건축물 정보 등 물리적 리스크 분석에 필요한 데이터를 수집하여 PostgreSQL Datawarehouse에 적재합니다.
 
 ## 디렉토리 구조
 
 ```
 etl/
-├── README.md                    # 이 파일
-├── local/                       # Local 데이터 ETL
-│   ├── .venv/                   # Python 가상환경
-│   ├── requirements.txt         # Python 의존성
-│   ├── logs/                    # 실행 로그
-│   ├── data/                    # 원본 데이터 (DATA_DIR)
-│   │   ├── N3A_G0110000/        # 행정구역 GeoJSON
-│   │   ├── KMA/                 # 기상청 NetCDF
-│   │   └── ...
-│   └── scripts/
-│       ├── utils.py             # 공통 유틸리티
-│       ├── run_all.py           # 전체 실행 스크립트
-│       ├── 01_load_admin_regions.py
-│       ├── 02_load_weather_stations.py
-│       ├── 03_load_grid_station_mappings.py
-│       ├── 04_load_population.py
-│       ├── 05_load_landcover.py
-│       ├── 06_load_dem.py
-│       ├── 07_load_drought.py
-│       ├── 08_load_climate_grid.py
-│       ├── 09_load_sea_level.py
-│       ├── 10_load_water_stress.py
-│       └── 11_load_site_data.py
+├── .env                          # 환경변수 설정 (API 키, DB 접속 정보)
+├── .gitignore                    # Git 제외 파일
+├── .venv/                        # Python 가상환경
+├── utils.py                      # 통합 유틸리티 (DB 연결, 로깅, API 클라이언트)
+├── requirements.txt              # Python 의존성
+├── logs/                         # 실행 로그 디렉토리
 │
-└── api/                         # 외부 API ETL
-    ├── .venv/                   # Python 가상환경
-    ├── requirements.txt         # Python 의존성
-    ├── logs/                    # 실행 로그
-    └── scripts/
-        ├── utils.py             # 공통 유틸리티 + API 클라이언트
-        ├── run_all.py           # 전체 실행 스크립트
-        ├── 01_load_river_info.py
-        ├── 02_load_emergency_messages.py
-        ├── 03_load_vworld_geocode.py
-        ├── 04_load_typhoon.py
-        ├── 05_load_wamis.py
-        ├── 06_load_buildings.py
-        ├── 15_load_disaster_yearbook.py
-        └── 16_load_typhoon_besttrack.py
+├── 01_run_all_etl.py            # ETL 전체 실행 스크립트
+├── 02_load_climate_geocode.py   # 기후 데이터 + 역지오코딩 통합 적재
+├── 03_load_buildings.py         # 건축물대장 API 모듈
+├── 03.1_load_buildings_example.py # 건축물대장 적재 예제
+│
+└── etl_base/                     # 기존 ETL 스크립트 (레거시)
+    ├── local/                    # 로컬 파일 기반 ETL
+    │   ├── data/                # 원본 데이터 파일 (NetCDF, GeoJSON 등)
+    │   └── scripts/             # 로컬 데이터 적재 스크립트
+    └── api/                      # API 기반 ETL
+        └── scripts/             # API 데이터 수집 스크립트
 ```
 
----
+## 환경 설정
 
-## 사전 요구사항
-
-### 1. 서버 시스템 요구사항
-
-ETL 스크립트 실행을 위해 서버에 다음 도구들이 설치되어 있어야 합니다:
-
-| 도구 | 용도 | 필요 스크립트 | 설치 방법 |
-|------|------|---------------|-----------|
-| **PostgreSQL 15+** | 데이터베이스 | 전체 | Docker 또는 시스템 설치 |
-| **PostGIS 3.3+** | 공간 데이터 확장 | 전체 | PostgreSQL과 함께 설치 |
-| **raster2pgsql** | 래스터 데이터 적재 | 05_load_landcover.py | `apt install postgis` |
-| **psql** | PostgreSQL 클라이언트 | 05_load_landcover.py | `apt install postgresql-client` |
-| **GDAL** | 공간 데이터 변환 | (선택) | `apt install gdal-bin` |
+### 1. Python 가상환경 생성
 
 ```bash
-# Ubuntu/Debian 서버
-apt update
-apt install -y postgresql-client postgis gdal-bin
-
-# macOS (로컬 개발)
-brew install postgresql postgis gdal
-
-# Docker (PostGIS 이미지 사용 시 raster2pgsql 포함)
-docker pull postgis/postgis:15-3.3
-```
-
-> **참고**: `raster2pgsql`은 시스템 레벨 도구이므로 Python에서 자동 설치 불가합니다.
-> 서버 배포 시 위 도구들을 미리 설치해주세요.
-
-### 2. Python 환경
-
-```bash
-# Python 3.11+ 필요
-python3 --version
-```
-
-### 2. 가상환경 설정
-
-```bash
-# Local ETL
-cd etl/local
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# API ETL
-cd ../api
+cd modelops/etl
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. 환경변수 설정
+### 2. 환경변수 설정 (.env)
 
-`.env` 파일을 `db_final_1202/` 루트에 생성:
+`.env` 파일에 다음 정보를 설정합니다:
 
 ```bash
-# Database
+# Database (PostgreSQL with PostGIS)
 DW_HOST=localhost
-DW_PORT=5434
-DW_NAME=skala_datawarehouse
-DW_USER=skala_dw_user
-DW_PASSWORD=skala_dw_2025
+DW_PORT=5555
+DW_NAME=datawarehouse
+DW_USER=skala
+DW_PASSWORD=skala1234
 
-# Data Directory (Local ETL)
-DATA_DIR=/path/to/your/data
+# 공공데이터포털 API
+PUBLICDATA_API_KEY=your_api_key
 
-# API Keys (API ETL)
-RIVER_API_KEY=your_key_here
-EMERGENCYMESSAGE_API_KEY=your_key_here
-TYPHOON_API_KEY=your_key_here
-PUBLICDATA_API_KEY=your_key_here
-VWORLD_API_KEY=your_key_here
+# V-World API (역지오코딩)
+VWORLD_API_KEY=your_api_key
 
-# Sample Limit (테스트용)
-SAMPLE_LIMIT=0  # 0이면 전체, 숫자면 제한
+# 재난안전데이터공유플랫폼
+RIVER_API_KEY=your_api_key
+EMERGENCYMESSAGE_API_KEY=your_api_key
+
+# 기상청 API
+TYPHOON_API_KEY=your_api_key
 ```
 
----
+## ETL 스크립트
+
+### 메인 스크립트
+
+| 스크립트 | 설명 | 대상 테이블 |
+|---------|------|------------|
+| `01_run_all_etl.py` | 전체 ETL 실행 | 모든 테이블 |
+| `02_load_climate_geocode.py` | 기후 데이터 + 역지오코딩 | 16개 기후 테이블 + location_grid |
+| `03_load_buildings.py` | 건축물대장 API 모듈 | api_buildings |
+| `03.1_load_buildings_example.py` | 건축물대장 적재 예제 | api_buildings |
+
+### etl_base/local/scripts (로컬 데이터)
+
+| 스크립트 | 설명 | 대상 테이블 |
+|---------|------|------------|
+| `01_load_admin_regions.py` | 행정구역 경계 | admin_regions |
+| `02_load_weather_stations.py` | 기상 관측소 정보 | weather_stations |
+| `03_load_grid_station_mappings.py` | 격자-관측소 매핑 | grid_station_mappings |
+| `04_load_population.py` | 인구 데이터 | population_data |
+| `05_load_landcover.py` | 토지피복도 | raw_landcover |
+| `06_load_dem.py` | 수치표고모델 (DEM) | raw_dem |
+| `07_load_drought.py` | 가뭄 지수 | drought_data |
+| `08_load_climate_grid.py` | 기후 격자 데이터 | 기후 관련 테이블 |
+| `09_load_sea_level.py` | 해수면 상승 | sea_level_data |
+| `10_load_water_stress.py` | 물 스트레스 | water_stress_data |
+| `11_load_site_data.py` | SK 사업장 데이터 | site_data |
+
+### etl_base/api/scripts (API 데이터)
+
+| 스크립트 | 설명 | API 소스 |
+|---------|------|----------|
+| `01_load_river_info.py` | 하천 정보 | 재난안전데이터공유플랫폼 |
+| `02_load_emergency_messages.py` | 긴급재난문자 | 재난안전데이터공유플랫폼 |
+| `03_load_vworld_geocode.py` | 역지오코딩 | VWorld API |
+| `04_load_typhoon.py` | 태풍 정보 | 기상청 API Hub |
+| `05_load_wamis.py` | 수문 정보 | WAMIS |
+| `06_load_buildings.py` | 건축물대장 | 국토교통부 |
+| `15_load_disaster_yearbook.py` | 재해연보 | 행정안전부 |
+| `16_load_typhoon_besttrack.py` | 태풍 베스트트랙 | 기상청 |
 
 ## 사용법
 
-### Local ETL 실행
+### 전체 ETL 실행
 
 ```bash
-cd etl/local
+cd modelops/etl
 source .venv/bin/activate
-export PYTHONPATH=.
-
-# 전체 실행
-python3 scripts/run_all.py
-
-# 특정 단계만 실행
-python3 scripts/run_all.py --only 1,2,3
-
-# 특정 단계 건너뛰기
-python3 scripts/run_all.py --skip 6,7
-
-# 단계 목록 확인
-python3 scripts/run_all.py --list
-
-# 개별 스크립트 실행
-python3 scripts/01_load_admin_regions.py
-python3 scripts/08_load_climate_grid.py
+python 01_run_all_etl.py
 ```
 
-### API ETL 실행
+### 테스트 모드 (샘플 데이터)
 
 ```bash
-cd etl/api
-source .venv/bin/activate
-export PYTHONPATH=.
-
-# 전체 실행
-python3 scripts/run_all.py
-
-# 샘플 제한 (테스트용)
-SAMPLE_LIMIT=100 python3 scripts/run_all.py
-
-# 개별 스크립트 실행
-python3 scripts/01_load_river_info.py
-SAMPLE_LIMIT=10 python3 scripts/06_load_buildings.py
+# SAMPLE_LIMIT 환경변수로 테스트 데이터 수 제한
+SAMPLE_LIMIT=10 python 01_run_all_etl.py
 ```
 
----
+### 특정 스크립트 실행
 
-## Local ETL 스크립트 상세
+```bash
+# 기후 데이터 적재
+SAMPLE_LIMIT=5 python 02_load_climate_geocode.py
 
-| 순서 | 스크립트 | 대상 테이블 | 데이터 소스 | 설명 |
-|------|----------|-------------|-------------|------|
-| 01 | load_admin_regions.py | location_admin | N3A_G0110000/*.geojson | 시군구 행정구역 경계 |
-| 02 | load_weather_stations.py | weather_stations | station_info.csv | 기상관측소 정보 |
-| 03 | load_grid_station_mappings.py | grid_station_mappings | 계산 생성 | 격자-관측소 매핑 |
-| 04 | load_population.py | location_admin | population.csv | 인구 데이터 업데이트 |
-| 05 | load_landcover.py | raw_landcover | landcover.tif | 토지피복도 래스터 |
-| 06 | load_dem.py | raw_dem | dem.tif | 수치표고모델 래스터 |
-| 07 | load_drought.py | raw_drought | MODIS/*.hdf | 가뭄 지수 래스터 |
-| 08 | load_climate_grid.py | location_grid, ta_data 등 | KMA/*.nc | 기후 격자 데이터 |
-| 09 | load_sea_level.py | sea_level_grid, sea_level_data | KMA/sea_level.nc | 해수면 상승 데이터 |
-| 10 | load_water_stress.py | water_stress_rankings | WRI/*.csv | WRI Aqueduct 데이터 |
-| 11 | load_site_data.py | site_additional_data | site_data.xlsx | 사업장 추가 데이터 (JSONB) |
-
-### 실행 순서 의존성
-
-```
-01 → 02 → 03 (관측소 매핑은 행정구역 후)
-01 → 04 (인구 데이터는 행정구역 후)
-01 → 08 (기후 데이터는 행정구역 후)
-08 → 09 (해수면은 격자 생성 후)
+# 건축물대장 적재
+SAMPLE_LIMIT=10 python 03.1_load_buildings_example.py
 ```
 
----
+### 특정 ETL만 실행 (01_run_all_etl.py)
 
-## API ETL 스크립트 상세
-
-| 순서 | 스크립트 | 대상 테이블 | API 소스 | 설명 |
-|------|----------|-------------|----------|------|
-| 01 | load_river_info.py | api_river_info | 재난안전데이터 | 하천 정보 |
-| 02 | load_emergency_messages.py | api_emergency_messages | 재난안전데이터 | 긴급재난문자 |
-| 03 | load_vworld_geocode.py | api_vworld_geocode | VWorld | 역지오코딩 캐시 |
-| 04 | load_typhoon.py | api_typhoon_* | 기상청 | 태풍 정보/경로/TD |
-| 05 | load_wamis.py | api_wamis, api_wamis_stations | WAMIS | 용수이용량/관측소 |
-| 06 | load_buildings.py | api_buildings | 국토교통부 | 건축물대장 |
-| 15 | load_disaster_yearbook.py | api_disaster_yearbook | 행정안전부 | 재해연보 |
-| 16 | load_typhoon_besttrack.py | api_typhoon_besttrack | 기상청 | 태풍 베스트트랙 |
-
-### API 키 요구사항
-
-| API | 환경변수 | 발급처 |
-|-----|----------|--------|
-| 재난안전데이터 | RIVER_API_KEY, EMERGENCYMESSAGE_API_KEY | https://www.safetydata.go.kr |
-| 기상청 태풍 | TYPHOON_API_KEY | https://apihub.kma.go.kr |
-| 공공데이터포털 | PUBLICDATA_API_KEY | https://www.data.go.kr |
-| VWorld | VWORLD_API_KEY | https://www.vworld.kr |
-| WAMIS | (키 불필요) | http://www.wamis.go.kr |
-
----
-
-## 공통 유틸리티
-
-### utils.py 주요 함수
-
-```python
-# 로깅 설정
-logger = setup_logging("script_name")
-
-# DB 연결
-conn = get_db_connection()
-
-# 테이블 확인
-exists = table_exists(conn, "table_name")
-count = get_row_count(conn, "table_name")
-
-# 데이터 적재
-batch_insert(conn, "table_name", columns, data, batch_size=1000)
-batch_upsert(conn, "table_name", data_list, unique_columns)
-
-# 데이터 디렉토리 (Local ETL)
-data_dir = get_data_dir()
-
-# API 호출 (API ETL)
-client = APIClient(logger)
-response = client.get(url, params=params, retries=3)
+```bash
+# L1 ~ L11: 로컬 데이터, A1 ~ A7: API 데이터
+python 01_run_all_etl.py --only L1,L2,L3
+python 01_run_all_etl.py --only A1,A2
 ```
 
-### 로깅
+## 데이터 소스
 
-로그 파일 위치:
-- Local ETL: `etl/local/logs/{script_name}_{YYYYMMDD}.log`
-- API ETL: `etl/api/logs/{script_name}_{YYYYMMDD}.log`
+### 로컬 파일 데이터
+
+| 데이터 | 형식 | 위치 | 설명 |
+|-------|------|------|-----|
+| 기후 시나리오 | NetCDF (.nc) | `etl_base/local/data/` | SSP1/2/3/5 기후 예측 데이터 |
+| 행정구역 | GeoJSON | `etl_base/local/data/admin/` | 시군구 경계 폴리곤 |
+| DEM | ASCII XYZ / ZIP | `etl_base/local/data/DEM/` | 수치표고모델 (경기도, 서울 등) |
+| 토지피복도 | GeoTIFF | `etl_base/local/data/landcover/` | 환경부 토지피복도 |
+
+### API 데이터
+
+| API | 제공 기관 | 주요 데이터 |
+|-----|----------|-----------|
+| 공공데이터포털 | 행정안전부 | 재해연보, 인구통계 |
+| VWorld | 국토지리정보원 | 역지오코딩 |
+| 재난안전데이터공유플랫폼 | MOIS | 하천정보, 긴급재난문자 |
+| 기상청 API Hub | 기상청 | 태풍, AWS 기상 관측 |
+| WAMIS | 한국수자원공사 | 수문 정보 |
+| 건축물대장 | 국토교통부 | 건축물 정보 |
+
+## 데이터베이스
+
+### 대상 데이터베이스
+
+- **Host**: localhost (또는 환경변수 `DW_HOST`)
+- **Port**: 5555 (또는 환경변수 `DW_PORT`)
+- **Database**: datawarehouse
+- **Extension**: PostGIS (공간 데이터 처리)
+
+### 주요 테이블
+
+#### 위치 데이터
+- `location_grid`: 1km 격자 정보 (울산 지역)
+- `admin_regions`: 행정구역 경계
+- `sk_sites`: SK 사업장 좌표
+
+#### 기후 데이터 (SSP 시나리오)
+- `ta_data`: 평균기온 (월별)
+- `tamax_data`: 최고기온 (월별)
+- `tamin_data`: 최저기온 (월별)
+- `rn_data`: 강수량 (월별)
+- `ws_data`: 풍속 (월별)
+- `rhm_data`: 상대습도 (월별)
+- `csdi_data`: 한파일수 (연별)
+- `wsdi_data`: 폭염일수 (연별)
+- `rx1day_data`: 최대 1일 강수량 (연별)
+- `rx5day_data`: 최대 5일 강수량 (연별)
+- `cdd_data`: 연속 무강수일수 (연별)
+- `rain80_data`: 호우 발생일수 (연별)
+- `sdii_data`: 강수강도 (연별)
+- `spei12_data`: 가뭄지수 (월별)
+
+#### 래스터 데이터
+- `raw_dem`: 수치표고모델 (Point)
+- `raw_landcover`: 토지피복도
+
+#### API 캐시 테이블
+- `api_river_info`: 하천 정보
+- `api_emergency_messages`: 긴급재난문자
+- `api_typhoon_data`: 태풍 정보
+- `api_buildings`: 건축물대장
+
+## 로깅
+
+모든 ETL 스크립트는 실행 로그를 `logs/` 디렉토리에 저장합니다.
+
+```
+logs/
+├── load_climate_geocode_20251212.log
+├── load_buildings_20251212.log
+└── ...
+```
 
 로그 형식:
 ```
-2025-12-03 10:30:45 - load_admin_regions - INFO - 행정구역 데이터 로딩 시작
+2025-12-12 15:30:45 - load_climate_geocode - INFO - 울산 1km 격자 1000개 생성
+2025-12-12 15:30:46 - load_climate_geocode - INFO - SK 사업장 7개 삽입
 ```
 
----
+## 기후 시나리오 (SSP)
 
-## 개발표준 준수 사항 (standard.md 기준)
+ETL은 IPCC AR6 기후 시나리오 데이터를 처리합니다:
 
-### 준수 항목
+| 시나리오 | 설명 | 2100년 온도 상승 |
+|---------|------|-----------------|
+| SSP1-2.6 | 지속가능 발전 | +1.8°C |
+| SSP2-4.5 | 중간 경로 | +2.7°C |
+| SSP3-7.0 | 지역 경쟁 | +3.6°C |
+| SSP5-8.5 | 화석연료 의존 | +4.4°C |
 
-| 항목 | 상태 | 비고 |
-|------|------|------|
-| 파일명 snake_case | O | `01_load_admin_regions.py` |
-| Docstring (파일 상단) | O | 개요, 최종 수정일 포함 |
-| 함수 docstring (Args/Returns/Raises) | O | Google style |
-| Python logging 모듈 사용 | O | `logging.getLogger(__name__)` |
-| .env 환경변수 관리 | O | `dotenv` 사용 |
+## 주의사항
 
-### 개선 필요 항목
+### API 호출 제한
+- 재난안전데이터공유플랫폼: 1,000회/일
+- 공공데이터포털: 서비스별 상이 (일반적으로 1,000회/일)
+- VWorld: 10,000회/일
 
-| 항목 | 현재 | standard.md 권장 |
-|------|------|-----------------|
-| 파일 버전 | 일부 누락 | `v00` 형식 명시 필요 |
-| 변수 인라인 주석 | 부분적 | 모든 변수에 주석 필요 |
-| 로그 포맷 | 간략 | 모듈 경로 포함 형식 권장 |
+테스트 시 `SAMPLE_LIMIT` 환경변수를 사용하여 API 호출 횟수를 제한하세요.
 
----
+### 대용량 데이터
+- DEM 데이터는 포인트 수가 많아 메모리 사용량이 높을 수 있습니다
+- 기후 NetCDF 파일은 파일당 수백 MB 크기입니다
+- 배치 처리를 통해 메모리 효율적으로 데이터를 적재합니다
 
-## 문제 해결
+### 좌표계
+- 기본 좌표계: EPSG:5174 (Korea 2000 / Unified CS)
+- VWorld API: EPSG:4326 (WGS84)
+- 필요시 ST_Transform을 사용하여 변환
 
-### DB 연결 실패
+## 트러블슈팅
 
+### 데이터베이스 연결 오류
 ```bash
-# 환경변수 확인
-echo $DW_HOST $DW_PORT
-
-# DB 컨테이너 상태 확인
-docker ps | grep postgres
-
-# 수동 연결 테스트
-PGPASSWORD=skala_dw_2025 psql -h localhost -p 5434 -U skala_dw_user -d skala_datawarehouse
-```
-
-### 래스터 데이터 적재 실패
-
-```bash
-# GDAL 설치 확인
-gdalinfo --version
-
-# raster2pgsql 확인
-which raster2pgsql
-
-# PostGIS raster 확장 확인
-psql -c "SELECT PostGIS_Raster_Lib_Version();"
+# PostgreSQL 서비스 확인
+docker ps  # Docker 컨테이너 확인
+psql -h localhost -p 5555 -U skala -d datawarehouse
 ```
 
 ### API 키 오류
-
 ```bash
-# 환경변수 로드 확인
-python3 -c "from dotenv import load_dotenv; load_dotenv('../.env'); import os; print(os.getenv('RIVER_API_KEY'))"
-
-# API 직접 테스트
-curl "https://www.safetydata.go.kr/V2/api/DSSP-IF-10720?serviceKey=YOUR_KEY&returnType=json&pageNo=1&numOfRows=1"
+# .env 파일에 API 키가 설정되어 있는지 확인
+cat .env | grep API_KEY
 ```
 
-### 메모리 부족 (기후 데이터)
-
+### 메모리 부족
 ```bash
-# 샘플 제한으로 테스트
-SAMPLE_LIMIT=1000 python3 scripts/08_load_climate_grid.py
-
-# 배치 크기 조정 (utils.py)
-batch_insert(conn, table, columns, data, batch_size=500)  # 기본 1000 → 500
+# SAMPLE_LIMIT으로 데이터 양 제한
+SAMPLE_LIMIT=100 python 06_load_dem.py
 ```
+
+## 라이선스
+
+SKALA Physical Risk AI System - Internal Use Only
 
 ---
 
-## 데이터 검증
-
-### 적재 결과 확인
-
-```sql
--- 테이블별 레코드 수
-SELECT 'location_admin' as tbl, COUNT(*) as cnt FROM location_admin
-UNION ALL
-SELECT 'location_grid', COUNT(*) FROM location_grid
-UNION ALL
-SELECT 'ta_data', COUNT(*) FROM ta_data
-UNION ALL
-SELECT 'api_river_info', COUNT(*) FROM api_river_info;
-```
-
-### 공간 데이터 검증
-
-```sql
--- 행정구역 경계 확인
-SELECT admin_name, ST_Area(geom) as area_m2
-FROM location_admin
-WHERE level = 2
-LIMIT 5;
-
--- 격자 범위 확인
-SELECT MIN(longitude), MAX(longitude), MIN(latitude), MAX(latitude)
-FROM location_grid;
-```
-
----
-
-## 참고 문서
-
-- [DB README](../db/README.md) - 데이터베이스 구조
-- [통합 ERD](../db/sql/erd.md) - 테이블 상세 설명
-- [standard.md](../standard.md) - 개발표준 정의
-
----
-
-*문서 작성: Claude Code*
-*최종 수정: 2025-12-03*
+**마지막 업데이트**: 2025-12-12
+**버전**: v2.0 (디렉토리 구조 개편)

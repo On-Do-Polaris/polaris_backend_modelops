@@ -72,10 +72,10 @@ def get_db_connection() -> Connection:
     """
     return psycopg2.connect(
         host=os.getenv("DW_HOST", "localhost"),
-        port=os.getenv("DW_PORT", "5434"),
-        dbname=os.getenv("DW_NAME", "skala_datawarehouse"),
-        user=os.getenv("DW_USER", "skala_dw_user"),
-        password=os.getenv("DW_PASSWORD", "skala_dw_2025")
+        port=os.getenv("DW_PORT", "5555"),
+        dbname=os.getenv("DW_NAME", "datawarehouse"),
+        user=os.getenv("DW_USER", "skala"),
+        password=os.getenv("DW_PASSWORD", "skala1234")
     )
 
 

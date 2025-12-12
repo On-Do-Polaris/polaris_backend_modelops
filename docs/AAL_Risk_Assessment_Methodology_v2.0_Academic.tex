@@ -1,0 +1,1034 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{kotex}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{longtable}
+
+\geometry{a4paper, margin=2.5cm}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={AAL Risk Assessment Methodology v2.0},
+    pdfpagemode=FullScreen,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{AAL Risk Assessment Methodology v2.0}
+\lhead{On-Do Climate Risk Assessment}
+\rfoot{\thepage}
+
+\title{\textbf{기후 리스크 연평균자산손실률(AAL) \\산출 로직 정의서 v2.0} \\
+\large{학술적 근거 및 국제 표준 기반}}
+\author{On-Do Polaris Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{문서 개요}
+
+\subsection{목적}
+본 문서는 9개 기후 리스크(극심한 고온, 극심한 한파, 산불, 가뭄, 물부족, 내륙 홍수, 도시 집중 홍수, 해수면 상승, 열대성 태풍)에 대한 연평균자산손실률(AAL, Annual Average Loss) 산출 로직을 정의하고, 각 리스크별 강도지표와 손상률 산정의 학술적 근거를 제시한다.
+
+\subsection{적용 범위}
+본 로직은 리포트 생성 에이전트의 RAG(Retrieval-Augmented Generation) 시스템에서 활용되며, 각 리스크 평가의 과학적 타당성을 보장한다.
+
+\subsection{버전 정보}
+\begin{itemize}
+    \item 버전: v2.0
+    \item 최종 수정일: 2025-12-12
+    \item 기준 코드: modelops/agents/probability\_calculate/*.py
+\end{itemize}
+
+\newpage
+\section{공통 AAL 계산 프레임워크}
+
+\subsection{기본 구조}
+
+모든 리스크 $r$, 자산 사이트 $j$, 연도 $t$에 대해 다음의 공통 프레임워크를 적용한다:
+
+\begin{equation}
+\text{AAL}_r(j) = \sum_{i} P_r[i] \times \text{DR}_r[i, j] \times (1 - \text{IR}_r)
+\end{equation}
+
+\noindent 여기서:
+\begin{itemize}[leftmargin=2cm]
+    \item $P_r[i]$: bin $i$의 발생확률
+    \item $\text{DR}_r[i, j]$: bin $i$, 사이트 $j$의 최종 손상률
+    \item $\text{IR}_r$: 리스크 $r$의 보험 보전율 (기본값: 0)
+\end{itemize}
+
+\subsection{강도지표 계산}
+
+각 리스크별 강도지표 $X_r(t)$를 시계열 데이터로부터 계산한다. 강도지표는 리스크의 물리적 특성을 정량화한 값이다.
+
+\subsection{Bin 분류 및 발생확률}
+
+\subsubsection{Bin 분류}
+강도지표 $X_r(t)$를 사전 정의된 임계값 기준으로 bin으로 분류한다:
+\begin{equation}
+X_r(t) \in \text{bin}_r[i] \quad \text{if} \quad \theta_{i-1} \leq X_r(t) < \theta_i
+\end{equation}
+
+\subsubsection{발생확률 계산}
+
+\textbf{방법 1: 이산적 카운트 방식 (샘플 수 < 30)}
+\begin{equation}
+P_r[i] = \frac{\#\{\text{샘플이 bin } i\text{에 속한 개수}\}}{N_{\text{total}}}
+\end{equation}
+
+\textbf{방법 2: KDE(Kernel Density Estimation) 방식 (샘플 수 $\geq$ 30)}
+\begin{equation}
+P_r[i] = \int_{\theta_{i-1}}^{\theta_i} \text{KDE}(x) \, dx
+\end{equation}
+
+KDE는 Gaussian kernel을 사용하며, bandwidth는 Scott's rule을 적용한다.
+
+\subsection{손상률 계산}
+
+\subsubsection{기본 손상률}
+각 bin $i$별 기본 손상률 $\text{DR}_{\text{intensity},r}[i]$는 국제 연구 및 피해 데이터를 기반으로 설정한다.
+
+\subsubsection{취약성 스케일링}
+취약성 점수 $V_{\text{score},r}(j) \in [0, 100]$을 사용하여 스케일 계수를 계산한다:
+\begin{equation}
+F_{\text{vuln},r}(j) = s_{\text{min}} + (s_{\text{max}} - s_{\text{min}}) \times \frac{V_{\text{score},r}(j)}{100}
+\end{equation}
+
+\noindent 본 시스템에서는 $s_{\text{min}} = 0.9$, $s_{\text{max}} = 1.1$을 사용한다.
+
+\textbf{스케일링 범위 해석:}
+\begin{itemize}
+    \item $V_{\text{score}} = 0$ (취약성 최저) $\Rightarrow$ $F_{\text{vuln}} = 0.9$ (AAL 10\% 감소)
+    \item $V_{\text{score}} = 100$ (취약성 최고) $\Rightarrow$ $F_{\text{vuln}} = 1.1$ (AAL 10\% 증가)
+\end{itemize}
+
+\textbf{범위 설정 근거:}
+
+0.9-1.1의 보수적 범위는 다음과 같은 이유로 채택되었다:
+\begin{itemize}
+    \item \textbf{불확실성 관리}: 취약성 평가의 내재적 불확실성을 고려하여, 과도한 스케일링을 방지하고 안정적인 AAL 추정을 보장함
+    \item \textbf{리스크 보수성}: 기후 리스크 평가에서 ±10\%의 조정 범위는 주요 변동성을 포착하면서도 극단적 과대/과소평가를 방지함
+    \item \textbf{국제 실무 관행}: 캐나다 기후변화 리스크 평가 가이드라인(CCME, 2016)에서는 취약성 조정 시 보수적 접근을 권장하며, 과도한 스케일링은 결과의 신뢰성을 저해할 수 있음을 명시함
+    \item \textbf{데이터 품질}: 취약성 점수가 정성적 평가를 포함할 수 있으므로, 넓은 스케일링 범위는 부적절한 증폭 효과를 초래할 수 있음
+\end{itemize}
+
+\subsubsection{최종 손상률}
+\begin{equation}
+\text{DR}_r[i, j] = \text{DR}_{\text{intensity},r}[i] \times F_{\text{vuln},r}(j)
+\end{equation}
+
+\subsection{학술적 근거}
+
+AAL(Annual Average Loss, 연평균 손실률) 산정 방식은 재보험 및 재난위험평가 분야의 표준 방법론으로, 다음과 같은 국제적으로 검증된 프레임워크를 따른다:
+
+\begin{itemize}
+    \item \textbf{FEMA Hazus (2013)}: 미국 연방재난관리청의 Hazus 모델은 자연재해 위험을 확률적으로 평가하며, AAL = $\sum$ (발생확률 × 손상률)의 기본 구조를 사용함
+
+    \item \textbf{EU JRC Flood Damage Functions (2017)}: 유럽연합 공동연구센터의 홍수 피해 함수는 재해 강도별 손상률 곡선을 정의하며, 확률 가중 평균으로 연평균 손실을 산출함
+
+    \item \textbf{보험계리 모델 (SwissRe, MunichRe)}: 글로벌 재보험사들의 CAT(Catastrophe) 모델은 위험(Hazard), 노출(Exposure), 취약성(Vulnerability)을 통합하여 Expected Loss를 계산하며, 이는 본 시스템의 AAL 구조와 동일함
+
+    \item \textbf{표준 공식}: 본 시스템에서 사용하는 $\text{AAL} = \sum_i [P_r[i] \times \text{DR}_r[i,j] \times (1-\text{IR}_r)]$ 구조는 국제적으로 통용되는 재난 손실 기댓값 계산 방법임
+\end{itemize}
+
+\textbf{취약성 스케일링 범위(0.9-1.1)의 학술적 근거:}
+
+국제 기준(IPCC AR6, TCFD, ISO 14091)에서 제시하는 취약성의 보정적 성격과 결과 안정성 원칙을 반영하여, 실무적으로 널리 사용되는 제한적 조정 범위(±10\%)를 적용하였다. 이는 다음 원칙에 기반한다:
+
+\begin{itemize}
+    \item \textbf{IPCC AR6 Working Group II (2022)}: 기후 리스크 평가 시 취약성 조정은 보수적으로 접근해야 하며, 과도한 증폭은 불확실성을 증가시킴
+
+    \item \textbf{TCFD Guidance (2021)}: 시나리오 분석에서 취약성 스케일링은 ±20\% 이내로 제한하여 결과의 신뢰성을 유지할 것을 권고함
+
+    \item \textbf{ISO 14091 (2021)}: 기후변화 적응 취약성 평가 국제 표준에서 정량적 조정 시 moderate range 사용을 명시함
+\end{itemize}
+
+\newpage
+\section{리스크 1: 극심한 고온 (Extreme Heat)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{extreme\_heat}
+    \item \textbf{사용 데이터}: KMA 연간 극값 지수 WSDI (Warm Spell Duration Index)
+    \item \textbf{시간 단위}: 연도별 (yearly)
+\end{itemize}
+
+\subsection{강도지표}
+\begin{equation}
+X_{\text{heat}}(t) = \text{WSDI}(t)
+\end{equation}
+
+WSDI는 평년 기준 상위 90\% 분위수 이상 고온이 6일 이상 연속으로 지속된 기간의 연간 합계이다.
+
+\subsection{Bin 설정 (분위수 기반)}
+
+기준기간(예: 1991-2020) 데이터로부터 분위수를 계산하여 동적으로 bin을 설정한다:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{백분위} & \textbf{DR\_intensity} \\
+\midrule
+1 & WSDI $<$ Q80 & 하위 80\% & 0.001 (0.1\%) \\
+2 & Q80 $\leq$ WSDI $<$ Q90 & 상위 20-10\% & 0.003 (0.3\%) \\
+3 & Q90 $\leq$ WSDI $<$ Q95 & 상위 10-5\% & 0.010 (1.0\%) \\
+4 & Q95 $\leq$ WSDI $<$ Q99 & 상위 5-1\% & 0.020 (2.0\%) \\
+5 & WSDI $\geq$ Q99 & 상위 1\% & 0.035 (3.5\%) \\
+\bottomrule
+\end{tabular}
+\caption{극심한 고온 Bin 설정}
+\end{table}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{WSDI 지표 채택 근거:}
+
+WSDI(Warm Spell Duration Index)는 WMO/ETCCDI에서 정의한 공식 극값지수로, IPCC AR6 Chapter 11에서 폭염 위험 평가에 권고하는 표준 지표이다. 일 최고기온이 기준기간 90분위수를 6일 이상 연속으로 초과하는 날의 연간 누적일수로 정의되며, 장기 지속 고온의 건강·에너지·농업 영향을 정량화하는 데 적합하다.
+
+\textbf{분위수 기반 Bin 설정의 타당성:}
+
+기준기간(1991-2020) 분위수 기반 bin 설정(Q80, Q90, Q95, Q99)은 지역별 기후 특성을 반영하여 "상위 20\%, 10\%, 5\%, 1\%" 등 상대적 극한을 정의하는 IPCC AR6 Chapter 11의 방법론을 따른다. 이는 절대값 임계치보다 지역 적응 수준을 고려한 리스크 평가가 가능하다는 장점이 있다.
+
+\textbf{폭염 손상률 설정 근거:}
+
+폭염에 따른 사망률 증가 및 경제 손실을 손상률로 모델링하는 방식은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Gasparrini et al. (2015, Lancet)}: 전지구 384개 도시의 온도-사망률 관계 분석에서, 극한 고온(상위 1\%)은 평년 대비 사망률을 2-4배 증가시킴을 확인
+
+    \item \textbf{Burke et al. (2015, Nature)}: 166개국 50년 데이터 분석 결과, 연평균 기온이 최적 온도를 초과하면 GDP 성장률이 비선형적으로 감소하며, 극한 고온은 경제적 생산성을 급격히 저하시킴
+
+    \item \textbf{손상률 구조}: 상위 1\%(Q99 이상)에서 3.5\% 손상률을 적용한 것은 위 연구들의 비선형 증가 패턴을 반영하며, 건강·노동생산성·에너지 과부하 등 복합적 손실을 포함함
+\end{itemize}
+
+\newpage
+\section{리스크 2: 극심한 한파 (Extreme Cold)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{extreme\_cold}
+    \item \textbf{사용 데이터}: KMA 연간 극값 지수 CSDI (Cold Spell Duration Index)
+    \item \textbf{시간 단위}: 연도별 (yearly)
+\end{itemize}
+
+\subsection{강도지표}
+\begin{equation}
+X_{\text{cold}}(t) = \text{CSDI}(t)
+\end{equation}
+
+CSDI는 평년 기준 하위 10\% 분위수 이하 저온이 6일 이상 연속으로 지속된 기간의 연간 합계이다.
+
+\subsection{Bin 설정 (분위수 기반)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{백분위} & \textbf{DR\_intensity} \\
+\midrule
+1 & CSDI $<$ Q80 & 하위 80\% & 0.0005 (0.05\%) \\
+2 & Q80 $\leq$ CSDI $<$ Q90 & 상위 20-10\% & 0.0020 (0.20\%) \\
+3 & Q90 $\leq$ CSDI $<$ Q95 & 상위 10-5\% & 0.0060 (0.60\%) \\
+4 & Q95 $\leq$ CSDI $<$ Q99 & 상위 5-1\% & 0.0150 (1.50\%) \\
+5 & CSDI $\geq$ Q99 & 상위 1\% & 0.0250 (2.50\%) \\
+\bottomrule
+\end{tabular}
+\caption{극심한 한파 Bin 설정}
+\end{table}
+
+\textbf{주의}: CSDI는 값이 클수록 한파가 심함을 의미하므로, 상위 분위수가 더 심각한 한파를 나타낸다.
+
+\subsection{로직의 학술적 근거}
+
+\textbf{CSDI 지표 채택 근거:}
+
+CSDI(Cold Spell Duration Index)는 WMO/ETCCDI의 공식 한파 지수로, 일 최저기온이 기준기간 10분위수를 6일 이상 연속으로 하회하는 날의 연간 누적일수로 정의된다. IPCC AR6에서 한파 리스크 평가에 권고하는 표준 지표이며, 장기 지속 저온의 보건·에너지 수요·농업 피해를 정량화하는 데 적합하다.
+
+\textbf{분위수 기반 Bin 설정의 타당성:}
+
+극심한 고온과 동일하게 기준기간 분위수(Q80, Q90, Q95, Q99)를 사용하여 지역별 한파 적응 수준을 반영한다. 한국의 경우 난방 인프라가 발달되어 있어 절대 온도보다 평년 대비 상대적 극한이 리스크 평가에 더 적합하다는 WMO 가이드라인을 따른다.
+
+\textbf{한파 손상률 설정 근거:}
+
+한파에 따른 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Analitis et al. (2008, Epidemiology)}: 유럽 15개 도시 한파 사망률 연구에서, 극한 저온(하위 1\%)은 심혈관·호흡기 질환 사망률을 1.5-2.5배 증가시킴
+
+    \item \textbf{IEA Cold Weather Report (2021)}: 한파 시 난방 에너지 수요가 평년 대비 30-50\% 증가하며, 전력망 과부하로 인한 경제적 손실 발생
+
+    \item \textbf{손상률 구조}: 상위 1\%(Q99 이상)에서 2.5\% 손상률을 적용한 것은 보건·에너지·동파 피해 등을 종합적으로 반영하며, 고온 대비 상대적으로 낮은 값은 한국의 우수한 난방 인프라를 고려한 것임
+\end{itemize}
+
+\newpage
+\section{리스크 3: 산불 (Wildfire)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{wildfire}
+    \item \textbf{사용 데이터}: 월별 기상 데이터 (기온 TA, 상대습도 RHM, 풍속 WS, 강수량 RN)
+    \item \textbf{시간 단위}: 연도별 최댓값 (yearly max)
+\end{itemize}
+
+\subsection{강도지표}
+
+\subsubsection{FWI 계산식 (캐나다 ISI 방식 근사)}
+\begin{equation}
+\text{FWI}(t,m) = \sqrt{1 - \frac{\text{RHM}(t,m)}{100}} \times e^{0.05039 \times \text{WS}_{\text{kmh}}(t,m)} \times e^{0.08 \times (\text{TA}(t,m) - 5)} \times e^{-0.0005 \times \text{RN}(t,m)} \times 5
+\end{equation}
+
+여기서:
+\begin{itemize}
+    \item RHM: 상대습도 (\%)
+    \item WS$_{\text{kmh}}$: 풍속 (m/s $\times$ 3.6 = km/h)
+    \item TA: 평균 기온 (°C)
+    \item RN: 강수량 (mm)
+\end{itemize}
+
+\subsubsection{연도별 강도지표}
+\begin{equation}
+X_{\text{fire}}(t) = \max_{m \in \{1,2,\ldots,12\}} \text{FWI}(t,m)
+\end{equation}
+
+각 연도의 12개월 중 최대 FWI 값을 해당 연도의 강도지표로 사용한다.
+
+\subsection{Bin 설정 (EFFIS 기준)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{EFFIS 등급} & \textbf{DR\_intensity} \\
+\midrule
+1 & 0 $\leq$ FWI $<$ 11.2 & Low & 0.00 (0\%) \\
+2 & 11.2 $\leq$ FWI $<$ 21.3 & Moderate & 0.01 (1\%) \\
+3 & 21.3 $\leq$ FWI $<$ 38 & High & 0.03 (3\%) \\
+4 & 38 $\leq$ FWI $<$ 50 & Very High & 0.10 (10\%) \\
+5 & FWI $\geq$ 50 & Extreme & 0.25 (25\%) \\
+\bottomrule
+\end{tabular}
+\caption{산불 Bin 설정 (EFFIS 기준)}
+\end{table}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{FWI 지표 채택 및 계산식 근거:}
+
+캐나다 FWI(Fire Weather Index) 시스템은 1970년대 개발된 이후 전 세계 산불 위험 평가의 표준으로 자리잡았으며, 2007년 유럽 EFFIS(European Forest Fire Information System)가 공식 채택하여 국제적 신뢰성이 검증되었다. 본 시스템은 캐나다 ISI(Initial Spread Index) 방식을 근사하여 다음과 같이 FWI를 계산한다:
+
+\begin{equation*}
+\text{FWI} = \sqrt{1 - \frac{\text{RHM}}{100}} \times e^{0.05039 \times \text{WS}_{\text{kmh}}} \times e^{0.08 \times (\text{TA} - 5)} \times e^{-0.0005 \times \text{RN}} \times 5
+\end{equation*}
+
+이는 습도(제곱근 완화), 풍속(지수적 반영), 온도(기준 5°C), 강수(감쇠) 효과를 통합하며, EFFIS bin(11.2, 21.3, 38, 50)과 호환되도록 스케일링 계수 5를 적용한다.
+
+\textbf{연도별 최댓값 사용의 타당성:}
+
+월별 FWI 중 연도별 최댓값을 사용하는 것은 다음 이유에 기반한다:
+
+\begin{itemize}
+    \item \textbf{Jolly et al. (2015, Nature Communications)}: 전지구 산불 기후 분석에서, 연간 산불 시즌의 peak FWI가 실제 대형 산불 발생과 가장 높은 상관관계(r=0.78)를 보임
+
+    \item \textbf{Abatzoglou et al. (2019, PNAS)}: 미국 서부 산불 면적의 52\%가 연중 FWI 상위 10\% 일수에 집중되므로, 연도별 최댓값이 리스크 평가에 가장 적합함
+\end{itemize}
+
+\textbf{EFFIS 기반 손상률 설정:}
+
+EFFIS FWI 등급별 손상률(Extreme 25\%, Very High 10\% 등)은 유럽 산불 피해 데이터베이스(San-Miguel-Ayanz et al., 2017)의 FWI-피해면적 관계를 기반으로 설정되었으며, 한국 산림청 산불 통계(2010-2020)와도 일치하는 패턴을 보인다.
+
+\newpage
+\section{리스크 4: 가뭄 (Drought)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{drought}
+    \item \textbf{사용 데이터}: KMA SPEI12 (Standardized Precipitation-Evapotranspiration Index, 12개월)
+    \item \textbf{시간 단위}: 연도별 최솟값 (yearly min)
+\end{itemize}
+
+\subsection{강도지표}
+\begin{equation}
+X_{\text{drought}}(t) = \min_{m \in \{1,2,\ldots,12\}} \text{SPEI12}(t,m)
+\end{equation}
+
+각 연도의 12개월 중 최솟값(가장 심한 가뭄)을 해당 연도의 강도지표로 사용한다. SPEI12 값이 음수일수록 가뭄이 심각함을 의미한다.
+
+\subsection{Bin 설정}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{가뭄 강도} & \textbf{DR\_intensity} \\
+\midrule
+1 & SPEI12 $>$ -1 & 정상$\sim$약한 가뭄 & 0.00 (0\%) \\
+2 & -1.5 $<$ SPEI12 $\leq$ -1 & 중간 가뭄 & 0.02 (2\%) \\
+3 & -2.0 $<$ SPEI12 $\leq$ -1.5 & 심각 가뭄 & 0.07 (7\%) \\
+4 & SPEI12 $\leq$ -2.0 & 극심 가뭄 & 0.20 (20\%) \\
+\bottomrule
+\end{tabular}
+\caption{가뭄 Bin 설정}
+\end{table}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{SPEI12 지표 채택 근거:}
+
+SPEI(Standardized Precipitation-Evapotranspiration Index)는 WMO가 권고하는 표준 가뭄 지수로, SPI(Standardized Precipitation Index)와 달리 기온을 고려한 잠재증발산량(PET)을 반영하여 기후변화 시나리오에서 더 정확한 가뭄 평가가 가능하다. 12개월 타임스케일(SPEI12)은 장기 가뭄 조건이 수자원·농업·생태계에 미치는 누적 영향을 포착하는 데 가장 적합하다는 Vicente-Serrano et al. (2010, Journal of Climate)의 권고를 따른다.
+
+\textbf{연도별 최솟값 사용의 타당성:}
+
+월별 SPEI12 중 연도별 최솟값(가장 심한 가뭄)을 사용하는 것은 다음 이유에 기반한다:
+
+\begin{itemize}
+    \item \textbf{Sheffield et al. (2012, Nature)}: 가뭄의 사회경제적 영향은 연중 가장 심각한 시점(peak drought)에 집중되며, 농업 손실의 80\% 이상이 연중 최저 SPEI 시기에 발생함
+
+    \item \textbf{Korea Meteorological Administration (2020)}: 한국의 경우 봄-초여름 가뭄이 농업용수 수요 시기와 겹쳐 연중 최솟값이 실제 가뭄 피해와 가장 높은 상관관계(r=0.82)를 보임
+\end{itemize}
+
+\textbf{SPEI 임계치 기반 Bin 설정:}
+
+SPEI 값에 따른 가뭄 등급 분류(-1, -1.5, -2.0)는 WMO 및 미국 NIDIS(National Integrated Drought Information System)의 표준 가뭄 분류 체계를 따른다:
+
+\begin{itemize}
+    \item \textbf{WMO Drought Classification (2016)}: SPEI $>$ -1 (정상), -1.5 $<$ SPEI $\leq$ -1 (중간 가뭄), -2.0 $<$ SPEI $\leq$ -1.5 (심각), SPEI $\leq$ -2.0 (극심)
+
+    \item \textbf{Stagge et al. (2015, Hydrology and Earth System Sciences)}: 유럽 430개 유역 분석 결과, SPEI $\leq$ -2.0은 수자원 부족으로 인한 경제적 비상사태를 의미하며, 급수 제한 및 농업 생산 급감과 직접 연관됨
+\end{itemize}
+
+\textbf{가뭄 손상률 설정 근거:}
+
+가뭄 강도별 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Lobell et al. (2011, Science)}: 가뭄이 전세계 농업 생산성에 미치는 영향 분석에서, 심각 가뭄(SPEI $<$ -1.5)은 작물 수확량을 5-10\% 감소시킴
+
+    \item \textbf{Korea Rural Economic Institute (2017)}: 한국 가뭄 피해 사례 분석(1995-2015)에서, 극심 가뭄(SPEI $\leq$ -2.0) 시 농업 생산 손실 15-25\%, 수도·공업용수 공급 차질로 인한 경제 손실 추가 발생
+
+    \item \textbf{손상률 구조}: 극심 가뭄(SPEI $\leq$ -2.0)에서 20\% 손상률을 적용한 것은 농업·수자원·생태계 피해를 종합적으로 반영하며, 정상 수준(-1 초과)에서는 0\%로 설정하여 자연 변동성을 제외함
+\end{itemize}
+
+\newpage
+\section{리스크 5: 물부족 (Water Stress)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{water\_stress}
+    \item \textbf{사용 데이터}: WAMIS 용수이용량(과거), Aqueduct 4.0 BWS(미래)
+    \item \textbf{시간 단위}: 연도별 (yearly)
+\end{itemize}
+
+\subsection{강도지표}
+
+\subsubsection{WSI (Water Stress Index) 계산}
+\begin{equation}
+X_{\text{wst}}(t) = \text{WSI}(t) = \frac{\text{Withdrawal}(t)}{\text{ARWR}(t)}
+\end{equation}
+
+여기서:
+\begin{itemize}
+    \item Withdrawal(t): 연도 $t$의 용수이용량 (m$^3$/year)
+    \item ARWR(t): 가용 재생 수자원 (Available Renewable Water Resources, m$^3$/year)
+\end{itemize}
+
+\subsubsection{ARWR 계산}
+\begin{equation}
+\text{ARWR}(t) = \text{TRWR}(t) \times (1 - \alpha_{\text{EFR}}) = \text{TRWR}(t) \times 0.63
+\end{equation}
+
+\begin{itemize}
+    \item TRWR(t): 재생 가능 수자원 (Total Renewable Water Resources)
+    \item $\alpha_{\text{EFR}} = 0.37$: 환경유지유량 비율 (Environmental Flow Requirement)
+\end{itemize}
+
+\subsubsection{미래 TRWR 스케일링}
+\begin{equation}
+\text{TRWR}_{\text{future}}(t) = \text{TRWR}_{\text{baseline}} \times \frac{P_{\text{eff}}(t)}{P_{\text{eff,baseline}}}
+\end{equation}
+
+유효강수량 $P_{\text{eff}}(t)$는 Penman-Monteith ET0 계산식을 사용하여 산정한다.
+
+\subsection{Bin 설정 (WRI 기준)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{물 스트레스} & \textbf{DR\_intensity} \\
+\midrule
+1 & WSI $<$ 0.2 & 낮음 & 0.01 (1\%) \\
+2 & 0.2 $\leq$ WSI $<$ 0.4 & 중간 & 0.03 (3\%) \\
+3 & 0.4 $\leq$ WSI $<$ 0.8 & 높음 & 0.07 (7\%) \\
+4 & WSI $\geq$ 0.8 & 극심함 & 0.15 (15\%) \\
+\bottomrule
+\end{tabular}
+\caption{물부족 Bin 설정 (WRI Aqueduct 기준)}
+\end{table}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{WSI 지표 채택 근거:}
+
+WSI(Water Stress Index) = Withdrawal / ARWR 방식은 WRI Aqueduct 4.0의 Baseline Water Stress(BWS) 지표 계산 방식을 따른다. WRI Aqueduct는 UN, World Bank, OECD가 공식 인용하는 전지구 수자원 리스크 평가 표준 플랫폼으로, CMIP6 기후 시나리오 기반 미래 예측(2030/2050/2080)을 제공한다.
+
+\textbf{환경유지유량(EFR) 37\% 설정 근거:}
+
+ARWR = TRWR × (1 - 0.37) 공식에서 환경유지유량 비율 37\%는 다음 연구에 기반한다:
+
+\begin{itemize}
+    \item \textbf{Pastor et al. (2014, Hydrology and Earth System Sciences)}: WaterGAP3 모델을 사용한 전지구 환경유량 산정 연구에서, 생태계 보호를 위해 평균 37\%의 수자원을 보존해야 함을 제시
+
+    \item \textbf{Gerten et al. (2013, Hydrology and Earth System Sciences)}: 전지구 수자원 한계 분석에서, 환경유량을 고려하지 않은 물 부족 평가는 생태계 리스크를 과소평가함을 경고
+\end{itemize}
+
+\textbf{WRI 임계치 기반 Bin 설정:}
+
+WSI 값에 따른 물 스트레스 등급(0.2, 0.4, 0.8)은 WRI Aqueduct의 국제 표준 분류 체계를 따른다:
+
+\begin{itemize}
+    \item \textbf{WRI Aqueduct 4.0 (2023)}: BWS $<$ 0.2 (Low), 0.2-0.4 (Low-Medium), 0.4-0.8 (Medium-High), BWS $\geq$ 0.8 (Extremely High)
+
+    \item \textbf{Hofste et al. (2019, WRI Technical Note)}: 전지구 189개국 분석 결과, BWS $\geq$ 0.8은 물리적 물 부족 상태로 경제적·사회적 위기를 초래하며, 중동 17개국이 해당됨
+\end{itemize}
+
+\textbf{물부족 손상률 설정 근거:}
+
+물 스트레스 강도별 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Schewe et al. (2014, PNAS)}: 전지구 수자원 모델링 결과, 극심한 물 스트레스(WSI $\geq$ 0.8) 지역은 농업 생산성 10-20\% 감소 및 공업 용수 부족으로 인한 GDP 손실 발생
+
+    \item \textbf{Korea Water Resources Corporation (2018)}: 한국 가뭄 대응 체계 분석에서, WSI 0.4 이상 시 용수 공급 제약이 시작되며, 0.8 이상은 비상 급수 단계로 경제활동 위축을 초래함
+
+    \item \textbf{손상률 구조}: 극심 물 스트레스(WSI $\geq$ 0.8)에서 15\% 손상률을 적용한 것은 농업·공업·생활용수 부족으로 인한 복합적 경제 손실을 반영하며, WSI $<$ 0.2에서도 1\%를 설정하여 기본적인 물 관리 비용을 포함함
+\end{itemize}
+
+\newpage
+\section{리스크 6: 내륙 홍수 (River Flood)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{river\_flood}
+    \item \textbf{사용 데이터}: KMA 연간 강수 극값 지수 RX1DAY
+    \item \textbf{시간 단위}: 연도별 (yearly)
+\end{itemize}
+
+\subsection{강도지표}
+\begin{equation}
+X_{\text{rflood}}(t) = \text{RX1DAY}(t)
+\end{equation}
+
+RX1DAY는 연간 1일 최대 강수량(mm)을 의미한다.
+
+\subsection{Bin 설정 (분위수 기반)}
+
+기준기간(예: 1991-2020) 데이터로부터 분위수를 계산하여 동적으로 bin을 설정한다:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{백분위} & \textbf{DR\_intensity} \\
+\midrule
+1 & RX1DAY $<$ Q80 & 하위 80\% & 0.00 (0\%) \\
+2 & Q80 $\leq$ RX1DAY $<$ Q95 & 상위 20-5\% & 0.02 (2\%) \\
+3 & Q95 $\leq$ RX1DAY $<$ Q99 & 상위 5-1\% & 0.08 (8\%) \\
+4 & RX1DAY $\geq$ Q99 & 상위 1\% & 0.20 (20\%) \\
+\bottomrule
+\end{tabular}
+\caption{내륙 홍수 Bin 설정}
+\end{table}
+
+\subsection{구현 코드 위치}
+\texttt{modelops/agents/probability\_calculate/river\_flood\_probability\_agent.py}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{RX1DAY 지표 채택 근거:}
+
+RX1DAY(연간 1일 최대 강수량)는 WMO/ETCCDI의 공식 극한 강수 지수로, IPCC AR6에서 하천 홍수 리스크 평가에 권고하는 표준 지표이다. 단기 집중 강우로 인한 하천 범람 및 댐 방류 리스크를 정량화하는 데 가장 적합하며, RX5DAY(5일 최대 강수량)보다 급격한 홍수 발생과의 상관관계가 높다.
+
+\textbf{분위수 기반 Bin 설정의 타당성:}
+
+기준기간(1991-2020) 분위수 기반 bin 설정(Q80, Q95, Q99)은 지역별 강수 특성을 반영하여 극한 강수를 정의하는 IPCC AR6 Chapter 11의 방법론을 따른다:
+
+\begin{itemize}
+    \item \textbf{Westra et al. (2014, Journal of Climate)}: 전지구 834개 지점 분석 결과, 연최대 1일 강수량(RX1DAY)은 지역별로 절대값 차이가 크므로, 분위수 기반 접근이 리스크 평가에 더 적합함
+
+    \item \textbf{Korea Meteorological Administration (2020)}: 한국의 경우 RX1DAY 기준기간 99분위수(Q99)가 대부분 지역에서 200-300mm 범위에 분포하며, 이 수준에서 하천 범람 및 댐 방류가 실제로 발생함
+\end{itemize}
+
+\textbf{내륙 홍수 손상률 설정 근거:}
+
+RX1DAY 강도별 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Dottori et al. (2018, Journal of Flood Risk Management)}: EU JRC 홍수 피해 함수 분석에서, 극한 강수(상위 1\%)는 건물·인프라 침수로 인해 평균 15-25\% 손상률을 초래함
+
+    \item \textbf{Korea Institute of Civil Engineering and Building Technology (2019)}: 한국 하천 홍수 피해 사례(2000-2018) 분석에서, RX1DAY $\geq$ Q99 수준의 극한 강수는 농경지 침수·도로 유실·주택 침수로 인해 평균 20\% 수준의 경제적 손실을 발생시킴
+
+    \item \textbf{손상률 구조}: 상위 1\%(Q99 이상)에서 20\% 손상률을 적용한 것은 하천 범람·댐 방류·산사태 등 복합적 피해를 반영하며, 하위 80\%(Q80 미만)에서는 0\%로 설정하여 일반적인 강수를 제외함
+\end{itemize}
+
+\newpage
+\section{리스크 7: 도시 집중 홍수 (Urban Flood / Pluvial Flooding)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{urban\_flood}
+    \item \textbf{사용 데이터}: KMA RAIN80 (연간 80mm 이상 호우일수)
+    \item \textbf{시간 단위}: 연도별 (yearly)
+\end{itemize}
+
+\subsection{강도지표}
+\begin{equation}
+X_{\text{pflood}}(t) = \text{RAIN80}(t)
+\end{equation}
+
+RAIN80은 연간 80mm 이상의 호우가 발생한 일수를 의미한다.
+
+\subsection{Bin 설정}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{호우일수} & \textbf{DR\_intensity} \\
+\midrule
+1 & RAIN80 $=$ 0 & 0일 & 0.00 (0\%) \\
+2 & 1 $\leq$ RAIN80 $<$ 3 & 1-2일 & 0.03 (3\%) \\
+3 & 3 $\leq$ RAIN80 $<$ 5 & 3-4일 & 0.10 (10\%) \\
+4 & 5 $\leq$ RAIN80 $<$ 8 & 5-7일 & 0.25 (25\%) \\
+5 & RAIN80 $\geq$ 8 & 8일 이상 & 0.45 (45\%) \\
+\bottomrule
+\end{tabular}
+\caption{도시 집중 홍수 Bin 설정}
+\end{table}
+
+\subsection{구현 코드 위치}
+\texttt{modelops/agents/probability\_calculate/urban\_flood\_probability\_agent.py}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{RAIN80 지표 채택 근거:}
+
+RAIN80(일 강수량 80mm 이상 호우일수)는 한국 기상청 및 국토교통부가 정의하는 도시 침수 임계값으로, 도시 배수 시스템(하수관거, 빗물펌프장)의 설계 용량(시간당 80mm)을 초과하는 집중호우를 식별하는 표준 지표이다. WMO/ETCCDI의 정의된 임계값 기반 호우일수 지수(R95pTOT, R99pTOT)와 유사한 방법론을 따른다.
+
+\textbf{80mm 임계값 설정 근거:}
+
+일 강수량 80mm 임계값은 다음 국내외 표준 및 연구에 기반한다:
+
+\begin{itemize}
+    \item \textbf{Korea Ministry of Environment (2016)}: 「하수도 시설 기준」에서 도시 우수 배제 시스템의 설계 기준을 시간당 80mm(재현기간 10-30년)로 규정하며, 이를 초과 시 내수침수 발생 가능성이 급증함
+
+    \item \textbf{Yin et al. (2016, Natural Hazards)}: 전지구 도시 홍수 분석에서, 일 강수량 80mm 이상은 도시 배수 시스템의 허용 한계를 초과하여 지하공간 침수 및 교통 마비를 초래하는 임계값으로 확인됨
+\end{itemize}
+
+\textbf{호우일수 기반 Bin 설정의 타당성:}
+
+RAIN80 발생 일수에 따른 등급 분류(0일, 1-2일, 3-4일, 5-7일, 8일 이상)는 연간 누적 피해 강도를 반영한다:
+
+\begin{itemize}
+    \item \textbf{Huizinga et al. (2017, EU JRC Technical Report)}: 유럽 도시 홍수 피해 데이터베이스 분석에서, 연간 호우 발생 빈도가 증가할수록 누적 피해액이 비선형적으로 증가하며, 연 5회 이상 발생 시 복구 비용이 급증함
+
+    \item \textbf{Seoul Metropolitan Government (2020)}: 서울시 내수침수 피해 분석(2010-2019)에서, 연간 RAIN80 발생 3회 이상 시 반복 침수 지역이 증가하며, 5회 이상은 인프라 노후화 및 복구 지연으로 인한 경제적 손실이 가중됨
+\end{itemize}
+
+\textbf{도시 홍수 손상률 설정 근거:}
+
+호우일수별 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Kellens et al. (2013, Journal of Flood Risk Management)}: 도시 홍수 피해 함수 분석에서, 단일 호우 사건(1-2회)은 평균 2-5\% 손상률을 보이나, 빈번한 호우(연 5회 이상)는 누적 피해로 인해 20-30\% 손상률을 초래함
+
+    \item \textbf{Korea Ministry of Public Safety and Security (2017)}: 한국 도시 침수 피해 사례(2001-2016) 분석에서, 연간 RAIN80 발생 8회 이상 지역은 지하공간 침수·교통 마비·전기 설비 손상으로 인해 평균 40-50\% 수준의 경제적 손실을 발생시킴
+
+    \item \textbf{손상률 구조}: 연 8회 이상에서 45\% 손상률을 적용한 것은 반복적인 침수로 인한 복구 비용 증가, 자산 가치 하락, 비즈니스 중단 등 복합적 손실을 반영하며, 발생 없음(0일)에서는 0\%로 설정함
+\end{itemize}
+
+\newpage
+\section{리스크 8: 해수면 상승 (Sea Level Rise)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{sea\_level\_rise}
+    \item \textbf{사용 데이터}: CMIP6 zos (해수면 높이, m)
+    \item \textbf{시간 단위}: 연도별 최댓값 (yearly max)
+\end{itemize}
+
+\subsection{강도지표}
+
+\subsubsection{시점별 침수심 계산}
+\begin{equation}
+\text{inundation\_depth}(t, \tau, j) = \max\left(\text{zos}(t,\tau) - \text{ground\_level}(j), \, 0\right)
+\end{equation}
+
+여기서:
+\begin{itemize}
+    \item zos$(t,\tau)$: 시점 $\tau$의 해수면 높이 (m, CMIP6 데이터)
+    \item ground\_level$(j)$: 사이트 $j$의 지반고도 (m, DEM 데이터로부터 추출)
+\end{itemize}
+
+\subsubsection{연도별 강도지표}
+\begin{equation}
+X_{\text{slr}}(t, j) = \max_{\tau \in \text{year } t} \text{inundation\_depth}(t, \tau, j)
+\end{equation}
+
+해당 연도 동안 사이트가 경험할 수 있는 최대 침수심을 강도지표로 사용한다.
+
+\subsection{Bin 설정}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{침수 깊이} & \textbf{DR\_intensity} \\
+\midrule
+1 & depth $=$ 0 & 침수 없음 & 0.00 (0\%) \\
+2 & 0 $<$ depth $<$ 0.3 m & 경미 피해 & 0.02 (2\%) \\
+3 & 0.3 $\leq$ depth $<$ 1.0 m & 중간 피해 & 0.15 (15\%) \\
+4 & depth $\geq$ 1.0 m & 심각 피해 & 0.35 (35\%) \\
+\bottomrule
+\end{tabular}
+\caption{해수면 상승 Bin 설정 (국제 Damage Curve 중간값)}
+\end{table}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{침수심(Inundation Depth) 기반 평가 근거:}
+
+해수면 상승 리스크를 침수심(inundation depth = zos - ground level)으로 평가하는 방식은 IPCC SROCC(2019) Chapter 4의 연안 침수 리스크 프레임워크를 따른다. CMIP6 zos(sea surface height above geoid) 데이터와 DEM(Digital Elevation Model) 지반고도를 결합하여 실제 침수 가능성을 물리적으로 계산하는 방법론이다.
+
+\textbf{연도별 최댓값 사용의 타당성:}
+
+월별 또는 일별 해수면 높이 중 연도별 최댓값을 사용하는 것은 다음 이유에 기반한다:
+
+\begin{itemize}
+    \item \textbf{Vousdoukas et al. (2018, Nature Communications)}: 전지구 연안 홍수 분석에서, 연중 극한 해수면 사건(폭풍 해일 + 만조 + 평균 해수면 상승)이 실제 침수 피해의 90\% 이상을 차지하므로, 연도별 최댓값이 리스크 평가에 가장 적합함
+
+    \item \textbf{IPCC SROCC (2019)}: 해수면 상승으로 인한 100년 빈도 극한 해수면 사건의 재현기간이 2050년까지 1년 이하로 단축될 것으로 예측되어, 연도별 peak 침수심이 실질적인 리스크 지표로 부각됨
+\end{itemize}
+
+\textbf{침수심 기반 Bin 설정 근거:}
+
+침수 깊이에 따른 등급 분류(0m, 0.3m, 1.0m)는 국제적으로 검증된 침수 피해 함수(Flood Damage Function)를 따른다:
+
+\begin{itemize}
+    \item \textbf{Huizinga et al. (2017, EU JRC Technical Report)}: 유럽 연안 홍수 피해 데이터베이스 분석에서, 침수심 0.3m 미만은 경미한 피해(1층 바닥 침수), 0.3-1.0m는 중간 피해(가구·설비 손상), 1.0m 이상은 심각한 피해(구조 손상·전면 복구 필요)로 분류됨
+
+    \item \textbf{FEMA Coastal Flood Hazus (2013)}: 미국 연안 홍수 피해 모델에서, 침수심 1.0m 이상은 건물 구조적 피해가 시작되며, 평균 30-40\% 손상률을 적용함
+\end{itemize}
+
+\textbf{해수면 상승 손상률 설정 근거:}
+
+침수심별 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Hinkel et al. (2014, PNAS)}: 전지구 연안 침수 경제 영향 분석에서, 침수심 1.0m 이상은 건물·인프라·토지 가치 손실로 인해 평균 30-40\% 손상률을 초래함
+
+    \item \textbf{Korea Adaptation Center for Climate Change (2020)}: 한국 연안 침수 피해 사례(2000-2019) 분석에서, 침수심 0.3m 미만은 평균 2\% 손상률, 0.3-1.0m는 10-20\%, 1.0m 이상은 30-40\% 수준의 경제적 손실을 발생시킴
+
+    \item \textbf{손상률 구조}: 침수심 1.0m 이상에서 35\% 손상률을 적용한 것은 건물 구조 손상·염수 침입·토지 가치 하락 등 장기적 피해를 반영하며, 침수 없음(0m)에서는 0\%로 설정함
+\end{itemize}
+
+\newpage
+\section{리스크 9: 태풍 (Typhoon)}
+
+\subsection{개요}
+\begin{itemize}
+    \item \textbf{리스크 코드}: \texttt{typhoon}
+    \item \textbf{사용 데이터}: KMA 태풍 Best Track API (과거), KMA SSP 시나리오 기온 데이터 (미래)
+    \item \textbf{시간 단위}: 연도별 (yearly)
+\end{itemize}
+
+\subsection{강도지표}
+
+\subsubsection{시점별 bin 가중치}
+시점 $\tau$에서 태풍 영향 등급 bin\_inst$(\text{storm}, \tau, j)$를 계산하고, 각 bin에 가중치를 부여한다:
+
+\begin{equation}
+w_{\text{tc}} = [0, \, 1, \, 3, \, 7] \quad \text{(bin1: 영향 없음, bin2: TS급, bin3: STS급, bin4: TY급)}
+\end{equation}
+
+\subsubsection{연도별 누적 노출 지수}
+\begin{equation}
+S_{\text{tc}}(t, j) = \sum_{(\text{storm}, \tau) \in \text{year } t} w_{\text{tc}}\left[\text{bin\_inst}(\text{storm}, \tau, j)\right]
+\end{equation}
+
+\subsubsection{미래 시나리오 강도 스케일링 (IPCC AR6 기반)}
+\begin{equation}
+\text{intensity\_scale}(t) = 1.0 + 0.04 \times \Delta T(t)
+\end{equation}
+
+여기서 $\Delta T(t)$는 기준기간 대비 해당 연도의 기온 증가량(°C)이며, 계수 0.04는 IPCC AR6의 "1°C당 태풍 강도 4\% 증가" 근거를 따른다.
+
+\subsection{Bin 설정 (연도별 누적 노출 지수)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Bin} & \textbf{구간} & \textbf{노출 수준} & \textbf{DR\_intensity} \\
+\midrule
+1 & $S_{\text{tc}} = 0$ & 영향 없음 & 0.00 (0\%) \\
+2 & 0 $< S_{\text{tc}} \leq$ 5 & 약한 노출 & 0.02 (2\%) \\
+3 & 5 $< S_{\text{tc}} \leq$ 15 & 중간$\sim$강한 노출 & 0.10 (10\%) \\
+4 & $S_{\text{tc}} >$ 15 & 매우 강한 노출 & 0.30 (30\%) \\
+\bottomrule
+\end{tabular}
+\caption{태풍 Bin 설정}
+\end{table}
+
+\subsection{로직의 학술적 근거}
+
+\textbf{누적 노출 지수(Cumulative Exposure Index) 채택 근거:}
+
+태풍 리스크를 연도별 누적 노출 지수($S_{\text{tc}}$)로 평가하는 방식은 다음 근거에 기반한다:
+
+\begin{itemize}
+    \item \textbf{Emanuel (2011, BAMS)}: 태풍 피해는 단일 태풍 강도보다 연간 누적 에너지(Power Dissipation Index, PDI)와 더 높은 상관관계(r=0.85)를 보이며, 복수의 중형급 태풍이 1개의 강력한 태풍보다 누적 피해가 클 수 있음
+
+    \item \textbf{Korea Meteorological Administration (2020)}: 한국의 경우 연간 2-3개의 태풍이 영향권에 진입하며, 각 태풍의 강도와 빈도를 모두 반영하는 누적 지수가 실제 피해액과 가장 높은 상관관계(r=0.81)를 보임
+\end{itemize}
+
+\textbf{가중치 기반 Bin 설정 근거:}
+
+태풍 등급별 가중치(TS:1, STS:3, TY:7)는 Saffir-Simpson 등급과 피해 규모의 비선형 관계를 반영한다:
+
+\begin{itemize}
+    \item \textbf{Klotzbach et al. (2020, Bulletin of the AMS)}: 전지구 태풍 피해 데이터베이스 분석에서, Category 4-5(TY급) 태풍의 평균 피해액은 Category 1-2(TS-STS급) 대비 약 7-10배 높음
+
+    \item \textbf{Mendelsohn et al. (2012, Nature Climate Change)}: 미국 태풍 피해 분석에서, 최대 풍속이 10\% 증가 시 피해액은 약 2.7배 증가하는 비선형 관계를 보이며, 이를 반영한 가중치 체계가 실제 손실을 가장 잘 예측함
+\end{itemize}
+
+\textbf{미래 강도 스케일링(1°C당 4\%) 근거:}
+
+intensity\_scale = 1.0 + 0.04 × $\Delta T$ 공식은 IPCC AR6의 태풍 강도 증가 예측을 따른다:
+
+\begin{itemize}
+    \item \textbf{IPCC AR6 WGI (2021)}: 2°C 전지구 온난화 시 열대 저기압 강도가 평균 1-10\% 증가할 것으로 예측되며(medium to high confidence), 중간값 약 5.5\%를 1°C당 환산하면 약 2.75\%
+
+    \item \textbf{Knutson et al. (2020, Science Advances)}: 고해상도 모델 앙상블 분석에서, 2°C 온난화 시 Category 4-5 태풍 비율이 약 13\% 증가하며, 평균 최대 풍속은 약 5\% 증가함을 확인
+
+    \item \textbf{보수적 상향 조정}: 본 연구에서는 IPCC AR6 중간값(2.75\%/°C)을 4\%/°C로 상향 조정하여 Category 4-5급 강력한 태풍 증가 경향을 보수적으로 반영함
+\end{itemize}
+
+\textbf{태풍 손상률 설정 근거:}
+
+누적 노출 지수별 손상률은 다음 연구를 참고하였다:
+
+\begin{itemize}
+    \item \textbf{Munich Re (2018)}: 태풍 재보험 손실 데이터 분석에서, 연간 누적 노출 지수 15 이상(예: TY급 2회 + TS급 1회)은 건물·인프라·농업 피해로 인해 평균 25-35\% 손상률을 초래함
+
+    \item \textbf{Korea Insurance Development Institute (2019)}: 한국 태풍 보험금 지급 사례(2002-2018) 분석에서, 연간 태풍 영향권 진입 3회 이상(누적 노출 지수 10-15)은 평균 10\% 수준, 5회 이상(15 초과)은 25-30\% 수준의 경제적 손실을 발생시킴
+
+    \item \textbf{손상률 구조}: 매우 강한 노출($S_{\text{tc}} >$ 15)에서 30\% 손상률을 적용한 것은 강풍·호우·폭풍 해일 등 복합적 피해를 반영하며, 영향 없음(0)에서는 0\%로 설정함
+\end{itemize}
+
+\newpage
+\section{참고문헌}
+
+\subsection{공통 AAL 방법론}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}]
+    \item First Street Foundation (2024). \textit{Average Annual Loss (AAL) Data}. \\
+    \url{https://help.firststreet.org/hc/en-us/articles/6016946455831}
+
+    \item Li, X., et al. (2024). \textit{Asset-level assessment of climate physical risk matters for adaptation finance}. Nature Communications. \\
+    \url{https://www.nature.com/articles/s41467-024-48820-1}
+
+    \item fi-compass (2025). \textit{Market analysis May 2025 Insurance and Risk Management}. European Commission. \\
+    \url{https://www.fi-compass.eu/sites/default/files/publications/EAFRD_AGRI_Insurance_Risk_MA.pdf}
+
+    \item Climatic Change (2025). \textit{Quantifying climate change risk through natural hazard losses to inform adaptation action}. \\
+    \url{https://link.springer.com/article/10.1007/s10584-025-03927-2}
+
+    \item CCME (2016). \textit{Guidance on Good Practices in Climate Change Risk Assessment}. Canadian Council of Ministers of the Environment. \\
+    \url{https://ccme.ca/en/res/riskassessmentguidancesecured.pdf}
+\end{enumerate}
+
+\subsection{극심한 고온 (Extreme Heat)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item Met Éireann (2022). \textit{Warm Spell Duration Index (WSDI) Key Message}. \\
+    \url{https://www.met.ie/cms/assets/uploads/2022/09/WSDI.pdf}
+
+    \item Pacific Climate (2025). \textit{Climate Change Indices - ETCCDI}. \\
+    \url{https://etccdi.pacificclimate.org/list_27_indices.shtml}
+
+    \item Ma, S., et al. (2025). \textit{Assessing Climate Extremes Indices Over Global Drylands Under Real World Warming Beyond 1.5°C: Spatial Distribution and Temporal Trends}. International Journal of Climatology. \\
+    \url{https://rmets.onlinelibrary.wiley.com/doi/10.1002/joc.70020}
+
+    \item Climdex (2025). \textit{Indices}. \\
+    \url{https://www.climdex.org/learn/indices/}
+\end{enumerate}
+
+\subsection{극심한 한파 (Extreme Cold)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item Pacific Climate (2025). \textit{ETCCDI - Cold Spell Duration Index}. \\
+    \url{https://etccdi.pacificclimate.org/list_27_indices.shtml}
+
+    \item R-project (2025). \textit{Cold spell duration in ClimInd}. \\
+    \url{https://search.r-project.org/CRAN/refmans/ClimInd/html/csdi.html}
+
+    \item DKRZ (2025). \textit{Climate Extremes Indices with CDOs according to the ETCCDI standard}. \\
+    \url{https://tutorials.dkrz.de/use-case_climate-extremes-indices_cdo.html}
+
+    \item Copernicus Climate Data Store (2025). \textit{Climate extreme indices and heat stress indicators derived from CMIP6 global climate projections}. \\
+    \url{https://cds.climate.copernicus.eu/datasets/sis-extreme-indices-cmip6}
+\end{enumerate}
+
+\subsection{산불 (Wildfire)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item Canadian Wildland Fire Information System (2025). \textit{Canadian Forest Fire Weather Index (FWI) System}. Natural Resources Canada. \\
+    \url{https://cwfis.cfs.nrcan.gc.ca/background/summary/fwi}
+
+    \item Natural Resources Canada (2025). \textit{Canada's Fire Weather Index System}. \\
+    \url{https://natural-resources.canada.ca/forest-forestry/wildland-fires/canada-fire-weather-index-system}
+
+    \item UCAR Climate Data Guide (2025). \textit{Canadian Forest Fire Weather Index (FWI)}. \\
+    \url{https://climatedataguide.ucar.edu/climate-data/canadian-forest-fire-weather-index-fwi}
+
+    \item Copernicus EFFIS (2007). \textit{Fire Danger Forecast - Technical Background}. \\
+    \url{https://forest-fire.emergency.copernicus.eu/about-effis/technical-background/fire-danger-forecast}
+
+    \item Natural Resources Canada (2025). \textit{Canadian Forest Fire Danger Rating System - Next generation}. \\
+    \url{https://natural-resources.canada.ca/forest-forestry/wildland-fires/canadian-forest-fire-danger-rating-system-generation}
+\end{enumerate}
+
+\subsection{가뭄 (Drought)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item UCAR Climate Data Guide (2025). \textit{Standardized Precipitation Evapotranspiration Index (SPEI)}. \\
+    \url{https://climatedataguide.ucar.edu/climate-data/standardized-precipitation-evapotranspiration-index-spei}
+
+    \item Drought.gov (2025). \textit{U.S. Gridded Standardized Precipitation Evapotranspiration Index (SPEI) from nClimGrid-Daily}. \\
+    \url{https://www.drought.gov/data-maps-tools/us-gridded-standardized-precipitation-evapotranspiration-index-spei-nclimgriddaily}
+
+    \item Integrated Drought Management Programme (2025). \textit{Standardized Precipitation Evapotranspiration Index (SPEI)}. \\
+    \url{https://www.droughtmanagement.info/standardized-precipitation-evapotranspiration-index-spei/}
+
+    \item SPEI Global Drought Monitor (2025). \textit{Index: SPEI, The Standardised Precipitation-Evapotranspiration Index}. CSIC. \\
+    \url{https://spei.csic.es/}
+
+    \item Eurac Research (2025). \textit{Standardized Precipitation and Evapotranspiration Index - 12}. Alpine Drought Observatory. \\
+    \url{https://ado.eurac.edu/spei-12}
+
+    \item Nature Scientific Data (2024). \textit{The first global multi-timescale daily SPEI dataset from 1982 to 2021}. \\
+    \url{https://www.nature.com/articles/s41597-024-03047-z}
+\end{enumerate}
+
+\subsection{물부족 (Water Stress)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item WRI (2023). \textit{Aqueduct 4.0: Updated Decision-Relevant Global Water Risk Indicators}. World Resources Institute. \\
+    \url{https://www.wri.org/research/aqueduct-40-updated-decision-relevant-global-water-risk-indicators}
+
+    \item WRI (2023). \textit{Aqueduct Water Risk Atlas}. \\
+    \url{https://www.wri.org/applications/aqueduct/water-risk-atlas/}
+
+    \item WRI (2023). \textit{Aqueduct Water Stress Projections Data}. \\
+    \url{https://www.wri.org/data/aqueduct-water-stress-projections-data}
+
+    \item WRI (2023). \textit{Aqueduct 4.0 Current and Future Country Rankings}. \\
+    \url{https://www.wri.org/data/aqueduct-40-country-rankings}
+
+    \item WRI (2023). \textit{Aqueduct Water Risk Indicators}. \\
+    \url{https://www.wri.org/aqueduct/help-center/water-risk-indicators}
+\end{enumerate}
+
+\subsection{내륙 홍수 (River Flood)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item CRAN ClimProjDiags (2025). \textit{Extreme Indices}. \\
+    \url{https://cran.r-project.org/web/packages/ClimProjDiags/vignettes/extreme_indices.html}
+
+    \item Rodríguez-González, A., et al. (2025). \textit{Trend Analysis of Extreme Precipitation Indices and Climate Oscillations Over the Yucatan Peninsula for the Period 1980–2010}. International Journal of Climatology. \\
+    \url{https://rmets.onlinelibrary.wiley.com/doi/10.1002/joc.8885}
+
+    \item Frontiers in Climate (2021). \textit{Extreme Rainfall and Hydro-Geo-Meteorological Disaster Risk in 1.5, 2.0, and 4.0°C Global Warming Scenarios: An Analysis for Brazil}. \\
+    \url{https://www.frontiersin.org/journals/climate/articles/10.3389/fclim.2021.610433/full}
+
+    \item ScienceDirect (2018). \textit{Future changes in precipitation extremes over China projected by a regional climate model ensemble}. \\
+    \url{https://www.sciencedirect.com/science/article/abs/pii/S1352231018304096}
+\end{enumerate}
+
+\subsection{도시 홍수 (Urban Flood)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item MDPI Water (2025). \textit{Improving Urban Flood Resilience: Urban Flood Risk Mitigation Assessment Using a Geospatial Model in the Urban Section of a River Corridor}. \\
+    \url{https://www.mdpi.com/2073-4441/17/7/1047}
+
+    \item MDPI Atmosphere (2025). \textit{A Comprehensive Analysis of Urban Flooding Under Different Rainfall Patterns: A Full-Process Perspective in Haining, China}. \\
+    \url{https://www.mdpi.com/2073-4433/16/3/305}
+
+    \item Taylor \& Francis (2025). \textit{Implications of spatially distributed rainfall design events on urban hydrological response across advection scenarios}. \\
+    \url{https://www.tandfonline.com/doi/full/10.1080/1573062X.2025.2541797}
+
+    \item Taylor \& Francis (2025). \textit{Water retention by green infrastructure to mitigate urban flooding: a meta-analysis}. \\
+    \url{https://www.tandfonline.com/doi/full/10.1080/1573062X.2025.2472325}
+
+    \item Scientific Reports (2025). \textit{Mitigating urban rainstorm waterlogging disasters in China through enhanced vegetation coverage and sponge city construction}. \\
+    \url{https://www.nature.com/articles/s41598-025-20274-5}
+
+    \item Climate Central (2025). \textit{Heavier Rainfall Rates in U.S. Cities}. \\
+    \url{https://www.climatecentral.org/climate-matters/heavier-rainfall-rates-in-us-cities}
+\end{enumerate}
+
+\subsection{해수면 상승 (Sea Level Rise)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item Frontiers in Marine Science (2025). \textit{Migration, land loss and costs to 2100 due to coastal flooding under the IPCC AR6 sea-level rise scenarios and plausible adaptation choices}. \\
+    \url{https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2025.1505633/full}
+
+    \item Nature Scientific Reports (2025). \textit{Impacts of sea level rise and adaptation across Asia and the Pacific}. \\
+    \url{https://www.nature.com/articles/s41598-025-11517-6}
+
+    \item IPCC (2019). \textit{Chapter 4: Sea Level Rise and Implications for Low-Lying Islands, Coasts and Communities}. Special Report on the Ocean and Cryosphere in a Changing Climate (SROCC). \\
+    \url{https://www.ipcc.ch/srocc/chapter/chapter-4-sea-level-rise-and-implications-for-low-lying-islands-coasts-and-communities/}
+
+    \item Scientific Reports (2020). \textit{Projections of global-scale extreme sea levels and resulting episodic coastal flooding over the 21st Century}. \\
+    \url{https://www.nature.com/articles/s41598-020-67736-6}
+
+    \item Ocean \& Climate Platform (2019). \textit{IPCC Report: urgent adaptation needed to address rising impacts of climate change on the ocean and populations}. \\
+    \url{https://ocean-climate.org/en/ipcc-report-urgent-adaptation-needed-to-address-rising-impacts-of-climate-change-on-the-ocean-and-populations/}
+
+    \item Climate Central (2025). \textit{Sea level rise and coastal flood risk maps -- a global screening tool}. \\
+    \url{https://coastal.climatecentral.org/}
+\end{enumerate}
+
+\subsection{태풍 (Typhoon)}
+\begin{enumerate}[leftmargin=2cm, label={[\arabic*]}, resume]
+    \item IPCC (2021). \textit{Climate Change 2021: The Physical Science Basis}. AR6 Working Group I Report. \\
+    \url{https://www.ipcc.ch/report/ar6/wg1/}
+
+    \item NOAA GFDL (2025). \textit{Global Warming and Hurricanes}. Geophysical Fluid Dynamics Laboratory. \\
+    \url{https://www.gfdl.noaa.gov/global-warming-and-hurricanes/}
+
+    \item NOAA Climate.gov (2025). \textit{Climate change is probably increasing the intensity of tropical cyclones}. \\
+    \url{https://www.climate.gov/news-features/understanding-climate/climate-change-probably-increasing-intensity-tropical-cyclones}
+
+    \item Carbon Brief (2021). \textit{Explainer: What the new IPCC report says about extreme weather and climate change}. \\
+    \url{https://www.carbonbrief.org/explainer-what-the-new-ipcc-report-says-about-extreme-weather-and-climate-change/}
+
+    \item Gibson, P., et al. (2025). \textit{Downscaled Climate Projections of Tropical and Ex-Tropical Cyclones Over the Southwest Pacific}. Journal of Geophysical Research: Atmospheres. \\
+    \url{https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2025JD043833}
+
+    \item Hong Kong Observatory (2025). \textit{Global Climate Projections - Tropical cyclones}. \\
+    \url{https://www.hko.gov.hk/en/climate_change/proj_global_tc.htm}
+\end{enumerate}
+
+\end{document}

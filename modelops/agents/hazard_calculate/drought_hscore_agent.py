@@ -20,10 +20,10 @@ class DroughtHScoreAgent(BaseHazardHScoreAgent):
     - SPEI-12 (Standardized Precipitation Evapotranspiration Index) 기반
     - SPEI = (P - ET - μ) / σ
     - 범위: -3 to +3 (일반적), 낮을수록 가뭄 심각
-    
+
     점수 변환 (Hazard Score):
     - SPEI 값을 0~1 Hazard Score로 역변환
-    - SPEI ≤ -2.0 → Score 1.0 (Extreme)
+    - SPEI ≤ -2.0 → Score 1.0 (Extreme) - WMO 국제 표준
     - SPEI ≥ 0.0 → Score 0.0 (Normal/Wet)
     """
 
@@ -98,13 +98,13 @@ class DroughtHScoreAgent(BaseHazardHScoreAgent):
                 final_spei = max(-3.0, min(3.0, final_spei))
 
             # 3. Hazard Score 변환 (0.0 ~ 1.0)
-            # SPEI -2.5 이하일 때 1.0 (Extreme)
+            # SPEI -2.0 이하일 때 1.0 (Extreme)
             # SPEI 0.0 이상일 때 0.0 (Normal)
-            # 선형 변환: Score = -SPEI / 2.5
+            # 선형 변환: Score = -SPEI / 2.0
             if final_spei >= 0:
                 hazard_score = 0.0
             else:
-                hazard_score = min(1.0, -final_spei / 2.5)
+                hazard_score = min(1.0, -final_spei / 2.0)
 
             # 상세 결과 기록
             if 'calculation_details' not in collected_data:

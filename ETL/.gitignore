@@ -1,15 +1,31 @@
-# Data files (too large for git)
-local/data/
-api/data/
+# Logs
+logs/
+*.log
 
-# Python virtual environments
+# Environment
+.env
 .venv/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
 
-# Logs
-local/logs/
-api/logs/
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 
-# OS files
+# macOS
 .DS_Store
+
+# etl_base (레거시) 내부 가상환경, 로그
+etl_base/local/.venv/
+etl_base/local/logs/
+etl_base/api/.venv/
+etl_base/api/logs/
+
+# Data (optional - uncomment if needed)
+# etl_base/local/data/

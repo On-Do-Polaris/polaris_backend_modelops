@@ -922,8 +922,8 @@ Table api_typhoon_besttrack {
   day integer
   hour integer
   obs_datetime timestamp
-  lon double
-  lat double
+  longitude double
+  latitude double
   geom geometry [note: 'Point 4326']
   max_wind_speed double [note: 'm/s']
   central_pressure double [note: 'hPa']

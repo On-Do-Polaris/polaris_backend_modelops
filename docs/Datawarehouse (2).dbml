@@ -84,40 +84,40 @@ Table sea_level_grid {
 }
 
 // ============================================
-// 2. Climate Data - Daily (2개)
+// 2. Climate Data - Monthly Extreme Temperature (2개)
 // ============================================
 
 Table tamax_data {
-  time date [not null, note: '관측일']
-  admin_id integer [not null, ref: > location_admin.admin_id, note: '행정구역 ID']
-  ssp1 real [note: 'SSP1-2.6']
-  ssp2 real [note: 'SSP2-4.5']
-  ssp3 real [note: 'SSP3-7.0']
-  ssp5 real [note: 'SSP5-8.5']
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 최고기온 (°C)']
+  ssp2 real [note: 'SSP2-4.5 최고기온 (°C)']
+  ssp3 real [note: 'SSP3-7.0 최고기온 (°C)']
+  ssp5 real [note: 'SSP5-8.5 최고기온 (°C)']
 
-  Note: '일 최고기온 (Daily, ~7.63M rows)'
+  Note: '월 최고기온 (Monthly, 격자 레벨, 10년 단위 파티셔닝)'
 
   indexes {
-    (time, admin_id) [pk]
-    admin_id
-    time
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
   }
 }
 
 Table tamin_data {
-  time date [not null, note: '관측일']
-  admin_id integer [not null, ref: > location_admin.admin_id, note: '행정구역 ID']
-  ssp1 real [note: 'SSP1-2.6']
-  ssp2 real [note: 'SSP2-4.5']
-  ssp3 real [note: 'SSP3-7.0']
-  ssp5 real [note: 'SSP5-8.5']
+  grid_id integer [not null, ref: > location_grid.grid_id, note: '격자 ID']
+  observation_date date [not null, note: '관측 월']
+  ssp1 real [note: 'SSP1-2.6 최저기온 (°C)']
+  ssp2 real [note: 'SSP2-4.5 최저기온 (°C)']
+  ssp3 real [note: 'SSP3-7.0 최저기온 (°C)']
+  ssp5 real [note: 'SSP5-8.5 최저기온 (°C)']
 
-  Note: '일 최저기온 (Daily, ~7.63M rows)'
+  Note: '월 최저기온 (Monthly, 격자 레벨, 10년 단위 파티셔닝)'
 
   indexes {
-    (time, admin_id) [pk]
-    admin_id
-    time
+    (observation_date, grid_id) [pk]
+    grid_id
+    observation_date
   }
 }
 
@@ -924,8 +924,8 @@ Table api_typhoon_besttrack {
   day integer
   hour integer
   obs_datetime timestamp
-  lon double
-  lat double
+  longitude double
+  latitude double
   geom geometry [note: 'Point 4326']
   max_wind_speed double [note: 'm/s']
   central_pressure double [note: 'hPa']

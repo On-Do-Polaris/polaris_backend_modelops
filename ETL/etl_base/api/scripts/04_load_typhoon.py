@@ -129,7 +129,7 @@ def fetch_affected_typhoons(client: APIClient, api_key: str, logger, year: int =
     url = 'https://apis.data.go.kr/1360000/TyphoonInfoService/getTyphoonInfo'
     params = {
         'serviceKey': api_key,
-        'numOfRows': '100',
+        'numOfRows': '1000',  # API 최대 허용
         'pageNo': '1',
         'dataType': 'JSON',
         'year': str(year)

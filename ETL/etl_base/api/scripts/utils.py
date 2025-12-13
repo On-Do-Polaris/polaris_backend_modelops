@@ -21,9 +21,16 @@ from psycopg2.extensions import connection as Connection
 from psycopg2.extras import Json
 from dotenv import load_dotenv
 
-# .env 파일 로드 (etl 디렉토리에서)
-env_path = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(env_path)
+# .env 파일 로드 (여러 위치 시도)
+env_candidates = [
+    Path(__file__).parent.parent.parent.parent / "new_etl" / ".env",  # modelops/new_etl/.env
+    Path(__file__).parent.parent.parent / ".env",  # modelops/etl/.env (기존)
+    Path(__file__).parent / ".env",  # scripts/.env
+]
+for env_path in env_candidates:
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
 
 
 def setup_logging(name: str) -> logging.Logger:
@@ -190,13 +197,38 @@ def upsert_api_data(conn: Connection, table_name: str, data: Dict,
         if update_columns is None:
             update_columns = [c for c in columns if c not in unique_columns]
 
-        update_str = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
+        # update_columns가 비어있으면 (모든 컬럼이 unique인 경우) 타임스탬프만 업데이트
+        if update_columns:
+            update_str = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
+            # 테이블별 타임스탬프 컬럼 확인 (cached_at 또는 updated_at)
+            if 'cached_at' in columns:
+                update_str += ", cached_at = CURRENT_TIMESTAMP"
+            elif 'updated_at' in columns:
+                update_str += ", updated_at = CURRENT_TIMESTAMP"
+        else:
+            # 업데이트할 데이터 컬럼이 없는 경우 (모든 컬럼이 unique)
+            # 타임스탬프만 업데이트하거나 DO NOTHING
+            if 'cached_at' in columns:
+                update_str = "cached_at = CURRENT_TIMESTAMP"
+            elif 'updated_at' in columns:
+                update_str = "updated_at = CURRENT_TIMESTAMP"
+            else:
+                # 타임스탬프 컬럼도 없으면 충돌 시 아무것도 하지 않음
+                sql = f"""
+                    INSERT INTO {table_name} ({cols_str})
+                    VALUES ({placeholders})
+                    ON CONFLICT ({unique_str})
+                    DO NOTHING
+                """
+                cursor.execute(sql, values)
+                conn.commit()
+                return True
 
         sql = f"""
             INSERT INTO {table_name} ({cols_str})
             VALUES ({placeholders})
             ON CONFLICT ({unique_str})
-            DO UPDATE SET {update_str}, cached_at = CURRENT_TIMESTAMP
+            DO UPDATE SET {update_str}
         """
 
         cursor.execute(sql, values)

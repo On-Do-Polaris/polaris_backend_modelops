@@ -15,8 +15,6 @@ import logging
 import traceback
 from datetime import datetime
 
-from ..agents.risk_assessment.exposure_agent import ExposureAgent
-from ..agents.risk_assessment.vulnerability_agent import VulnerabilityAgent
 from ..agents.risk_assessment.aal_scaling_agent import AALScalingAgent
 from ..agents.risk_assessment.integrated_risk_agent import IntegratedRiskAgent
 from ..database.connection import DatabaseConnection

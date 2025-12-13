@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional
 import logging
 from datetime import datetime
 
-from ..risk_assessment.exposure_agent import ExposureAgent
-from ..risk_assessment.vulnerability_agent import VulnerabilityAgent
+from ..exposure_calculate.base_exposure_agent import BaseExposureAgent
+from ..vulnerability_calculate.base_vulnerability_agent import BaseVulnerabilityAgent
 from ...database.connection import DatabaseConnection
 from ...utils.hazard_data_collector import HazardDataCollector
 
@@ -57,8 +57,8 @@ class SiteRiskCalculator:
         )
 
         # E, V Agents
-        self.exposure_agent = ExposureAgent()
-        self.vulnerability_agent = VulnerabilityAgent()
+        self.exposure_agent = BaseExposureAgent()
+        self.vulnerability_agent = BaseVulnerabilityAgent()
 
     def calculate_site_risks(
         self,

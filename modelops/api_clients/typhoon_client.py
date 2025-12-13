@@ -82,33 +82,33 @@ class TyphoonClient:
             where_clauses.append("year = %s")
             params.append(year)
 
-        if min_intensity:
-            # 강도 순서: TD < TS < STS < TY < STY < VSTY
-            intensity_order = ['TD', 'TS', 'STS', 'TY', 'STY', 'VSTY']
-            if min_intensity in intensity_order:
-                min_idx = intensity_order.index(min_intensity)
-                valid_intensities = intensity_order[min_idx:]
-                where_clauses.append(
-                    f"intensity = ANY(ARRAY{valid_intensities}::text[])"
-                )
-
+        # min_intensity 필터링은 현재 DB 스키마에 grade 컬럼이 api_typhoon_info에 없으므로
+        # 일단 목록을 가져온 뒤 애플리케이션 레벨에서 처리하거나,
+        # 트랙 정보를 조인해야 하지만 여기서는 단순화를 위해 기본 정보만 조회합니다.
+        # 필요하다면 api_typhoon_track과 조인하여 등급을 확인해야 합니다.
+        
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
-        # 쿼리 실행
+        # 쿼리 실행 (테이블명: api_typhoon_list -> api_typhoon_info)
+        # 컬럼 매핑:
+        # name_kr -> typ_name
+        # name_en -> typ_en
+        # max_wind_speed -> max_ws
+        # max_pressure -> max_ps
+        # intensity -> 없음 (필요 시 트랙 테이블 조인 필요)
         query = f"""
             SELECT
-                typhoon_id,
-                name_kr,
-                name_en,
+                typ_seq,
+                typ_name,
+                typ_en,
                 year,
-                max_wind_speed,
-                max_pressure,
-                intensity
-            FROM api_typhoon_list
+                max_ws,
+                max_ps
+            FROM api_typhoon_info
             {where_sql}
-            ORDER BY year DESC, typhoon_id DESC
+            ORDER BY year DESC, typ_seq DESC
         """
 
         cursor.execute(query, params)
@@ -116,14 +116,21 @@ class TyphoonClient:
 
         typhoons = []
         for row in rows:
+            # 태풍 ID 생성 (YYYY-NNN 형식 또는 단순 SEQ)
+            # 여기서는 typ_seq 사용
+            typ_seq = row[0]
+            year_val = row[3]
+            typhoon_id = f"{year_val}-{typ_seq:03d}"
+
             typhoons.append({
-                'typhoon_id': row[0],
+                'typhoon_id': typhoon_id,
+                'typ_seq': typ_seq,
                 'name_kr': row[1],
                 'name_en': row[2],
-                'year': row[3],
+                'year': year_val,
                 'max_wind_speed': row[4],
                 'max_pressure': row[5],
-                'intensity': row[6]
+                'intensity': '' # api_typhoon_info에는 등급 정보가 없음
             })
 
         logger.info(
@@ -138,59 +145,66 @@ class TyphoonClient:
         태풍 경로 조회
 
         Args:
-            typhoon_id: 태풍 ID (예: '2023-01')
+            typhoon_id: 태풍 ID (YYYY-NNN 형식 또는 dict에서 추출한 ID)
+                        내부적으로는 typ_seq와 year를 분리해서 사용해야 함.
+                        단순화를 위해 typhoon_id가 'YYYY-SEQ' 형식이라고 가정하거나
+                        인자를 (year, typ_seq)로 받는 것이 좋으나 기존 시그니처 유지.
 
         Returns:
-            [
-                {
-                    'typhoon_id': str,
-                    'track_time': datetime,
-                    'latitude': float,
-                    'longitude': float,
-                    'wind_speed': float,     # m/s
-                    'pressure': float,       # hPa
-                    'radius_strong_wind': float,  # km (강풍 반경)
-                    'intensity': str
-                },
-                ...
-            ]
+            track info list
         """
+        # typhoon_id 파싱 (YYYY-NNN)
+        try:
+            year_str, seq_str = typhoon_id.split('-')
+            year = int(year_str)
+            typ_seq = int(seq_str)
+        except ValueError:
+            logger.error(f"잘못된 태풍 ID 형식: {typhoon_id} (Expected: YYYY-NNN)")
+            return []
+
         if self.conn is None or self.cursor is None:
             from ..database.connection import DatabaseConnection
             with DatabaseConnection.get_connection() as temp_conn:
                 with temp_conn.cursor() as temp_cursor:
                     return self._get_typhoon_tracks_impl(
-                        typhoon_id, temp_cursor
+                        year, typ_seq, temp_cursor
                     )
         else:
-            return self._get_typhoon_tracks_impl(typhoon_id, self.cursor)
+            return self._get_typhoon_tracks_impl(year, typ_seq, self.cursor)
 
-    def _get_typhoon_tracks_impl(self, typhoon_id: str,
+    def _get_typhoon_tracks_impl(self, year: int, typ_seq: int,
                                  cursor) -> List[Dict[str, Any]]:
         """태풍 경로 조회 구현"""
 
+        # 테이블명: api_typhoon_tracks -> api_typhoon_track
+        # 컬럼 매핑:
+        # track_time -> typ_tm (분석시각)
+        # wind_speed -> wind_speed_ms
+        # pressure -> pressure_hpa
+        # radius_strong_wind -> rad15_km (강풍반경 15m/s)
+        # intensity -> grade
         query = """
             SELECT
-                typhoon_id,
-                track_time,
+                typ_seq,
+                typ_tm,
                 latitude,
                 longitude,
-                wind_speed,
-                pressure,
-                radius_strong_wind,
-                intensity
-            FROM api_typhoon_tracks
-            WHERE typhoon_id = %s
-            ORDER BY track_time
+                wind_speed_ms,
+                pressure_hpa,
+                rad15_km,
+                grade
+            FROM api_typhoon_track
+            WHERE year = %s AND typ_seq = %s
+            ORDER BY typ_tm
         """
 
-        cursor.execute(query, (typhoon_id,))
+        cursor.execute(query, (year, typ_seq))
         rows = cursor.fetchall()
 
         tracks = []
         for row in rows:
             tracks.append({
-                'typhoon_id': row[0],
+                'typhoon_id': f"{year}-{row[0]:03d}",
                 'track_time': row[1],
                 'latitude': row[2],
                 'longitude': row[3],
@@ -201,7 +215,7 @@ class TyphoonClient:
             })
 
         logger.info(
-            f"태풍 경로 조회: {len(tracks)}개 지점 (typhoon_id={typhoon_id})"
+            f"태풍 경로 조회: {len(tracks)}개 지점 (year={year}, seq={typ_seq})"
         )
 
         return tracks

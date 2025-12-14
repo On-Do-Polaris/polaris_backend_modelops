@@ -18,6 +18,7 @@ from datetime import datetime
 from ..agents.risk_assessment.aal_scaling_agent import AALScalingAgent
 from ..agents.risk_assessment.integrated_risk_agent import IntegratedRiskAgent
 from ..database.connection import DatabaseConnection
+from ..data_loaders.building_data_fetcher import BuildingDataFetcher
 from ..api_clients import BuildingClient
 from ..utils import GridMapper
 
@@ -505,9 +506,8 @@ class OnDemandRiskBatch:
                 }
 
             # 3. 행정구역 인구 데이터 조회
-            population_data = DatabaseConnection.fetch_population_data(
-                latitude, longitude
-            )
+            fetcher = BuildingDataFetcher()
+            population_data = fetcher.get_population_data(latitude, longitude)
 
             # 4. 병합
             result = {**building_data, **population_data}

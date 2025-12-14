@@ -1,8 +1,13 @@
-"""
-Sea Level Rise Exposure Agent
-Calculates exposure to sea level rise hazards.
-"""
-from typing import Dict, Any
+'''
+파일명: sea_level_rise_exposure_agent.py
+최종 수정일: 2025-12-14
+버전: v2
+설명: 해수면 상승(Sea Level Rise) Exposure 점수 산출 Agent
+변경 이력:
+    - v1: DB에서 해수면 데이터 조회
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
+'''
+from typing import Dict, Any, Optional
 import logging
 from .base_exposure_agent import BaseExposureAgent
 
@@ -16,9 +21,14 @@ logger = logging.getLogger(__name__)
 
 class SeaLevelRiseExposureAgent(BaseExposureAgent):
     """
-    Sea Level Rise Exposure calculation agent.
+    Sea Level Rise Exposure 계산 Agent
 
-    Evaluates exposure to sea level rise based on distance to coast and elevation.
+    계산 방법론:
+    - 해안선 거리 기반 노출도 산출
+    - 거리가 가까울수록 노출도 증가
+
+    데이터 흐름:
+    - ExposureDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -30,38 +40,53 @@ class SeaLevelRiseExposureAgent(BaseExposureAgent):
         Calculate sea level rise exposure.
 
         Args:
-            building_data: Building information
-            spatial_data: Spatial information (not used for this hazard)
-            **kwargs: Additional parameters
+            building_data: Building information (from BuildingDataFetcher)
+            spatial_data: Spatial information (from SpatialDataLoader)
+            **kwargs: Additional parameters (latitude, longitude, ssp_scenario)
 
         Returns:
             Sea level rise exposure data
         """
-        if not config:
-            logger.warning("Config module not loaded. Using hardcoded defaults.")
-            dist_defaults = {'distance_to_coast_m': 50000}
-        else:
-            dist_defaults = config.DEFAULT_DISTANCE_VALUES
+        # collected_data에서 해안선 거리 추출 (data_loaders가 DB에서 수집)
+        distance_to_coast = self.get_value_with_fallback(
+            {**building_data, **spatial_data},
+            ['distance_to_coast_m', 'coast_distance_m', 'coastal_distance'],
+            50000.0
+        )
 
-        distance_to_coast = building_data.get('distance_to_coast_m', dist_defaults['distance_to_coast_m'])
+        # 해수면 상승 예측값 (collected_data에서)
+        sea_level_2050 = self.get_value_with_fallback(
+            spatial_data,
+            ['sea_level_rise_2050_cm', 'slr_2050'],
+            10.0
+        )
+        sea_level_2100 = self.get_value_with_fallback(
+            spatial_data,
+            ['sea_level_rise_2100_cm', 'slr_2100'],
+            30.0
+        )
+
+        score = self._calculate_coastal_distance_score(distance_to_coast)
 
         return {
             'distance_to_coast_m': distance_to_coast,
-            'coastal_distance_score': self._calculate_coastal_distance_score(distance_to_coast),
+            'sea_level_rise_2050_cm': sea_level_2050,
+            'sea_level_rise_2100_cm': sea_level_2100,
+            'coastal_distance_score': score,
+            'score': score,
             'exposure_level': self._classify_coastal_exposure_level(distance_to_coast),
+            'data_source': 'collected'
         }
 
     def _calculate_coastal_distance_score(self, distance_m: float) -> int:
-        """
-        Calculate sea level rise exposure score based on distance to coast.
-
-        Args:
-            distance_m: Distance to coast (meters)
-
-        Returns:
-            Exposure score
-        """
+        """Calculate sea level rise exposure score based on distance to coast."""
         if not config:
+            if distance_m < 500:
+                return 90
+            elif distance_m < 2000:
+                return 70
+            elif distance_m < 10000:
+                return 40
             return 10
 
         thresholds = config.SEA_LEVEL_RISE_EXPOSURE_SCORES
@@ -75,16 +100,14 @@ class SeaLevelRiseExposureAgent(BaseExposureAgent):
             return thresholds['low']['score']
 
     def _classify_coastal_exposure_level(self, distance_m: float) -> str:
-        """
-        Classify sea level rise exposure level.
-
-        Args:
-            distance_m: Distance to coast (meters)
-
-        Returns:
-            Exposure level (critical/high/medium/low)
-        """
+        """Classify sea level rise exposure level."""
         if not config:
+            if distance_m < 500:
+                return 'critical'
+            elif distance_m < 2000:
+                return 'high'
+            elif distance_m < 10000:
+                return 'medium'
             return 'low'
 
         thresholds = config.SEA_LEVEL_RISE_EXPOSURE_SCORES

@@ -1,7 +1,11 @@
 '''
 파일명: extreme_cold_hscore_agent.py
+최종 수정일: 2025-12-14
+버전: v2
 설명: 극한 한파(Extreme Cold) 리스크 Hazard 점수(H) 산출 Agent
-업데이트: HazardCalculator 로직 통합 (CCI 지표 기반)
+변경 이력:
+    - v1: HazardCalculator 로직 통합 (CCI 지표 기반)
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
 '''
 from typing import Dict, Any
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
@@ -15,6 +19,9 @@ class ExtremeColdHScoreAgent(BaseHazardHScoreAgent):
     - CCI (Cold Compound Index) 기반 평가
     - 근거: IPCC AR6 + TCFD 공식 지표 (ETCCDI)
     - 공식: CCI = 0.3×(TX10p/30) + 0.3×(CSIx/20) + 0.2×(FD/50) + 0.2×(절대최저/20)
+
+    데이터 흐름:
+    - HazardDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -25,7 +32,7 @@ class ExtremeColdHScoreAgent(BaseHazardHScoreAgent):
         한파 Hazard 점수 계산
 
         Args:
-            collected_data: 수집된 데이터 딕셔너리
+            collected_data: HazardDataCollector가 수집한 데이터
                 - climate_data: ClimateDataLoader를 통해 수집된 기후 데이터
 
         Returns:
@@ -39,19 +46,34 @@ class ExtremeColdHScoreAgent(BaseHazardHScoreAgent):
             return 0.35
 
         try:
-            # Step 1: ETCCDI 지표 추출
+            # Step 1: ETCCDI 지표 추출 (data_loaders가 DB에서 수집)
             # tx10p: 한파일수 (≤절대최저 10백분위수)
-            tx10p = climate_data.get('coldwave_days_per_year', 10)
-            # csix: 한파 지속일수
-            csix = climate_data.get('cold_wave_duration', 8)
+            tx10p = self.get_value_with_fallback(
+                climate_data,
+                ['coldwave_days_per_year', 'cold_days', 'fd0'],
+                10
+            )
+            # csix: 한파 지속일수 (Cold Spell Duration Index)
+            csix = self.get_value_with_fallback(
+                climate_data,
+                ['cold_wave_duration', 'csdi', 'cold_spell_days'],
+                8
+            )
             # fd: 서리일 또는 결빙일 (Ice Days)
-            fd = climate_data.get('ice_days', 5)
+            fd = self.get_value_with_fallback(
+                climate_data,
+                ['ice_days', 'id0', 'frost_days'],
+                5
+            )
             # tn_abs: 절대최저기온 (절대값 사용)
-            tn_val = climate_data.get('annual_min_temp_celsius', -15.0)
+            tn_val = self.get_value_with_fallback(
+                climate_data,
+                ['annual_min_temp_celsius', 'min_temperature', 'tnn'],
+                -15.0
+            )
             tn_abs = abs(tn_val)
 
             # Step 2: 절대값 기준 정규화 (0~1)
-            # 기준값 설정 근거: 한반도 기후 특성 고려
             tx10p_norm = min(tx10p / 30.0, 1.0)  # 연간 30일 이상이면 만점
             csix_norm = min(csix / 20.0, 1.0)    # 지속 20일 이상이면 만점
             fd_norm = min(fd / 50.0, 1.0)        # 결빙 50일 이상이면 만점
@@ -64,7 +86,7 @@ class ExtremeColdHScoreAgent(BaseHazardHScoreAgent):
             # 상세 결과 기록
             if 'calculation_details' not in collected_data:
                 collected_data['calculation_details'] = {}
-            
+
             collected_data['calculation_details']['extreme_cold'] = {
                 'cci': cci,
                 'factors': {

@@ -36,9 +36,9 @@ from utils import setup_logging, get_db_connection, get_row_count
 # ETL 스크립트 정의
 # =============================================================================
 
-# 기존 스크립트 경로
-LOCAL_SCRIPTS_DIR = Path(__file__).parent.parent / "etl" / "local" / "scripts"
-API_SCRIPTS_DIR = Path(__file__).parent.parent / "etl" / "api" / "scripts"
+# 기존 스크립트 경로 (etl_base = 레거시 ETL 디렉토리)
+LOCAL_SCRIPTS_DIR = Path(__file__).parent / "etl_base" / "local" / "scripts"
+API_SCRIPTS_DIR = Path(__file__).parent / "etl_base" / "api" / "scripts"
 
 # 테이블별 스킵 임계값 (이 수 이상이면 스킵, 0이면 항상 실행)
 SKIP_THRESHOLDS = {
@@ -80,6 +80,7 @@ API_SCRIPTS = [
     # ("06_load_buildings", "load_building_data", "건축물대장", "building_aggregate_cache"),  # 제외 -> 03번
     ("15_load_disaster_yearbook", "load_disaster_yearbook", "재해연보", "api_disaster_yearbook"),
     ("16_load_typhoon_besttrack", "load_typhoon_besttrack", "태풍 베스트트랙", "api_typhoon_besttrack"),
+    ("17_load_sgis_population", "load_sgis_population", "SGIS 인구통계", "none"),  # UPDATE이므로 스킵 체크 제외
 ]
 
 

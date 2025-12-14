@@ -290,6 +290,11 @@ def get_table_count(conn: Connection, table_name: str) -> int:
 
 # API 엔드포인트 정의
 API_ENDPOINTS = {
+    # SGIS (통계지리정보서비스 - 2025.11.20 도메인 변경)
+    'sgis_auth': 'https://sgisapi.mods.go.kr/OpenAPI3/auth/authentication.json',
+    'sgis_population': 'https://sgisapi.mods.go.kr/OpenAPI3/stats/searchpopulation.json',
+    'sgis_addr_stage': 'https://sgisapi.mods.go.kr/OpenAPI3/addr/stage.json',
+
     # 재난안전데이터공유플랫폼 (safetydata.go.kr)
     'river_info': 'https://www.safetydata.go.kr/V2/api/DSSP-IF-10720',
     'emergency_messages': 'https://www.safetydata.go.kr/V2/api/DSSP-IF-00247',
@@ -333,6 +338,10 @@ API_ENDPOINTS = {
 
 # API 키 매핑
 API_KEY_MAP = {
+    # SGIS (2개 키 필요: SERVICE_ID + SECURITY_KEY)
+    'sgis_auth': 'SGIS_SERVICE_ID',
+    'sgis_population': 'SGIS_SERVICE_ID',
+
     'river_info': 'RIVER_API_KEY',
     'emergency_messages': 'EMERGENCYMESSAGE_API_KEY',
     'dam_storage': 'PUBLICDATA_API_KEY',

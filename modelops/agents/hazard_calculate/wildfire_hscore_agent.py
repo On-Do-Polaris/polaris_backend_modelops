@@ -1,7 +1,11 @@
 '''
 파일명: wildfire_hscore_agent.py
+최종 수정일: 2025-12-14
+버전: v2
 설명: 산불(Wildfire) 리스크 Hazard 점수(H) 산출 Agent
-업데이트: HazardCalculator 로직 통합 (Canadian FWI 시스템 기반)
+변경 이력:
+    - v1: HazardCalculator 로직 통합 (Canadian FWI 시스템 기반)
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
 '''
 from typing import Dict, Any
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
@@ -15,6 +19,9 @@ class WildfireHScoreAgent(BaseHazardHScoreAgent):
     - Canadian FWI (Fire Weather Index) 시스템 기반
     - 기온, 습도, 풍속, 강수량 등을 종합하여 화재 기상 지수 산출
     - FWI 값을 0~100 스케일로 변환 후 정규화
+
+    데이터 흐름:
+    - HazardDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -25,7 +32,7 @@ class WildfireHScoreAgent(BaseHazardHScoreAgent):
         산불 Hazard 점수 계산
 
         Args:
-            collected_data: 수집된 데이터 딕셔너리
+            collected_data: HazardDataCollector가 수집한 데이터
                 - climate_data: temperature, relative_humidity, wind_speed, annual_rainfall_mm 등
                 - spatial_data: landcover_type, ndvi 등
 
@@ -36,13 +43,33 @@ class WildfireHScoreAgent(BaseHazardHScoreAgent):
         spatial_data = collected_data.get('spatial_data', {})
 
         try:
-            # 1. 데이터 추출
-            temp = climate_data.get('temperature', 25.0)
-            rh = climate_data.get('relative_humidity', 50.0)
-            wind_speed = climate_data.get('wind_speed', 3.0) # m/s
-            annual_rainfall = climate_data.get('annual_rainfall_mm', 1200.0)
-            
-            landcover_type = spatial_data.get('landcover_type', 'mixed')
+            # 1. 데이터 추출 (data_loaders가 DB에서 수집한 데이터 사용)
+            temp = self.get_value_with_fallback(
+                climate_data,
+                ['temperature', 'avg_temperature', 'ta', 'tamax'],
+                25.0
+            )
+            rh = self.get_value_with_fallback(
+                climate_data,
+                ['relative_humidity', 'humidity', 'rhm'],
+                50.0
+            )
+            wind_speed = self.get_value_with_fallback(
+                climate_data,
+                ['wind_speed', 'ws'],
+                3.0
+            )  # m/s
+            annual_rainfall = self.get_value_with_fallback(
+                climate_data,
+                ['annual_rainfall_mm', 'rn', 'total_rainfall'],
+                1200.0
+            )
+
+            landcover_type = self.get_value_with_fallback(
+                spatial_data,
+                ['landcover_type', 'land_cover_type'],
+                'mixed'
+            )
             
             # 2. Canadian FWI 계산 (간단 근사 버전)
             

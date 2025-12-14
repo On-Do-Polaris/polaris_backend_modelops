@@ -1,9 +1,13 @@
 '''
 파일명: urban_flood_probability_agent.py
-최종 수정일: 2025-11-24
-버전: v4
+최종 수정일: 2025-12-14
+버전: v5
 파일 개요: 도시 집중 홍수 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v5 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-11-24: v4 - bin 구간 세분화 (5단계)
 		* bin: [0], [1~2], [3~4], [5~7], [≥8] 호우일수 기준
 		* DR_intensity: [0.00, 0.03, 0.10, 0.25, 0.45]
@@ -133,3 +137,38 @@ class UrbanFloodProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 4  # bin5: ≥8일 (고빈도 홍수 지역)
 
 		return bin_indices
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 시계열 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_flood_timeseries() 반환값
+				- years: 연도 리스트
+				- rx1day: RX1DAY 값 리스트
+				- rx5day: RX5DAY 값 리스트
+				- rain80: RAIN80 값 리스트 (호우일수)
+				- climate_scenario: SSP 시나리오
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+		"""
+		rain80_list = timeseries_data.get('rain80', [])
+
+		return {
+			'climate_data': {
+				'rain80': rain80_list,
+			},
+			'years': timeseries_data.get('years', []),
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		# 30년치 기본 RAIN80 데이터 생성 (3~8일 범위)
+		default_rain80 = [3 + i * 0.1 for i in range(30)]
+		return {
+			'climate_data': {
+				'rain80': default_rain80,
+			},
+		}

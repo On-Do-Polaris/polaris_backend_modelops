@@ -4,10 +4,15 @@ CSV 파일에서 시도별 인구 전망 데이터를 location_admin 테이블�
 
 데이터 소스: 시도별_총인구_구성비_2020_2050.csv
 대상 테이블: location_admin (population_2020~2050, 증감률)
-예상 데이터: 17개 시도
+예상 데이터: 17개 시도 (level=1에만 저장)
 
-최종 수정일: 2025-12-03
-버전: v02
+설계:
+- population_2020~2050: 시도(level=1)에만 저장 (17건)
+- population_current: 읍면동(level=3)별 현재 인구 (SGIS API)
+- 미래 읍면동 인구는 런타임에 계산: 시도_미래 × (읍면동_현재 / 시도_현재)
+
+최종 수정일: 2025-12-14
+버전: v04 - level=1 시도에만 저장
 """
 
 import sys
@@ -83,24 +88,43 @@ def load_population() -> None:
     logger.info(f"{len(df)}개 지역 데이터 발견")
     logger.info(f"   컬럼: {list(df.columns)}")
 
-    # 인구 데이터 업데이트
+    # 인구 단위 변환 함수
+    def convert_population(val):
+        """만 단위 인구를 명 단위로 변환"""
+        if pd.isna(val) or val == 0:
+            return 0
+        if val < 10000:
+            return int(val * 10000)
+        return int(val)
+
+    # 1단계: 기존 잘못된 데이터 초기화
+    logger.info("\n1단계: 기존 인구 데이터 초기화")
+    cursor.execute("""
+        UPDATE location_admin
+        SET population_2020 = NULL,
+            population_2025 = NULL,
+            population_2030 = NULL,
+            population_2035 = NULL,
+            population_2040 = NULL,
+            population_2045 = NULL,
+            population_2050 = NULL,
+            population_change_2020_2050 = NULL,
+            population_change_rate_percent = NULL
+    """)
+    logger.info(f"   {cursor.rowcount:,}개 행 초기화 완료")
+    conn.commit()
+
+    # 2단계: 시도별 인구 데이터 업데이트 (sido_code 기반)
+    logger.info("\n2단계: 시도별 인구 데이터 업데이트")
     update_count = 0
 
     for _, row in df.iterrows():
         region = row['지역']
-        if region == '전국':
+        # 전국, 수도권, 충북권, 호남권, 영남권 제외
+        if region in ['전국', '수도권', '충북권', '호남권', '영남권']:
             continue
 
         full_name = REGION_MAP.get(region, region)
-
-        # 인구 단위 확인 (만 단위면 10000 곱함)
-        def convert_population(val):
-            """만 단위 인구를 명 단위로 변환"""
-            if pd.isna(val) or val == 0:
-                return 0
-            if val < 10000:
-                return int(val * 10000)
-            return int(val)
 
         pop_2020 = convert_population(row.get('2020년', 0))
         pop_2025 = convert_population(row.get('2025년', 0))
@@ -110,19 +134,19 @@ def load_population() -> None:
         pop_2045 = convert_population(row.get('2045년', 0))
         pop_2050 = convert_population(row.get('2050년', 0))
 
-        # 증감 계산 (CSV에 있으면 사용, 없으면 계산)
+        # 증감 계산
         pop_change = row.get('20년_대비_50년_증감', 0)
         if pop_change != 0 and abs(pop_change) < 10000:
             pop_change = int(pop_change * 10000)
         else:
             pop_change = pop_2050 - pop_2020
 
-        # 증감률 (CSV에서 직접 가져옴)
+        # 증감률
         change_rate = row.get('증감률(%)', 0)
         if pd.isna(change_rate):
             change_rate = 0
 
-        # 해당 시도에 속한 모든 행정구역 업데이트
+        # level=1 (시도)에만 업데이트
         cursor.execute("""
             UPDATE location_admin
             SET population_2020 = %s,
@@ -134,20 +158,21 @@ def load_population() -> None:
                 population_2050 = %s,
                 population_change_2020_2050 = %s,
                 population_change_rate_percent = %s
-            WHERE admin_name LIKE %s OR admin_name LIKE %s
+            WHERE admin_name = %s AND level = 1
         """, (pop_2020, pop_2025, pop_2030, pop_2035, pop_2040, pop_2045, pop_2050,
-              pop_change, change_rate, f'{full_name}%', f'%{region}%'))
+              pop_change, change_rate, full_name))
 
         rows_updated = cursor.rowcount
         if rows_updated > 0:
             update_count += rows_updated
-            logger.info(f"   {full_name}: {rows_updated:,}개 행 (2020: {pop_2020:,} → 2050: {pop_2050:,}, {change_rate:+.1f}%)")
+            logger.info(f"   {full_name}: 2020 {pop_2020:,}명 → 2050 {pop_2050:,}명 ({change_rate:+.1f}%)")
 
     conn.commit()
 
     logger.info("=" * 60)
-    logger.info("인구 데이터 로딩 완료")
-    logger.info(f"   - 업데이트: {update_count:,}개 행정구역")
+    logger.info("장래인구 데이터 로딩 완료")
+    logger.info(f"   - 업데이트: {update_count}개 시도 (level=1)")
+    logger.info("   - 저장 위치: population_2020 ~ population_2050")
     logger.info("=" * 60)
 
     cursor.close()

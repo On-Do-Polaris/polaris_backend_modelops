@@ -5,17 +5,20 @@ SKALA Physical Risk AI System - 울산 격자 + SK사업장 + 전체 기후 데�
 1. 울산 지역 격자 1000개 + SK 사업장 9개 생성
 2. VWorld 역지오코딩으로 행정구역 정보 업데이트
 3. NetCDF에서 전체 기후 데이터 추출 → 모든 기후 테이블에 적재
+4. sgg261 시군구 단위 일별 기후 데이터 적재 (TAMAX, TAMIN, TA, RN, RHM, WS, SI)
 
 대상 테이블:
   - location_grid
   - 월별: ta_data, rn_data, rhm_data, ws_data, si_data, spei12_data, tamax_data, tamin_data
   - 연간: ta_yearly_data, cdd_data, csdi_data, rain80_data, rx1day_data, rx5day_data, sdii_data, wsdi_data
+  - 일별 (sgg261): location_sgg261, ta_daily_sgg261, tamax_daily_sgg261, tamin_daily_sgg261,
+                   rn_daily_sgg261, rhm_daily_sgg261, ws_daily_sgg261, si_daily_sgg261
 
 API: VWorld 역지오코딩 (VWORLD_API_KEY)
-데이터: KMA NetCDF (SSP 시나리오별 기후 데이터)
+데이터: KMA NetCDF (SSP 시나리오별 기후 데이터), KMA sgg261 (시군구 단위 일별 데이터)
 
-최종 수정일: 2025-12-12
-버전: v04 - 전체 기후 데이터 적재
+최종 수정일: 2025-12-14
+버전: v05 - sgg261 일별 기후 데이터 적재 추가
 """
 
 import os
@@ -24,10 +27,13 @@ import time
 import gzip
 import shutil
 import tempfile
+import tarfile
+import csv
+import io
 import requests
 import numpy as np
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, Dict, List, Tuple
 
 # 현재 디렉토리 추가
@@ -86,6 +92,26 @@ YEARLY_TABLE_MAP = {
     'rx5day_data': ['rx5day', 'RX5DAY'],           # 5일 최대 강수량
     'sdii_data': ['sdii', 'SDII'],                 # 강수강도
     'wsdi_data': ['wsdi', 'WSDI'],                 # 폭염지속지수
+}
+
+# sgg261 일별 기후 데이터 테이블 매핑 (시군구 단위)
+SGG261_DAILY_TABLE_MAP = {
+    'ta_daily_sgg261': 'TA',        # 일 평균기온
+    'tamax_daily_sgg261': 'TAMAX',  # 일 최고기온
+    'tamin_daily_sgg261': 'TAMIN',  # 일 최저기온
+    'rn_daily_sgg261': 'RN',        # 일 강수량
+    'rhm_daily_sgg261': 'RHM',      # 일 상대습도
+    'ws_daily_sgg261': 'WS',        # 일 풍속
+    'si_daily_sgg261': 'SI',        # 일 일사량
+}
+
+# sgg261 필터링: 울산 + SK 사업장 시군구만 (전국 261개 중 일부만 적재)
+SGG261_FILTER_CODES = {
+    '31',      # 울산광역시 전체 (31xxx)
+    '41135',   # 경기도 성남시 분당구 (SK u-타워, 판교 캠퍼스, 수내 오피스, 판교 DC, 애커튼 테크)
+    '11110',   # 서울특별시 종로구 (서린 사옥, 애커튼 파트너스)
+    '30200',   # 대전광역시 유성구 (대덕 데이터 센터)
+    '11620',   # 서울특별시 관악구 (보라매 데이터 센터)
 }
 
 def geocode_reverse(api_key: str, lat: float, lon: float, logger) -> Optional[Dict]:
@@ -595,6 +621,203 @@ def load_climate_data_for_grids(conn, cursor, grids: List[Tuple], logger, row_li
     return results
 
 
+def load_sgg261_daily_data(conn, cursor, logger, row_limit: int = 0) -> Dict[str, int]:
+    """
+    sgg261 시군구 단위 일별 기후 데이터 적재
+
+    Args:
+        conn: DB 연결
+        cursor: DB 커서
+        logger: 로거
+        row_limit: 0이면 전체, N이면 각 테이블당 N개 row만 적재
+
+    Returns:
+        테이블별 적재 건수 딕셔너리
+    """
+    data_dir = get_data_dir()
+    sgg261_dir = data_dir / "KMA" / "extracted" / "KMA" / "downloads_kma_ssp_sgg261"
+
+    if not sgg261_dir.exists():
+        logger.warning(f"sgg261 디렉토리 없음: {sgg261_dir}")
+        return {}
+
+    ssp_dirs = sorted(sgg261_dir.glob("SSP*"))
+    if not ssp_dirs:
+        logger.warning("SSP 디렉토리 없음")
+        return {}
+
+    logger.info(f"\n[sgg261 일별 데이터] {len(ssp_dirs)}개 SSP 시나리오 발견")
+
+    results = {}
+    admin_codes_cache = {}  # 행정코드 캐시
+
+    # SSP126이 먼저 처리되도록 정렬
+    ssp_dirs = sorted(ssp_dirs, key=lambda x: 0 if 'SSP126' in x.name else 1)
+
+    for table_name, var_name in SGG261_DAILY_TABLE_MAP.items():
+        if not table_exists(conn, table_name):
+            logger.warning(f"   {table_name} 테이블 없음, 건너뜀")
+            continue
+
+        table_total = 0
+
+        for ssp_dir in ssp_dirs:
+            ssp_name = ssp_dir.name
+            daily_dir = ssp_dir / "daily"
+
+            if not daily_dir.exists():
+                continue
+
+            # 파일 찾기: SSP126_TAMAX_sgg261_daily_2021-2100.asc
+            pattern = f"{ssp_name}_{var_name}_sgg261_daily_*.asc"
+            asc_files = list(daily_dir.glob(pattern))
+
+            if not asc_files:
+                continue
+
+            asc_file = asc_files[0]
+            logger.info(f"      {table_name} ({ssp_name}): {asc_file.name}")
+
+            ssp_col = {
+                'SSP126': 'ssp1', 'SSP245': 'ssp2',
+                'SSP370': 'ssp3', 'SSP585': 'ssp5'
+            }.get(ssp_name, 'ssp1')
+
+            # 첫 SSP + 첫 테이블에서만 location_sgg261 초기화
+            if ssp_name == 'SSP126':
+                cursor.execute(f"TRUNCATE TABLE {table_name}")
+                if table_name == 'ta_daily_sgg261':  # 첫 테이블에서만 location_sgg261 초기화
+                    cursor.execute("TRUNCATE TABLE location_sgg261")
+                conn.commit()
+
+            try:
+                # tar.gz 압축 해제 후 읽기
+                with tarfile.open(asc_file, 'r:gz') as tar:
+                    members = [m for m in tar.getmembers() if m.name.endswith('.txt')]
+
+                    # SAMPLE_LIMIT 적용: row_limit > 0이면 제한된 연도만 처리
+                    if row_limit > 0:
+                        # row_limit개 일수만 처리 (약 1년 = 365일)
+                        max_years = max(1, row_limit // 365)
+                        members = members[:max_years]
+
+                    ssp_inserted = 0
+
+                    for member in members:
+                        f = tar.extractfile(member)
+                        if not f:
+                            continue
+
+                        content = f.read().decode('utf-8')
+                        reader = csv.reader(io.StringIO(content))
+                        rows = list(reader)
+
+                        if len(rows) < 4:
+                            continue
+
+                        # 헤더 파싱
+                        # Row 0: 년-월-일, admin_code1, admin_code2, ...
+                        # Row 1: 년-월-일, sido1, sido2, ...
+                        # Row 2: 년-월-일, sigungu1, sigungu2, ...
+                        # Row 3+: 날짜, 값1, 값2, ...
+
+                        admin_codes = rows[0][1:]  # 첫 컬럼 제외
+                        sido_names = rows[1][1:]
+                        sigungu_names = rows[2][1:]
+
+                        # location_sgg261에 행정구역 정보 삽입 (첫 SSP 첫 파일에서만, 울산+SK만)
+                        if ssp_name == 'SSP126' and table_name == 'ta_daily_sgg261' and not admin_codes_cache:
+                            for i, admin_code in enumerate(admin_codes):
+                                # 필터링: 울산(31xxx) 또는 SK 사업장 시군구만
+                                if not any(admin_code.startswith(code) for code in SGG261_FILTER_CODES):
+                                    continue
+
+                                if admin_code not in admin_codes_cache:
+                                    sido = sido_names[i] if i < len(sido_names) else ''
+                                    sigungu = sigungu_names[i] if i < len(sigungu_names) else ''
+
+                                    cursor.execute("""
+                                        INSERT INTO location_sgg261 (admin_code, sido_name, sigungu_name)
+                                        VALUES (%s, %s, %s)
+                                        ON CONFLICT (admin_code) DO NOTHING
+                                    """, (admin_code, sido, sigungu))
+                                    admin_codes_cache[admin_code] = True
+
+                            conn.commit()
+                            logger.info(f"      location_sgg261: {len(admin_codes)}개 행정구역 등록")
+
+                        # 데이터 행 처리 (Row 3부터)
+                        for row in rows[3:]:
+                            if row_limit > 0 and table_total + ssp_inserted >= row_limit:
+                                break
+
+                            if len(row) < 2:
+                                continue
+
+                            date_str = row[0]
+                            try:
+                                obs_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                            except ValueError:
+                                continue
+
+                            # 각 행정구역별 값 삽입 (울산 + SK 사업장 시군구만 필터링)
+                            for i, admin_code in enumerate(admin_codes):
+                                if i + 1 >= len(row):
+                                    break
+
+                                # 필터링: 울산(31xxx) 또는 SK 사업장 시군구만
+                                if not any(admin_code.startswith(code) for code in SGG261_FILTER_CODES):
+                                    continue
+
+                                try:
+                                    val = float(row[i + 1])
+                                except (ValueError, IndexError):
+                                    continue
+
+                                if ssp_name == 'SSP126':
+                                    cursor.execute(f"""
+                                        INSERT INTO {table_name} (admin_code, observation_date, {ssp_col})
+                                        VALUES (%s, %s, %s)
+                                        ON CONFLICT (observation_date, admin_code)
+                                        DO UPDATE SET {ssp_col} = EXCLUDED.{ssp_col}
+                                    """, (admin_code, obs_date, val))
+                                else:
+                                    cursor.execute(f"""
+                                        UPDATE {table_name}
+                                        SET {ssp_col} = %s
+                                        WHERE admin_code = %s AND observation_date = %s
+                                    """, (val, admin_code, obs_date))
+
+                                ssp_inserted += 1
+
+                            # row_limit 체크
+                            if row_limit > 0 and table_total + ssp_inserted >= row_limit:
+                                break
+
+                        # 파일 단위로 커밋
+                        conn.commit()
+
+                        # row_limit 체크
+                        if row_limit > 0 and table_total + ssp_inserted >= row_limit:
+                            break
+
+                    table_total += ssp_inserted
+
+            except Exception as e:
+                logger.warning(f"      {table_name} {ssp_name} 오류: {e}")
+                conn.rollback()
+
+            # row_limit 도달하면 다음 SSP 스킵
+            if row_limit > 0 and table_total >= row_limit:
+                break
+
+        if table_total > 0:
+            logger.info(f"      {table_name}: {table_total:,}건 적재 완료")
+            results[table_name] = table_total
+
+    return results
+
+
 def load_climate_geocode():
     """울산 격자 + SK 사업장 역지오코딩 + 전체 기후 데이터 적재"""
     logger = setup_logging("load_climate_geocode")
@@ -632,7 +855,6 @@ def load_climate_geocode():
         ('dong_code', 'VARCHAR(20)'),
         ('full_address', 'VARCHAR(200)'),
         ('geocoded_at', 'TIMESTAMP'),
-        ('site_name', 'VARCHAR(100)'),
     ]
 
     for col_name, col_type in geocode_columns:
@@ -669,11 +891,11 @@ def load_climate_geocode():
     ulsan_grids = cursor.fetchall()
     logger.info(f"   울산 좌표 범위 격자: {len(ulsan_grids)}개 (미완료)")
 
-    # SK 사업장 (site_name이 있고 sido가 NULL인 것)
+    # SK 사업장 (full_address가 [SK]로 시작하고 sido가 NULL인 것)
     cursor.execute("""
         SELECT grid_id, longitude, latitude
         FROM location_grid
-        WHERE site_name IS NOT NULL
+        WHERE full_address LIKE '[SK]%'
           AND sido IS NULL
         ORDER BY grid_id
     """)
@@ -754,7 +976,7 @@ def load_climate_geocode():
         SELECT grid_id, longitude, latitude
         FROM location_grid
         WHERE (latitude BETWEEN %s AND %s AND longitude BETWEEN %s AND %s)
-           OR site_name IS NOT NULL
+           OR full_address LIKE '[SK]%%'
         ORDER BY grid_id
     """, (ULSAN_BOUNDS['lat_min'], ULSAN_BOUNDS['lat_max'],
           ULSAN_BOUNDS['lon_min'], ULSAN_BOUNDS['lon_max']))
@@ -766,7 +988,14 @@ def load_climate_geocode():
     # SAMPLE_LIMIT가 있으면 각 테이블당 N개 row만 적재
     climate_results = load_climate_data_for_grids(conn, cursor, climate_grids, logger, SAMPLE_LIMIT)
 
-    # 8. 결과 요약
+    # 8. sgg261 시군구 단위 일별 데이터 로드
+    logger.info(f"\n[6단계] sgg261 일별 기후 데이터 로드")
+    if SAMPLE_LIMIT > 0:
+        logger.info(f"   ⚠️  SAMPLE_LIMIT={SAMPLE_LIMIT} → 각 테이블당 {SAMPLE_LIMIT}개 row만 적재")
+
+    sgg261_results = load_sgg261_daily_data(conn, cursor, logger, SAMPLE_LIMIT)
+
+    # 9. 결과 요약
     total_geocoded = get_row_count(conn, "location_grid")
     cursor.execute("SELECT COUNT(*) FROM location_grid WHERE sido IS NOT NULL")
     geocoded_count = cursor.fetchone()[0]
@@ -787,8 +1016,11 @@ def load_climate_geocode():
     logger.info(f"   - 전체 격자: {total_geocoded}개")
     logger.info(f"   - 역지오코딩 완료: {geocoded_count}개")
     logger.info(f"   - 울산 총계: {ulsan_total}개")
-    logger.info(f"   [기후 데이터 적재]")
+    logger.info(f"   [기후 데이터 적재 - 격자]")
     for table_name, count in climate_results.items():
+        logger.info(f"   - {table_name}: {count:,}건")
+    logger.info(f"   [기후 데이터 적재 - sgg261 일별]")
+    for table_name, count in sgg261_results.items():
         logger.info(f"   - {table_name}: {count:,}건")
     logger.info("=" * 60)
 

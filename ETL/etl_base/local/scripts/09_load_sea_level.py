@@ -50,6 +50,8 @@ def load_sea_level() -> None:
         sys.exit(1)
 
     nc_files = list(sea_level_dir.glob("*annual_mean*.nc"))
+    # ssp1 파일이 먼저 처리되도록 정렬 (INSERT → UPDATE 순서 보장)
+    nc_files = sorted(nc_files, key=lambda x: 0 if 'ssp1' in x.name else 1)
     logger.info(f"{len(nc_files)}개 NetCDF 파일 발견")
 
     if not nc_files:

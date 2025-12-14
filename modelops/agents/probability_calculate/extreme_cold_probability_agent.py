@@ -1,9 +1,13 @@
 '''
 파일명: extreme_cold_probability_agent.py
-최종 수정일: 2025-11-24
-버전: v2
+최종 수정일: 2025-12-14
+버전: v3
 파일 개요: 극심한 한파 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v3 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-11-24: v2 - 분위수 기반 동적 bin 설정으로 변경
 		* bin: Q1, Q5, Q10, Q20 분위수 기반 5단계 (하위 분위수)
 		* 기준기간 데이터로 분위수 임계값 계산
@@ -202,4 +206,45 @@ class ExtremeColdProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 4  # bin5: ≥ Q99 (극한 한파)
 
 		return bin_indices
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 시계열 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_extreme_cold_timeseries() 반환값
+				- years: 연도 리스트
+				- csdi: CSDI 값 리스트
+				- tnn: 최저기온 리스트
+				- climate_scenario: SSP 시나리오
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+		"""
+		csdi_list = timeseries_data.get('csdi', [])
+		tnn_list = timeseries_data.get('tnn', [])
+
+		# 기준기간 데이터 (첫 30년을 baseline으로 사용)
+		baseline_csdi = csdi_list[:30] if len(csdi_list) >= 30 else csdi_list
+
+		return {
+			'climate_data': {
+				'csdi': csdi_list,
+				'tnn': tnn_list,
+			},
+			'baseline_csdi': baseline_csdi,
+			'years': timeseries_data.get('years', []),
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		# 30년치 기본 CSDI 데이터 생성
+		default_csdi = [8 - i * 0.2 for i in range(30)]  # 한파는 감소 추세
+		return {
+			'climate_data': {
+				'csdi': default_csdi,
+			},
+			'baseline_csdi': default_csdi,
+		}
 

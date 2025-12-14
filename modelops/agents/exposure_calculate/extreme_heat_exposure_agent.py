@@ -1,7 +1,12 @@
-"""
-Extreme Heat Exposure Agent
-Calculates exposure to extreme heat hazards.
-"""
+'''
+파일명: extreme_heat_exposure_agent.py
+최종 수정일: 2025-12-14
+버전: v2
+설명: 극심한 고온(Extreme Heat) Exposure 점수 산출 Agent
+변경 이력:
+    - v1: DB에서 토지피복 데이터 조회
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
+'''
 from typing import Dict, Any
 import logging
 from .base_exposure_agent import BaseExposureAgent
@@ -16,10 +21,14 @@ logger = logging.getLogger(__name__)
 
 class ExtremeHeatExposureAgent(BaseExposureAgent):
     """
-    Extreme Heat Exposure calculation agent.
+    Extreme Heat Exposure 계산 Agent
 
-    Evaluates exposure to extreme heat based on urban heat island effect,
-    green space proximity, building orientation, and land use.
+    계산 방법론:
+    - 도시열섬 효과, 녹지 근접성, 토지이용 기반
+    - 불투수면 비율 + 식생 비율 기반
+
+    데이터 흐름:
+    - ExposureDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -31,32 +40,83 @@ class ExtremeHeatExposureAgent(BaseExposureAgent):
         Calculate extreme heat exposure.
 
         Args:
-            building_data: Building information
-            spatial_data: Spatial information
+            building_data: Building information (from BuildingDataFetcher)
+            spatial_data: Spatial information (from SpatialDataLoader)
             **kwargs: Additional parameters (latitude, longitude)
 
         Returns:
             Extreme heat exposure data
         """
-        latitude = kwargs.get('latitude', 0.0)
-        longitude = kwargs.get('longitude', 0.0)
+        latitude = kwargs.get('latitude', 37.5)
 
-        uhi_risk = self._classify_uhi_risk(spatial_data)
+        # collected_data에서 토지피복 데이터 추출 (data_loaders가 DB에서 수집)
+        landcover_data = self._get_landcover_data(spatial_data)
+
+        uhi_risk = self._classify_uhi_risk(landcover_data)
+        uhi_intensity = self._calculate_uhi_intensity_from_landcover(landcover_data)
+        green_space_nearby = landcover_data.get('vegetation_ratio', 0.2) > 0.3
 
         return {
-            'urban_heat_island': self._estimate_uhi_intensity(building_data),
-            'green_space_nearby': self._estimate_green_space_proximity(spatial_data),
-            'building_orientation': self._estimate_building_orientation(latitude, longitude),
+            'urban_heat_island': uhi_intensity,
+            'green_space_nearby': green_space_nearby,
+            'building_orientation': self._estimate_building_orientation(latitude),
             'uhi_risk': uhi_risk,
-            'score': self._calculate_heat_exposure_score(spatial_data),
+            'score': self._calculate_heat_exposure_score(landcover_data),
+            'landcover_type': landcover_data.get('landcover_type'),
+            'landcover_code': landcover_data.get('landcover_code'),
+            'imperviousness_ratio': landcover_data.get('imperviousness_ratio'),
+            'vegetation_ratio': landcover_data.get('vegetation_ratio'),
+            'data_source': 'collected'
         }
 
-    def _estimate_uhi_intensity(self, data: Dict) -> str:
-        """Estimate urban heat island intensity."""
-        building_type = data.get('building_type', 'residential')
-        if 'commercial' in building_type or 'office' in building_type:
+    def _get_landcover_data(self, spatial_data: Dict[str, Any]) -> Dict[str, Any]:
+        """토지피복 데이터 추출 (collected_data에서)"""
+        landcover_type = self.get_value_with_fallback(
+            spatial_data,
+            ['landcover_type', 'land_cover_type', 'land_use'],
+            'urban'
+        )
+        imperviousness_ratio = self.get_value_with_fallback(
+            spatial_data,
+            ['imperviousness_ratio', 'impervious_ratio'],
+            0.6
+        )
+        vegetation_ratio = self.get_value_with_fallback(
+            spatial_data,
+            ['vegetation_ratio', 'vegetation'],
+            0.2
+        )
+
+        return {
+            'landcover_type': landcover_type,
+            'landcover_code': spatial_data.get('landcover_code'),
+            'imperviousness_ratio': imperviousness_ratio,
+            'vegetation_ratio': vegetation_ratio
+        }
+
+    def _calculate_uhi_intensity_from_landcover(self, landcover_data: Dict) -> str:
+        """
+        DB 토지피복 데이터 기반 도시열섬 강도 계산
+
+        Args:
+            landcover_data: 토지피복 데이터 (from DB)
+
+        Returns:
+            UHI intensity (high/medium/low)
+        """
+        landcover_type = landcover_data.get('landcover_type', 'urban')
+        imperviousness = landcover_data.get('imperviousness_ratio', 0.6)
+        vegetation = landcover_data.get('vegetation_ratio', 0.2)
+
+        # 불투수면 비율 기반 판단 (DB 데이터)
+        if imperviousness >= 0.8:
             return 'high'
-        elif 'residential' in building_type:
+        elif imperviousness >= 0.5:
+            # 식생 비율로 보정
+            if vegetation < 0.2:
+                return 'high'
+            return 'medium'
+        elif imperviousness >= 0.3:
             return 'medium'
         else:
             return 'low'
@@ -67,7 +127,7 @@ class ExtremeHeatExposureAgent(BaseExposureAgent):
         vegetation_ratio = landcover_data.get('vegetation_ratio', 0.0)
         return vegetation_ratio > 0.3 or land_use in ['agricultural', 'grassland', 'forest']
 
-    def _estimate_building_orientation(self, lat: float, lon: float) -> str:
+    def _estimate_building_orientation(self, lat: float) -> str:
         """Estimate building orientation based on latitude."""
         if lat > 37.5:
             return 'north'
@@ -79,9 +139,9 @@ class ExtremeHeatExposureAgent(BaseExposureAgent):
     def _classify_uhi_risk(self, landcover_data: Dict) -> str:
         """Classify urban heat island risk."""
         land_use = landcover_data.get('landcover_type', 'urban')
-        if land_use in ['commercial', 'industrial']:
+        if land_use in ['commercial', 'industrial', 'urban']:
             return 'high'
-        elif land_use == 'residential':
+        elif land_use in ['residential', 'mixed-use']:
             return 'medium'
         else:
             return 'low'
@@ -93,7 +153,12 @@ class ExtremeHeatExposureAgent(BaseExposureAgent):
         Reference: High=70, Medium=50, Low=30
         """
         if not config:
-            return 50
+            uhi_risk = self._classify_uhi_risk(landcover_data)
+            if uhi_risk == 'high':
+                return 70
+            elif uhi_risk == 'medium':
+                return 50
+            return 30
 
         uhi_risk = self._classify_uhi_risk(landcover_data)
         scores = config.EXTREME_HEAT_EXPOSURE_SCORES

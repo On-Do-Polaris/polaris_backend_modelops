@@ -1,0 +1,68 @@
+================================================================================
+                    전체 에이전트 시스템 데이터 흐름
+================================================================================
+
+1. Agent 종류별 데이터 흐름
+--------------------------------------------------------------------------------
+
+[Probability Agent] - ClimateDataLoader 직접 사용
+┌──────────┐    ┌───────────────────┐    ┌──────────────────────┐    ┌──────────┐
+│  DB/API  │ -> │  ClimateDataLoader│ -> │  Probability Agent   │ -> │   결과   │
+└──────────┘    └───────────────────┘    └──────────────────────┘    └──────────┘
+                                         (내부 _build_collected_data)
+
+[Hazard Score Agent] - HazardDataCollector 사용
+┌──────────┐    ┌──────────┐    ┌───────────────────┐    ┌──────────┐    ┌──────────┐
+│  DB/API  │ -> │  Loader  │ -> │ HazardDataCollector│ -> │ HScore   │ -> │   결과   │
+└──────────┘    └──────────┘    └───────────────────┘    │  Agent   │    └──────────┘
+                                                         └──────────┘
+
+[Exposure Agent] - collected_data 직접 전달
+┌──────────┐    ┌──────────┐    ┌──────────────────────┐    ┌──────────┐
+│  DB/API  │ -> │  Loader  │ -> │   Exposure Agent     │ -> │   결과   │
+└──────────┘    └──────────┘    └──────────────────────┘    └──────────┘
+                                (외부에서 collected_data 전달)
+
+
+2. 계층별 역할
+--------------------------------------------------------------------------------
+
+[1] 원천 데이터 (DB/API)
+    - PostgreSQL: kma_ssp_sgg261, sea_level_grid, api_typhoon_*, api_wamis_*
+
+[2] DataLoader (조회 담당)
+    - ClimateDataLoader: 기후 데이터 조회
+    - SpatialDataLoader: 공간 데이터 조회
+    - BuildingDataFetcher: 건물 데이터 조회
+    - 위치: modelops/data_loaders/
+
+[3] Collector (통합 담당) - 선택적 사용
+    - HazardDataCollector: Hazard Score Agent용
+    - 위치: modelops/utils/hazard_data_collector.py
+
+[4] Agent (계산 담당)
+    - Probability Agent: 확률 P(H) 계산
+    - Hazard Score Agent: 위험도 점수 계산
+    - Exposure Agent: 노출도 E 계산
+    - Vulnerability Agent: 취약성 V 계산
+    - 위치: modelops/agents/
+
+
+3. 데이터 흐름 예시 (폭염 Probability)
+--------------------------------------------------------------------------------
+
+[DB: kma_ssp_sgg261]
+     │ SQL Query
+     ▼
+[ClimateDataLoader.get_extreme_heat_timeseries()]
+     │ {'years': [...], 'wsdi': [...], 'txx': [...]}
+     ▼
+[Agent._build_collected_data()]
+     │ {'climate_data': {'wsdi': [...], 'txx': [...]}}
+     ▼
+[Agent.calculate_probability()]
+     │ KDE → bin 분류 → 확률 계산
+     ▼
+{'aal': 0.012, 'probabilities': [...]}
+
+================================================================================

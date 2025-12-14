@@ -1,9 +1,13 @@
 '''
 파일명: typhoon_probability_agent.py
-최종 수정일: 2025-11-23
-버전: v2.0
+최종 수정일: 2025-12-14
+버전: v3.0
 파일 개요: 열대성 태풍 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v3.0 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-11-23: v2.0 - SSP 시나리오 기반 미래 태풍 강도 추정 추가
 		* Hybrid Approach: 과거 통계 + 기온 스케일링 + 확률적 시뮬레이션
 		* IPCC AR6 기반 스케일링: 1°C당 4% 강도 증가
@@ -558,3 +562,48 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 3  # bin4: 매우 강한 노출
 
 		return bin_indices
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_typhoon_data() 반환값
+				- typhoon_frequency: 태풍 빈도
+				- max_wind_speed_ms: 최대 풍속
+				- distance_to_coast_m: 해안선 거리
+				- data_source: 데이터 소스
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+
+		Note:
+			태풍 확률 계산은 복잡한 Best Track 데이터가 필요합니다.
+			ClimateDataLoader의 단순 조회로는 충분하지 않아
+			기본값으로 처리됩니다.
+		"""
+		# 태풍 데이터는 빈도 정보만 사용
+		typhoon_frequency = timeseries_data.get('typhoon_frequency', 0)
+		max_wind = timeseries_data.get('max_wind_speed_ms', 30.0)
+
+		# 간단한 빈도 기반 S_tc 추정 (연간)
+		# 태풍 빈도 * 평균 가중치로 대략적인 노출 지수 계산
+		estimated_s_tc = typhoon_frequency * 2.0  # 평균 가중치 2 가정
+
+		return {
+			'typhoon_data': {
+				'estimated_s_tc': estimated_s_tc,
+				'typhoon_frequency': typhoon_frequency,
+				'max_wind_speed_ms': max_wind,
+			}
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		return {
+			'typhoon_data': {
+				'estimated_s_tc': 0.0,
+				'typhoon_frequency': 0,
+				'max_wind_speed_ms': 30.0,
+			}
+		}

@@ -2,13 +2,13 @@
 SKALA Physical Risk AI System - 기후 그리드 데이터 적재
 NetCDF 파일에서 월별/연간 기후 데이터를 로드
 
-데이터 소스: KMA/extracted/KMA/downloads_kma_ssp_gridraw/*/monthly/*.nc
-            KMA/extracted/KMA/downloads_kma_ssp_gridraw/*/yearly/*.nc
+데이터 소스: KMA/extracted/KMA_REAL/KMA*/downloads_kma_ssp_gridraw/SSP*/monthly/*.nc
+            KMA/extracted/KMA_REAL/KMA*/downloads_kma_ssp_gridraw/SSP*/yearly/*.nc
 대상 테이블: location_grid, ta_data, rn_data, ta_yearly_data 등
 예상 데이터: 약 1,000,000개 레코드
 
-최종 수정일: 2025-12-03
-버전: v01
+최종 수정일: 2025-12-13
+버전: v02 - KMA_REAL 디렉토리 구조 반영
 """
 
 import sys
@@ -69,16 +69,24 @@ def load_climate_grid() -> None:
 
     # 데이터 디렉토리
     data_dir = get_data_dir()
-    kma_dir = data_dir / "KMA" / "extracted" / "KMA" / "downloads_kma_ssp_gridraw"
+    kma_base_dir = data_dir / "KMA" / "extracted" / "KMA_REAL"
 
-    if not kma_dir.exists():
-        logger.error(f"KMA 디렉토리를 찾을 수 없습니다: {kma_dir}")
+    if not kma_base_dir.exists():
+        logger.error(f"KMA 디렉토리를 찾을 수 없습니다: {kma_base_dir}")
         conn.close()
         sys.exit(1)
 
-    # SSP 시나리오 디렉토리 찾기
-    ssp_dirs = list(kma_dir.glob("SSP*"))
-    logger.info(f"{len(ssp_dirs)}개 SSP 시나리오 발견")
+    # SSP 시나리오 디렉토리 찾기 (KMA_REAL/KMA X/downloads_kma_ssp_gridraw/SSP* 구조)
+    # 같은 SSP의 파일들이 여러 KMA 폴더에 분산되어 있으므로 모두 수집
+    from collections import defaultdict
+    ssp_dirs_map = defaultdict(list)  # SSP 이름 -> [폴더 리스트]
+    for kma_subdir in kma_base_dir.glob("KMA*"):
+        gridraw_dir = kma_subdir / "downloads_kma_ssp_gridraw"
+        if gridraw_dir.exists():
+            for ssp_dir in gridraw_dir.glob("SSP*"):
+                ssp_dirs_map[ssp_dir.name].append(ssp_dir)
+
+    logger.info(f"{len(ssp_dirs_map)}개 SSP 시나리오 발견")
 
     # 1. location_grid 테이블 생성/초기화
     logger.info("\nlocation_grid 테이블 초기화")
@@ -86,9 +94,9 @@ def load_climate_grid() -> None:
     conn.commit()
 
     # 첫 번째 NetCDF에서 그리드 좌표 추출
-    sample_files = list(kma_dir.glob("**/monthly/*_ta_*.nc"))
+    sample_files = list(kma_base_dir.glob("**/monthly/*_TA_*.nc")) + list(kma_base_dir.glob("**/monthly/*_ta_*.nc"))
     if not sample_files:
-        sample_files = list(kma_dir.glob("**/*.nc"))
+        sample_files = list(kma_base_dir.glob("**/*.nc"))
 
     if not sample_files:
         logger.error("NetCDF 파일을 찾을 수 없습니다")
@@ -161,25 +169,23 @@ def load_climate_grid() -> None:
         'ws_data': ['ws', 'WS'],       # 풍속
     }
 
-    for ssp_dir in ssp_dirs:
-        ssp_name = ssp_dir.name  # SSP126, SSP245 등
-        monthly_dir = ssp_dir / "monthly"
-
-        if not monthly_dir.exists():
-            continue
-
-        logger.info(f"\n   {ssp_name} 처리 중...")
+    for ssp_name, ssp_dir_list in ssp_dirs_map.items():
+        logger.info(f"\n   {ssp_name} 처리 중... ({len(ssp_dir_list)}개 폴더)")
 
         for table_name, var_names in table_var_map.items():
             if not table_exists(conn, table_name):
                 logger.warning(f"   {table_name} 테이블 없음, 건너뜀")
                 continue
 
-            # 해당 변수 파일 찾기
+            # 해당 변수 파일 찾기 (모든 SSP 폴더에서 검색)
             nc_files = []
-            for var in var_names:
-                nc_files.extend(list(monthly_dir.glob(f"*_{var}_*.nc")))
-                nc_files.extend(list(monthly_dir.glob(f"*_{var.lower()}_*.nc")))
+            for ssp_dir in ssp_dir_list:
+                monthly_dir = ssp_dir / "monthly"
+                if not monthly_dir.exists():
+                    continue
+                for var in var_names:
+                    nc_files.extend(list(monthly_dir.glob(f"*_{var}_*.nc")))
+                    nc_files.extend(list(monthly_dir.glob(f"*_{var.upper()}_*.nc")))
 
             if not nc_files:
                 continue
@@ -262,16 +268,18 @@ def load_climate_grid() -> None:
     # 3. 연간 데이터 로드
     logger.info("\n연간 기후 데이터 로딩")
 
-    for ssp_dir in ssp_dirs:
-        ssp_name = ssp_dir.name
-        yearly_dir = ssp_dir / "yearly"
-
-        if not yearly_dir.exists():
-            continue
-
+    for ssp_name, ssp_dir_list in ssp_dirs_map.items():
         # ta_yearly_data
         if table_exists(conn, "ta_yearly_data"):
-            nc_files = list(yearly_dir.glob("*aii*.nc")) + list(yearly_dir.glob("*ta*.nc"))
+            # 모든 SSP 폴더에서 파일 찾기
+            nc_files = []
+            for ssp_dir in ssp_dir_list:
+                yearly_dir = ssp_dir / "yearly"
+                if yearly_dir.exists():
+                    nc_files.extend(list(yearly_dir.glob("*aii*.nc")))
+                    nc_files.extend(list(yearly_dir.glob("*AII*.nc")))
+                    nc_files.extend(list(yearly_dir.glob("*_ta_*.nc")))
+                    nc_files.extend(list(yearly_dir.glob("*_TA_*.nc")))
 
             if nc_files:
                 nc_file = decompress_if_gzip(nc_files[0])

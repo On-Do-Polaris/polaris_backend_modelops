@@ -1,9 +1,18 @@
 '''
 파일명: base_probability_agent.py
-최종 수정일: 2025-12-11
-버전: v1.2
+최종 수정일: 2025-12-14
+버전: v1.4
 파일 개요: 위험 발생확률 P(H) 계산 Base Agent
 변경 이력:
+	- 2025-12-14: v1.4 - Hazard/Exposure 패턴 적용
+		* calculate(lat, lon, ssp_scenario) 메서드 추가
+		* ClimateDataLoader 기반 데이터 fetch
+		* _build_collected_data() 메서드 추가
+		* 기존 DatabaseConnection 메서드 제거
+	- 2025-12-13: v1.3 - DB 연동 기능 추가
+		* DatabaseConnection import 추가
+		* _db_available 플래그 추가
+		* DB fetch 메서드 추가 (기후지표, 수자원, 해양, 태풍 데이터)
 	- 2025-12-11: v1.2 - KDE 방식 개선 및 메타데이터 추가
 		* threshold 3 → 30으로 상향 조정
 		* _probability_method 플래그 추가 (사용한 계산 방식 추적)
@@ -19,13 +28,24 @@
 		* 취약성 스케일링 제거 (F_vuln 관련 로직 삭제)
 		* 최종 손상률 및 AAL 계산 제거
 '''
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from abc import ABC, abstractmethod
 import logging
 import numpy as np
 from scipy.stats import gaussian_kde
 from scipy.integrate import quad
 
+try:
+    from modelops.data_loaders.climate_data_loader import ClimateDataLoader
+    CLIMATE_LOADER_AVAILABLE = True
+except ImportError:
+    try:
+        # 상대 경로 fallback
+        from ...data_loaders.climate_data_loader import ClimateDataLoader
+        CLIMATE_LOADER_AVAILABLE = True
+    except ImportError:
+        ClimateDataLoader = None
+        CLIMATE_LOADER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +88,140 @@ class BaseProbabilityAgent(ABC):
 		self.time_unit = time_unit
 		self.logger = logger
 		self._probability_method = None  # 'kde' 또는 'count'
-		self.logger.info(f"{risk_type} 확률 계산 Agent 초기화 (v1.2, {time_unit})")
+		self._climate_loader_available = CLIMATE_LOADER_AVAILABLE
+		self.logger.info(f"{risk_type} 확률 계산 Agent 초기화 (v1.4, {time_unit})")
+
+	# ========== Main Entry Point (Hazard/Exposure 패턴) ==========
+	def calculate(
+		self,
+		lat: float,
+		lon: float,
+		ssp_scenario: str = 'SSP245',
+		start_year: int = 2021,
+		end_year: int = 2050
+	) -> Dict[str, Any]:
+		"""
+		위험 발생확률 P(H) 계산 (DB 연동 버전)
+
+		Hazard/Exposure Agent와 동일한 인터페이스:
+		1. ClimateDataLoader로 시계열 데이터 fetch
+		2. _build_collected_data()로 collected_data 구성
+		3. calculate_probability(collected_data) 호출
+
+		Args:
+			lat: 위도
+			lon: 경도
+			ssp_scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
+			start_year: 시작 연도
+			end_year: 종료 연도
+
+		Returns:
+			확률 계산 결과 딕셔너리
+		"""
+		self.logger.info(
+			f"{self.risk_type} 확률 계산 시작 "
+			f"(lat={lat}, lon={lon}, ssp={ssp_scenario})"
+		)
+
+		try:
+			# 1. ClimateDataLoader로 시계열 데이터 fetch
+			if not self._climate_loader_available:
+				self.logger.warning("ClimateDataLoader가 없습니다. 기본값으로 계산합니다.")
+				collected_data = self._get_fallback_data()
+			else:
+				climate_loader = ClimateDataLoader(scenario=ssp_scenario)
+				timeseries_data = self._fetch_timeseries_data(
+					climate_loader, lat, lon, start_year, end_year
+				)
+				# 2. 자식 클래스에서 구현한 _build_collected_data() 호출
+				collected_data = self._build_collected_data(timeseries_data)
+
+			# 3. 기존 calculate_probability() 호출
+			return self.calculate_probability(collected_data)
+
+		except Exception as e:
+			self.logger.error(f"{self.risk_type} 확률 계산 실패: {e}", exc_info=True)
+			return {
+				'risk_type': self.risk_type,
+				'status': 'failed',
+				'error': str(e)
+			}
+
+	def _fetch_timeseries_data(
+		self,
+		climate_loader: 'ClimateDataLoader',
+		lat: float,
+		lon: float,
+		start_year: int,
+		end_year: int
+	) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader를 사용해 시계열 데이터 fetch
+		자식 클래스에서 필요시 오버라이드
+
+		Args:
+			climate_loader: ClimateDataLoader 인스턴스
+			lat: 위도
+			lon: 경도
+			start_year: 시작 연도
+			end_year: 종료 연도
+
+		Returns:
+			시계열 데이터 딕셔너리
+		"""
+		# 기본 구현: risk_type에 따라 적절한 timeseries 메서드 호출
+		timeseries_methods = {
+			'extreme_heat': 'get_extreme_heat_timeseries',
+			'extreme_cold': 'get_extreme_cold_timeseries',
+			'drought': 'get_drought_timeseries',
+			'flood': 'get_flood_timeseries',
+			'river_flood': 'get_flood_timeseries',  # 내륙 홍수
+			'urban_flood': 'get_flood_timeseries',  # 도시 홍수
+			'wildfire': 'get_wildfire_timeseries',
+			'sea_level_rise': 'get_sea_level_rise_timeseries',
+			'typhoon': 'get_typhoon_data',  # 시계열 아님, 단일 조회
+			'water_stress': 'get_water_stress_data',  # 시계열 아님
+			'landslide': 'get_flood_timeseries',  # 강수 기반
+		}
+
+		method_name = timeseries_methods.get(self.risk_type)
+		if method_name and hasattr(climate_loader, method_name):
+			method = getattr(climate_loader, method_name)
+			# 시계열 메서드인 경우
+			if 'timeseries' in method_name:
+				return method(lat, lon, start_year, end_year)
+			else:
+				# 단일 조회 메서드인 경우 (typhoon, water_stress)
+				return method(lat, lon)
+
+		self.logger.warning(
+			f"{self.risk_type}에 대한 시계열 메서드가 없습니다. 기본값 반환"
+		)
+		return {}
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		시계열 데이터를 collected_data 형식으로 변환
+		자식 클래스에서 구현 필요
+
+		Args:
+			timeseries_data: ClimateDataLoader에서 가져온 시계열 데이터
+
+		Returns:
+			calculate_probability()에 전달할 collected_data 형식
+		"""
+		# 기본 구현: climate_data 키로 래핑
+		return {'climate_data': timeseries_data}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader가 없을 때 사용할 기본 데이터
+		자식 클래스에서 오버라이드 가능
+
+		Returns:
+			기본 collected_data
+		"""
+		return {'climate_data': {}}
 
 	def calculate_probability(
 		self,

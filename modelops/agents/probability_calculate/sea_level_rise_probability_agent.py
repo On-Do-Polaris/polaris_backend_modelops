@@ -1,9 +1,13 @@
 '''
 파일명: sea_level_rise_probability_agent.py
-최종 수정일: 2025-12-11
-버전: v3
+최종 수정일: 2025-12-14
+버전: v4
 파일 개요: 해수면 상승 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v4 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-12-11: v3 - DEM 데이터를 collected_data에서 받도록 수정
 		* _load_dem_min_elevation 메서드 제거
 		* collected_data['ocean_data']['dem_data']에서 DEM 데이터 직접 사용
@@ -175,3 +179,58 @@ class SeaLevelRiseProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 3  # bin4: >= 1.0m
 
 		return bin_indices
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 시계열 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_sea_level_rise_timeseries() 반환값
+				- years: 연도 리스트
+				- slr: 해수면 상승 값 리스트 (cm)
+				- climate_scenario: SSP 시나리오
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+		"""
+		years = timeseries_data.get('years', [])
+		slr_list = timeseries_data.get('slr', [])
+
+		# ZOS 데이터 형식으로 변환
+		# slr_cm → meters로 변환
+		zos_data = []
+		for i, year in enumerate(years):
+			slr_cm = slr_list[i] if i < len(slr_list) else 20.0
+			slr_m = slr_cm / 100.0  # cm → m
+			zos_data.append({
+				'year': year,
+				'zos_values': [slr_m]  # 단일 값으로 처리
+			})
+
+		return {
+			'ocean_data': {
+				'zos_data': zos_data,
+				'dem_data': [],  # DEM 데이터는 별도 로드 필요
+			},
+			'years': years,
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		# 30년치 기본 해수면 상승 데이터
+		years = list(range(2021, 2051))
+		zos_data = []
+		for i, year in enumerate(years):
+			slr_m = 0.1 + i * 0.005  # 기본값: 10cm ~ 25cm
+			zos_data.append({
+				'year': year,
+				'zos_values': [slr_m]
+			})
+
+		return {
+			'ocean_data': {
+				'zos_data': zos_data,
+				'dem_data': [],
+			},
+		}

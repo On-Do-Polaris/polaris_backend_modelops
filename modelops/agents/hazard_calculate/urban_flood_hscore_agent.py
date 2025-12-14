@@ -1,7 +1,11 @@
 '''
 파일명: urban_flood_hscore_agent.py
+최종 수정일: 2025-12-14
+버전: v2
 설명: 도시 홍수(Urban Flood) 리스크 Hazard 점수(H) 산출 Agent
-업데이트: HazardCalculator 로직 통합 (배수능력 + 강수초과량)
+변경 이력:
+    - v1: HazardCalculator 로직 통합 (배수능력 + 강수초과량)
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
 '''
 from typing import Dict, Any
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
@@ -15,6 +19,9 @@ class UrbanFloodHScoreAgent(BaseHazardHScoreAgent):
     - 토지피복도 + 건물밀도 + 강수량 기반
     - Hazard Score = 0.5 × 배수능력_점수 + 0.5 × 강수_초과량_점수
     - 근거: 도시수문학 표준 (투수율 기반), 건물밀도-배수망 연관성
+
+    데이터 흐름:
+    - HazardDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -25,10 +32,10 @@ class UrbanFloodHScoreAgent(BaseHazardHScoreAgent):
         도시 홍수 Hazard 점수 계산
 
         Args:
-            collected_data: 수집된 데이터 딕셔너리
+            collected_data: HazardDataCollector가 수집한 데이터
                 - spatial_data: landcover_type, impervious_ratio
                 - climate_data: max_1day_rainfall_mm
-                - building_data: building_count (선택적)
+                - building_data: building_count
 
         Returns:
             Hazard 점수 (0.0 ~ 1.0)
@@ -39,8 +46,16 @@ class UrbanFloodHScoreAgent(BaseHazardHScoreAgent):
 
         try:
             # 1. 토지피복도 기반 배수능력 추정
-            impervious_ratio = spatial_data.get('impervious_ratio', 0.7)
-            landcover_type = spatial_data.get('landcover_type', 'urban')
+            impervious_ratio = self.get_value_with_fallback(
+                spatial_data,
+                ['impervious_ratio', 'imperviousness_ratio'],
+                0.7
+            )
+            landcover_type = self.get_value_with_fallback(
+                spatial_data,
+                ['landcover_type', 'land_cover_type'],
+                'urban'
+            )
 
             # 토지피복도 기반 배수능력 (mm/hr)
             if landcover_type == 'water':
@@ -60,7 +75,8 @@ class UrbanFloodHScoreAgent(BaseHazardHScoreAgent):
             # 건물 밀도가 높을수록 배수관거가 잘 발달되어 있을 가능성 높음
             # building_data에 building_count가 없다면 기본값 사용
             building_count = building_data.get('building_count', 100)
-            area_km2 = building_data.get('area_km2', 1.0) # 기본 1km^2
+            # area_km2: 격자 기반 분석이므로 1km² 고정값 사용
+            area_km2 = 1.0
             
             building_density = building_count / max(area_km2, 0.1)
 
@@ -76,7 +92,11 @@ class UrbanFloodHScoreAgent(BaseHazardHScoreAgent):
             effective_drainage = drainage_capacity * drainage_correction
 
             # 3. 강수량 기반 침수 위험
-            extreme_rainfall_1day = climate_data.get('max_1day_rainfall_mm', 100.0)
+            extreme_rainfall_1day = self.get_value_with_fallback(
+                climate_data,
+                ['max_1day_rainfall_mm', 'rx1day', 'extreme_rain_95p'],
+                100.0
+            )
             # 1시간 강수량 추정 (1일 강수량 / 12)
             extreme_rainfall_1hr = extreme_rainfall_1day / 12.0
 

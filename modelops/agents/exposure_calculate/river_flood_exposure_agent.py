@@ -33,30 +33,47 @@ class RiverFloodExposureAgent(BaseExposureAgent):
         Args:
             building_data: Building information
             spatial_data: Spatial information (not used for this hazard)
-            **kwargs: Additional parameters
+            **kwargs: Additional parameters (latitude, longitude for DB lookup)
 
         Returns:
             River flood exposure data
         """
-        if not config:
-            logger.warning("Config module not loaded. Using hardcoded defaults.")
-            dist_defaults = {'distance_to_river_m': 1000}
-            hydro_defaults = {'watershed_area_km2': 2500, 'stream_order': 3}
-        else:
-            dist_defaults = config.DEFAULT_DISTANCE_VALUES
-            hydro_defaults = config.DEFAULT_HYDROLOGICAL_VALUES
+        # DB에서 spatial 데이터 조회 (좌표가 있으면)
+        latitude = kwargs.get('latitude')
+        longitude = kwargs.get('longitude')
 
-        distance_to_river = building_data.get('distance_to_river_m', dist_defaults['distance_to_river_m'])
+        # get_spatial_data: DB 우선, 없으면 입력 데이터 사용
+        merged_spatial = self.get_spatial_data(
+            building_data, spatial_data,
+            latitude=latitude, longitude=longitude
+        )
+
+        distance_to_river = merged_spatial.get('distance_to_river_m', 1000.0)
         proximity_category, score = self._calculate_river_flood_exposure_score(distance_to_river)
+
+        # in_flood_zone 체크에 필요한 데이터 준비
+        flood_check_data = {
+            'distance_to_river_m': distance_to_river,
+            'elevation_m': merged_spatial.get('elevation_m', 50.0)
+        }
+
+        # data_source 판단 (river_name이 있으면 DB에서 온 것)
+        data_source = 'database' if merged_spatial.get('river_name') else 'default'
 
         return {
             'distance_to_river_m': distance_to_river,
             'proximity_category': proximity_category,
             'score': score,
-            'distance_to_coast_m': building_data.get('distance_to_coast_m', 50000),
-            'watershed_area_km2': building_data.get('watershed_area_km2', hydro_defaults['watershed_area_km2']),
-            'stream_order': building_data.get('stream_order', hydro_defaults['stream_order']),
-            'in_flood_zone': self._is_in_flood_zone(building_data),
+            'distance_to_coast_m': merged_spatial.get('distance_to_coast_m', 50000.0),
+            'watershed_area_km2': merged_spatial.get('watershed_area_km2', 100.0),
+            'stream_order': merged_spatial.get('stream_order', 2),
+            'elevation_m': merged_spatial.get('elevation_m', 50.0),
+            'in_flood_zone': self._is_in_flood_zone(flood_check_data),
+            # 추가 메타데이터 (DB에서 가져온 경우)
+            'river_name': merged_spatial.get('river_name'),
+            'basin_name': merged_spatial.get('basin_name'),
+            'flood_capacity': merged_spatial.get('flood_capacity'),
+            'data_source': data_source,
         }
 
     def _is_in_flood_zone(self, data: Dict) -> bool:

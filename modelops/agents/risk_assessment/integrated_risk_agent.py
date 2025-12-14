@@ -44,6 +44,7 @@ from ..vulnerability_calculate.water_stress_vulnerability_agent import WaterStre
 
 # HazardDataCollector
 from ...utils.hazard_data_collector import HazardDataCollector
+from ...data_loaders.mappers.long_term_mapper import LongTermDataMapper
 
 logger = logging.getLogger(__name__)
 
@@ -51,22 +52,39 @@ logger = logging.getLogger(__name__)
 class IntegratedRiskAgent:
     """H, E, V, AAL을 통합 계산하는 Agent (Mini-batch 처리)"""
 
-    def __init__(self, scenario='SSP245', target_year=2030, database_connection=None):
+    def __init__(self, scenario='SSP245', target_year: Any = 2030, time_scope='yearly', database_connection=None):
         """
         IntegratedRiskAgent 초기화
 
         Args:
             scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
-            target_year: 분석 연도
+            target_year: 분석 연도 (int or "2030s" string)
+            time_scope: 분석 범위 ('yearly' or 'decadal')
             database_connection: DatabaseConnection 클래스 (주입)
         """
         self.scenario = scenario
-        self.target_year = target_year
+        self.time_scope = time_scope
 
-        # HazardDataCollector 초기화
+        # Store the original target_year value for saving (can be int or '2030s' string)
+        self.target_year = target_year 
+
+        # Determine the integer year/decade for data fetching/processing
+        if isinstance(target_year, str) and target_year.endswith('s'):
+            try:
+                self._int_year_for_data_fetch = int(target_year.replace('s', ''))
+                self.time_scope = 'decadal' # Force decadal if 's' suffix is present
+            except ValueError:
+                logger.warning(f"Invalid target_year string format: {target_year}. Defaulting to 2030 and 'yearly' scope.")
+                self._int_year_for_data_fetch = 2030
+                self.time_scope = 'yearly'
+        else:
+            self._int_year_for_data_fetch = int(target_year)
+            # If target_year is int, time_scope comes from input (default 'yearly')
+
+        # HazardDataCollector 초기화 (uses integer year)
         self.hazard_data_collector = HazardDataCollector(
             scenario=scenario,
-            target_year=target_year
+            target_year=self._int_year_for_data_fetch 
         )
 
         # AAL Agent
@@ -125,7 +143,7 @@ class IntegratedRiskAgent:
         }
 
         # DatabaseConnection 주입 (나중에 설정)
-        self.db = database_connection
+        self.db = database_connection # This will be DatabaseConnection from connection.py if default or set externally
 
     def set_database_connection(self, database_connection):
         """DatabaseConnection 설정"""
@@ -158,7 +176,7 @@ class IntegratedRiskAgent:
         """
         start_time = datetime.now()
         logger.info(f"통합 리스크 계산 시작: ({latitude}, {longitude})")
-        logger.info(f"시나리오: {self.scenario}, 분석 연도: {self.target_year}")
+        logger.info(f"시나리오: {self.scenario}, 분석 연도: {self.target_year}, 범위: {self.time_scope}")
 
         try:
             # 1. DB에서 기본 데이터 조회 (선택적)
@@ -177,20 +195,47 @@ class IntegratedRiskAgent:
             # 2. Mini-batch 처리 (9개 리스크)
             total_risks = len(self.risk_types)
 
+            # 장기(decadal) 분석인 경우 한 번에 데이터 조회
+            long_term_data = None
+            if self.time_scope == 'decadal':
+                try:
+                    from ...database.connection_long import DatabaseConnectionLong
+                    # decade 식별 (예: 2030 -> 2030s)
+                    decade = (self.target_year // 10) * 10
+                    long_term_data = DatabaseConnectionLong.fetch_climate_data_by_decade(
+                        latitude, longitude, decade, self.scenario.lower() if self.scenario.startswith('SSP') else 'ssp2'
+                    )
+                except Exception as e:
+                    logger.error(f"장기 데이터 조회 실패: {e}")
+                    long_term_data = {}
+
             for i, risk_type in enumerate(self.risk_types, 1):
                 logger.info(f"[{i}/{total_risks}] {risk_type} 계산 중...")
 
-                # Step 1: HazardDataCollector로 데이터 수집
+                # Step 1: 데이터 수집 (Time Scope 분기)
+                collected_data = {}
                 try:
-                    collected_data = self.hazard_data_collector.collect_data(
-                        lat=latitude,
-                        lon=longitude,
-                        risk_type=risk_type
-                    )
+                    if self.time_scope == 'decadal' and long_term_data:
+                        base_info = {
+                            'latitude': latitude,
+                            'longitude': longitude,
+                            'scenario': self.scenario,
+                            'target_year': self.target_year,
+                            'time_scope': self.time_scope,
+                            'building_data': self._fetch_building_info(latitude, longitude)
+                        }
+                        collected_data = LongTermDataMapper.map_data(
+                            risk_type, long_term_data, base_info
+                        )
+                    else:
+                        collected_data = self.hazard_data_collector.collect_data(
+                            lat=latitude,
+                            lon=longitude,
+                            risk_type=risk_type
+                        )
                     logger.debug(f"{risk_type}: 데이터 수집 완료")
                 except Exception as e:
                     logger.error(f"{risk_type}: 데이터 수집 실패 - {e}")
-                    # 데이터 수집 실패 시 빈 딕셔너리
                     collected_data = {
                         'latitude': latitude,
                         'longitude': longitude
@@ -228,9 +273,10 @@ class IntegratedRiskAgent:
                 )
 
                 # AAL 등급 분류
-                final_aal = aal_result.get('final_aal', 0.0)
+                final_aal = round(aal_result.get('final_aal', 0.0), 2)
                 grade = self.aal_scaling_agent.classify_aal_grade(final_aal)
                 aal_result['grade'] = grade
+                aal_result['final_aal'] = final_aal
 
                 results['aal_scaled'][risk_type] = aal_result
 
@@ -245,17 +291,8 @@ class IntegratedRiskAgent:
                     except Exception as e:
                         logger.warning(f"진행상황 콜백 실패: {e}")
 
-                # DB 저장 (각 리스크 계산 후 즉시)
-                self._save_results(
-                    latitude=latitude,
-                    longitude=longitude,
-                    risk_type=risk_type,
-                    h_result=h_result,
-                    e_result=e_result,
-                    v_result=v_result,
-                    integrated_risk=integrated_risk,
-                    aal_result=aal_result
-                )
+                # DB 저장 로직 제거 (Batch 또는 API 레벨에서 처리)
+                # self._save_results(...) 삭제됨
 
             # 3. 요약 통계 계산
             summary = self._calculate_summary(results)
@@ -267,6 +304,7 @@ class IntegratedRiskAgent:
                 'longitude': longitude,
                 'scenario': self.scenario,
                 'target_year': self.target_year,
+                'time_scope': self.time_scope,
                 'calculation_time': (end_time - start_time).total_seconds(),
                 'calculated_at': end_time.isoformat(),
                 'total_risks_processed': total_risks
@@ -287,6 +325,8 @@ class IntegratedRiskAgent:
         except Exception as e:
             logger.error(f"통합 리스크 계산 실패: {e}", exc_info=True)
             raise
+
+
 
     def _calculate_hazard(self, risk_type: str, collected_data: Dict) -> Dict:
         """
@@ -601,19 +641,33 @@ class IntegratedRiskAgent:
     def _fetch_base_aals(self, latitude: float, longitude: float) -> Dict[str, float]:
         """
         base_aal 조회 (probability_results.aal)
-
-        DB 연결이 없으면 빈 딕셔너리 반환
+        target_year를 고려하여 정확한 연도의 AAL을 조회
         """
         if self.db is None:
             logger.warning("DB 연결 없음 - 기본 AAL 값 사용")
             return {risk_type: 0.01 for risk_type in self.risk_types}
 
         try:
-            base_aals = self.db.fetch_base_aals(latitude, longitude)
-            if not base_aals:
-                logger.warning(f"Base AAL 없음: ({latitude}, {longitude}) - 기본값 사용")
-                return {risk_type: 0.01 for risk_type in self.risk_types}
-            return base_aals
+            # DatabaseConnection의 get_connection을 직접 사용하여 쿼리 수행
+            # (기존 fetch_base_aals는 target_year 필터링이 없음)
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT risk_type, aal AS base_aal
+                    FROM probability_results
+                    WHERE latitude = %s 
+                      AND longitude = %s
+                      AND target_year = %s
+                """, (latitude, longitude, self.target_year))
+                
+                base_aals = {row['risk_type']: row['base_aal'] for row in cursor.fetchall()}
+                
+                # 데이터가 없으면 로그 남기고 기본값(빈 딕셔너리 리턴 후 메인 로직에서 처리 or 여기서 default)
+                if not base_aals:
+                    logger.debug(f" base AAL 데이터 없음: ({latitude}, {longitude}, {self.target_year})")
+                    # 일부 리스크만 있을 수 있으므로 반환된 것만 리턴
+                
+                return base_aals
 
         except Exception as e:
             logger.error(f"Base AAL 조회 실패: {e}")
@@ -638,73 +692,7 @@ class IntegratedRiskAgent:
             'elevation': 50.0  # 기본 해발고도 50m
         }
 
-    def _save_results(
-        self,
-        latitude: float,
-        longitude: float,
-        risk_type: str,
-        h_result: Dict[str, Any],
-        e_result: Dict[str, Any],
-        v_result: Dict[str, Any],
-        integrated_risk: Dict[str, Any],
-        aal_result: Dict[str, Any]
-    ) -> None:
-        """각 리스크 계산 결과 DB 저장 (H, E, V, Risk, AAL)"""
-        if self.db is None:
-            logger.debug("DB 연결 없음 - 결과 저장 건너뜀")
-            return
 
-        try:
-            # Hazard 저장 (ERD 스키마: hazard_score는 0-1, hazard_score_100은 0-100)
-            self.db.save_hazard_results([{
-                'latitude': latitude,
-                'longitude': longitude,
-                'risk_type': risk_type,
-                'hazard_score': h_result.get('hazard_score_normalized', 0.0),  # 0-1 정규화 값
-                'hazard_score_100': h_result.get('hazard_score', 0.0),  # 0-100 값
-                'hazard_level': h_result.get('hazard_level', 'Very Low')
-            }])
-
-            # Exposure 저장 (nested 구조에서 필드 추출)
-            exposure_score, proximity_factor, normalized_asset_value = self._extract_exposure_fields(
-                e_result, risk_type
-            )
-            self.db.save_exposure_results([{
-                'latitude': latitude,
-                'longitude': longitude,
-                'risk_type': risk_type,
-                'exposure_score': exposure_score,
-                'proximity_factor': proximity_factor,
-                'normalized_asset_value': normalized_asset_value
-            }])
-
-            # Vulnerability 저장 (risk_type별 nested dict에서 추출)
-            risk_specific_vuln = v_result.get(risk_type, {})
-            self.db.save_vulnerability_results([{
-                'latitude': latitude,
-                'longitude': longitude,
-                'risk_type': risk_type,
-                'vulnerability_score': risk_specific_vuln.get('score', 0.0),
-                'vulnerability_level': risk_specific_vuln.get('level', 'medium'),
-                'factors': risk_specific_vuln.get('factors', {})
-            }])
-
-            # Integrated Risk는 API 응답용으로만 사용, DB 저장 안함 (ERD에 테이블 없음)
-
-            # AAL 저장 (ERD 스키마 필드 매핑)
-            self.db.save_aal_scaled_results([{
-                'latitude': latitude,
-                'longitude': longitude,
-                'risk_type': risk_type,
-                'base_aal': aal_result.get('base_aal', 0.0),
-                'vulnerability_scale': aal_result.get('vulnerability_scale', 1.0),
-                'final_aal': aal_result.get('final_aal', 0.0),
-                'insurance_rate': aal_result.get('insurance_rate', 0.0),
-                'expected_loss': aal_result.get('expected_loss')  # None 가능
-            }])
-
-        except Exception as e:
-            logger.error(f"결과 저장 실패 ({risk_type}): {e}")
 
     def _calculate_summary(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """요약 통계 계산 (H, E, V, Integrated Risk 포함)"""

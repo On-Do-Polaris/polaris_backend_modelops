@@ -1,7 +1,7 @@
 # SKALA Physical Risk AI - 통합 ERD
 
-> 최종 수정일: 2025-12-12
-> 버전: v14 (Application DB 10개 테이블 - google_oauth_tokens, verification_codes 추가)
+> 최종 수정일: 2025-12-14
+> 버전: v15 (sgg261 시군구 단위 일별 기후 데이터 8개 테이블 추가)
 
 **컬럼 사용 상태 범례:**
 | 기호 | 의미 |
@@ -30,44 +30,50 @@ SKALA Physical Risk AI 시스템은 **GCP Cloud SQL**의 **단일 PostgreSQL 인
 | 카테고리 | 테이블 수 | 데이터 소스 | 설명 |
 |----------|----------|-------------|------|
 | Location | 3개 | **Local ETL** | 위치 참조 (행정구역, 격자) |
-| Climate Data | 17개 | **Local ETL** | 기후 데이터 (SSP 시나리오별) |
+| Climate Data (Grid) | 17개 | **Local ETL** | 기후 데이터 - 격자 레벨 (SSP 시나리오별) |
+| Climate Data (SGG261) | 8개 | **Local ETL** | 기후 데이터 - 시군구 일별 (**NEW**) |
 | Raw Raster | 3개 | **Local ETL** | DEM, 가뭄, 토지피복도 래스터 |
 | Reference Data | 3개 | **Local ETL** | 기상관측소, 물스트레스 순위 |
 | Site Additional | 2개 | **Local ETL / API** | 사업장 추가 데이터 + 배치 작업 |
 | Site Risk | 3개 | **서비스 생성** | Site별 리스크 결과 + 후보지 |
 | ModelOPS | 5개 | **서비스 생성** | H × E × V 계산 결과 |
-| API Cache | 11개 | **OpenAPI ETL** | 외부 API 캐시 |
-| **합계** | **47개** | | |
+| API Cache | 13개 | **OpenAPI ETL** | 외부 API 캐시 |
+| **합계** | **57개** | | |
 
 ### 1.1.1 데이터 소스별 테이블 분류
 
-#### Local ETL (28개 테이블) - 로컬 파일 적재
+#### Local ETL (36개 테이블) - 로컬 파일 적재
 ```
-Location (3개):        location_admin, location_grid, sea_level_grid
-Climate Data (17개):   tamax_data, tamin_data, ta_data, rn_data, ws_data,
-                       rhm_data, si_data, spei12_data, csdi_data, wsdi_data,
-                       rx1day_data, rx5day_data, cdd_data, rain80_data,
-                       sdii_data, ta_yearly_data, sea_level_data
-Raw Raster (3개):      raw_dem, raw_drought, raw_landcover
-Reference Data (3개):  weather_stations, grid_station_mappings, water_stress_rankings
-Site Additional (2개): site_additional_data, batch_jobs
+Location (3개):           location_admin, location_grid, sea_level_grid
+Climate Data Grid (17개): tamax_data, tamin_data, ta_data, rn_data, ws_data,
+                          rhm_data, si_data, spei12_data, csdi_data, wsdi_data,
+                          rx1day_data, rx5day_data, cdd_data, rain80_data,
+                          sdii_data, ta_yearly_data, sea_level_data
+Climate Data SGG261 (8개): location_sgg261, ta_daily_sgg261, tamax_daily_sgg261,
+                          tamin_daily_sgg261, rn_daily_sgg261, rhm_daily_sgg261,
+                          ws_daily_sgg261, si_daily_sgg261  [NEW]
+Raw Raster (3개):         raw_dem, raw_drought, raw_landcover
+Reference Data (3개):     weather_stations, grid_station_mappings, water_stress_rankings
+Site Additional (2개):    site_additional_data, batch_jobs
 ```
 
-#### OpenAPI ETL (11개 테이블) - 외부 API 적재
+#### OpenAPI ETL (13개 테이블) - 외부 API 적재
 ```
-API Cache (11개):      building_aggregate_cache, api_wamis, api_wamis_stations,
-                       api_river_info, api_emergency_messages,
+API Cache (13개):      building_aggregate_cache, api_wamis, api_wamis_stations,
+                       api_wamis_flow, api_river_info, api_emergency_messages,
                        api_typhoon_info, api_typhoon_track, api_typhoon_td,
                        api_typhoon_besttrack, api_disaster_yearbook,
-                       api_vworld_geocode
+                       api_vworld_geocode, api_sgis_population
 ```
 
-#### 서비스 생성 (8개 테이블) - ModelOPS/FastAPI 계산 결과
+#### 서비스 생성 (6개 테이블) - ModelOPS/FastAPI 계산 결과
 ```
 ModelOPS (5개):        probability_results, hazard_results, exposure_results,
                        vulnerability_results, aal_scaled_results
-Site Risk (3개):       site_risk_results, site_risk_summary, candidate_sites
+Site Risk (1개):       candidate_sites
 ```
+> **Note:** site_risk_results, site_risk_summary 테이블 삭제됨 (2025-12-13)
+> H, E, V, AAL 결과는 ModelOPS 테이블들에서 직접 관리
 
 ---
 
@@ -123,6 +129,8 @@ LIMIT 1;
 | population_2050 | INTEGER | 2050년 인구 | 미래 Exposure 계산 |
 | population_change_2020_2050 | INTEGER | 2020-2050 순증감 (명) | 보고서용 |
 | population_change_rate_percent | NUMERIC(5,2) | 2020-2050 증감률 (%) | 보고서용 |
+| population_current | INTEGER | SGIS API 최신 인구 (읍면동별, level=3) | Exposure 계산 |
+| population_current_year | INTEGER | 최신 인구 기준 연도 (예: 2024) | 데이터 기준 연도 |
 
 **예상 데이터 규모:** 5,259 rows (5,007 읍면동 + 252 시군구)
 
@@ -256,33 +264,81 @@ LIMIT 1;
 3. SSP 시나리오별 컬럼에서 해당 시나리오 값 추출
 4. ModelOPS Agent가 P(H), Hazard Score 계산
 
-#### 일별 데이터 (행정구역 레벨)
+#### 월별 극한기온 데이터 (격자 레벨)
 
 | 테이블 | 설명 | 사용처 | PK | 예상 Rows |
 |--------|------|--------|-----|-----------|
-| tamax_data | 일 최고기온 (°C) | 폭염(extreme_heat) Hazard 계산 | (time, admin_id) | ~7.63M |
-| tamin_data | 일 최저기온 (°C) | 한파(extreme_cold) Hazard 계산 | (time, admin_id) | ~7.63M |
+| tamax_data | 월 최고기온 (°C) | 폭염(extreme_heat) Hazard 계산 | (observation_date, grid_id) | ~108M |
+| tamin_data | 월 최저기온 (°C) | 한파(extreme_cold) Hazard 계산 | (observation_date, grid_id) | ~108M |
 
 **tamax_data 상세:**
 - **사용 Agent**: ExtremeHeatProbabilityAgent, ExtremeHeatHazardAgent
-- **계산 로직**: 일 최고기온 35°C 이상 연속 일수로 폭염 발생 확률 계산
+- **계산 로직**: 월 최고기온 기반 폭염 발생 확률 계산
 - **쿼리 예시**:
 ```sql
-SELECT time, ssp2 as temp_max
+SELECT observation_date, ssp2 as temp_max
 FROM tamax_data
-WHERE admin_id = 123 AND time BETWEEN '2050-06-01' AND '2050-08-31'
-  AND ssp2 >= 35
-ORDER BY time;
+WHERE grid_id = 12345 AND observation_date BETWEEN '2050-01-01' AND '2050-12-01'
+ORDER BY observation_date;
 ```
 
 **tamin_data 상세:**
 - **사용 Agent**: ExtremeColdProbabilityAgent, ExtremeColdHazardAgent
-- **계산 로직**: 일 최저기온 -12°C 이하 연속 일수로 한파 발생 확률 계산
+- **계산 로직**: 월 최저기온 기반 한파 발생 확률 계산
 
 **컬럼 구조:**
-- `time` (DATE): 관측일 (2021-01-01 ~ 2100-12-31)
-- `admin_id` (INTEGER FK): location_admin 참조 (시군구 레벨)
+- `grid_id` (INTEGER FK): location_grid 참조 (격자 레벨)
+- `observation_date` (DATE): 관측 월 (YYYY-MM-01, 매월 1일)
 - `ssp1~ssp5` (REAL): 각 시나리오별 기온값 (°C)
+
+---
+
+#### 일별 기후 데이터 (SGG261 시군구 레벨) - **NEW**
+
+261개 시군구 단위의 일별 기후 데이터입니다. 10년 단위 파티셔닝 적용.
+
+| 테이블 | 설명 | 파티션 | PK | 예상 Rows |
+|--------|------|--------|-----|-----------|
+| location_sgg261 | 261개 시군구 매핑 | - | sgg261_id | 261 |
+| ta_daily_sgg261 | 일 평균기온 (°C) | 8개 | (observation_date, admin_code) | ~30M |
+| tamax_daily_sgg261 | 일 최고기온 (°C) | 8개 | (observation_date, admin_code) | ~30M |
+| tamin_daily_sgg261 | 일 최저기온 (°C) | 8개 | (observation_date, admin_code) | ~30M |
+| rn_daily_sgg261 | 일 강수량 (mm) | 8개 | (observation_date, admin_code) | ~30M |
+| rhm_daily_sgg261 | 일 상대습도 (%) | 8개 | (observation_date, admin_code) | ~30M |
+| ws_daily_sgg261 | 일 풍속 (m/s) | 8개 | (observation_date, admin_code) | ~30M |
+| si_daily_sgg261 | 일 일사량 (MJ/m²) | 8개 | (observation_date, admin_code) | ~30M |
+
+**location_sgg261 (시군구 매핑):**
+| 컬럼명 | 타입 | 설명 |
+|--------|------|------|
+| sgg261_id | SERIAL PK | 시군구 ID |
+| admin_code | VARCHAR(10) UK | 10자리 행정코드 (예: 1101000000) |
+| sido_name | VARCHAR(50) | 시도명 (예: 서울특별시) |
+| sigungu_name | VARCHAR(50) | 시군구명 (예: 종로구) |
+| full_name | VARCHAR(100) | sido_name + sigungu_name (GENERATED) |
+
+**일별 기후 테이블 컬럼 구조:**
+- `admin_code` (VARCHAR(10) FK): location_sgg261 참조
+- `observation_date` (DATE): 관측일 (2021-01-01 ~ 2100-12-31)
+- `ssp1~ssp5` (REAL): 각 시나리오별 값
+
+**쿼리 예시:**
+```sql
+-- 서울 종로구의 2050년 여름철 일 최고기온 조회
+SELECT observation_date, ssp2 as temp_max
+FROM tamax_daily_sgg261
+WHERE admin_code = '1101000000'
+  AND observation_date BETWEEN '2050-06-01' AND '2050-08-31'
+  AND ssp2 >= 35
+ORDER BY observation_date;
+
+-- 시군구명으로 조회 (JOIN)
+SELECT d.observation_date, d.ssp2 as temp_max, l.full_name
+FROM tamax_daily_sgg261 d
+JOIN location_sgg261 l ON d.admin_code = l.admin_code
+WHERE l.sigungu_name = '종로구'
+  AND d.observation_date >= '2050-01-01';
+```
 
 ---
 
@@ -602,134 +658,161 @@ LIMIT 10;
 
 ---
 
-#### hazard_results - Hazard Score 결과
+### 1. `hazard_results` - Hazard Score (H)
 
-**필요 이유:** ModelOPS가 계산한 위험도 점수 저장 (H × E × V 공식의 **H** 부분)
+```dbml
+Table hazard_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  target_year integer [not null, note: '목표 연도 (2021~2100)']
 
-**코드 위치:**
-- **저장**: `modelops/agents/hazard_agent.py` (각 리스크별 Agent)
-  - `ExtremeHeatHazardAgent.calculate()`: 폭염 Hazard Score 계산
-  - `RiverFloodHazardAgent.calculate()`: 하천홍수 Hazard Score 계산
-  - `TyphoonHazardAgent.calculate()`: 태풍 Hazard Score 계산
-- **조회**: `fastapi/ai_agent/utils/database.py` (라인 950-1000)
-  - `get_hazard_by_coords()`: 사업장 좌표로 H Score 조회
+  ssp126_score_100 real [note: 'SSP1-2.6 위험도 (0~100)']
+  ssp245_score_100 real [note: 'SSP2-4.5 위험도 (0~100)']
+  ssp370_score_100 real [note: 'SSP3-7.0 위험도 (0~100)']
+  ssp585_score_100 real [note: 'SSP5-8.5 위험도 (0~100)']
 
-**사용처:**
-- ModelOPS: 각 HazardAgent가 결과 저장 (`save_hazard_results()`)
-- FastAPI AI Agent Node 3 (`risk_assessment_node`): H Score 조회 → Physical Risk = H × E × V 계산
-- Frontend: 위험도 게이지, 히트맵 시각화
-- 리포트: 위험 유형별 상세 분석 섹션
+  Note: '''
+    격자별 Hazard 점수 (4개 시나리오, 연도별)
+    예상 행 수: 451,351 grids × 9 types × 80 years = 약 3,251만 rows
+  '''
 
-**계산 로직 예시:**
-```python
-# 폭염 Hazard Score 계산 (ExtremeHeatHazardAgent)
-def calculate_hazard(self, climate_data):
-    # 35°C 이상 연속 일수, 온도 편차 등을 종합하여 점수화
-    extreme_days = count_days_above_threshold(climate_data['tamax'], 35)
-    temp_anomaly = calc_temperature_anomaly(climate_data['ta'])
-    hazard_score = normalize(extreme_days * 0.6 + temp_anomaly * 0.4)
-    return hazard_score  # 0.0 ~ 1.0
+  indexes {
+    (latitude, longitude, risk_type, target_year) [pk]
+    risk_type
+    target_year
+    (latitude, longitude)
+  }
+}
 ```
-
-**쿼리 예시:**
-```sql
--- 특정 좌표의 9개 리스크별 Hazard Score 조회
-SELECT risk_type, hazard_score_100, hazard_level
-FROM hazard_results
-WHERE latitude = 37.50 AND longitude = 127.00
-ORDER BY hazard_score_100 DESC;
-
--- 폭염 위험 "매우높음" 지역 조회
-SELECT latitude, longitude, hazard_score_100
-FROM hazard_results
-WHERE risk_type = 'extreme_heat' AND hazard_level = '매우높음'
-ORDER BY hazard_score_100 DESC
-LIMIT 100;
-```
-
-| 컬럼명 | 타입 | 설명 | 역할 | 실제 사용 |
-|--------|------|------|------|----------|
-| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 | ✅ 좌표 기반 조회 |
-| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 | ✅ 좌표 기반 조회 |
-| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | hazard_types.code와 매핑 | ✅ 리스크별 필터링 |
-| hazard_score | REAL | 원본 위험도 점수 (0.0~1.0) | 모델 출력값, H × E × V 계산용 | ✅ Physical Risk 계산 |
-| hazard_score_100 | REAL | 0-100 정규화 점수 | UI 표시용 (게이지, 등급 표시) | ✅ Frontend 게이지 표시 |
-| hazard_level | VARCHAR(20) | 위험 등급 | VERY_LOW/LOW/MEDIUM/HIGH/VERY_HIGH | ✅ Frontend 색상 표시, 필터링 |
-| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 | ✅ 캐시 무효화 판단 |
-
-**위험 등급 기준:**
-| 점수 범위 | hazard_level | UI 색상 |
-|-----------|--------------|---------|
-| 0 ~ 20 | VERY_LOW | 녹색 |
-| 20 ~ 40 | LOW | 청색 |
-| 40 ~ 60 | MEDIUM | 황색 |
-| 60 ~ 80 | HIGH | 주황색 |
-| 80 ~ 100 | VERY_HIGH | 적색 |
-
-**CHECK 제약조건:** `chk_hazard_level_score` - hazard_score_100과 hazard_level 일치 검증
-
-**예상 데이터 규모:** ~4.06M rows (451,351 grids × 9 risk types)
 
 ---
 
-#### exposure_results - E (노출도) 결과
+### 2. `probability_results` - Probability & AAL (P(H))
 
-**필요 이유:** ModelOPS Exposure Agent가 계산한 자산 노출 정도 저장 (H × E × V 공식의 **E** 부분)
+```dbml
+Table probability_results {
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  target_year integer [not null, note: '목표 연도 (2021~2100)']
 
-**코드 위치:**
-- **저장**: `modelops/agents/exposure_agent.py`
-  - `ExposureAgent.calculate()`: 사업장의 위험원 근접성 및 자산 가치 기반 E Score 계산
-- **조회**: `fastapi/ai_agent/utils/database.py` (라인 1000-1050)
-  - `get_exposure_by_site()`: 사업장 ID로 E Score 조회
+  ssp126_aal base [note: 'SSP1-2.6 연간 평균 손실률 (0.0~1.0)']
+  ssp245_aal base [note: 'SSP2-4.5 연간 평균 손실률 (0.0~1.0)']
+  ssp370_aal base [note: 'SSP3-7.0 연간 평균 손실률 (0.0~1.0)']
+  ssp585_aal base [note: 'SSP5-8.5 연간 평균 손실률 (0.0~1.0)']
 
-**사용처:**
-- ModelOPS: ExposureAgent가 결과 저장 (`save_exposure_results()`)
-- FastAPI AI Agent Node 4 (`impact_analysis_node`): E Score 조회 → Physical Risk = H × E × V 계산
-- 리포트: 노출도 분석 섹션 (위험원 거리, 자산 규모)
+  ssp126_bin_probs jsonb [note: 'SSP1-2.6 bin별 확률 [0.65, 0.25, 0.08, 0.015, 0.005]']
+  ssp245_bin_probs jsonb [note: 'SSP2-4.5 bin별 확률']
+  ssp370_bin_probs jsonb [note: 'SSP3-7.0 bin별 확률']
+  ssp585_bin_probs jsonb [note: 'SSP5-8.5 bin별 확률']
 
-**계산 요소:**
-- **proximity_factor**: 위험원과의 거리
-  - 하천/해안: 거리 기반 (가까울수록 높음)
-  - 산림: 산림 면적 비율
-  - 도시: 불투수 면적 비율
-- **normalized_asset_value**: 정규화된 자산가치
-  - 건물 면적 × 업종별 단가
-  - 시설 가치 (전력, 냉각 등)
+  Note: '''
+    격자별 확률 및 AAL (4개 시나리오, 연도별)
+    예상 행 수: 451,351 grids × 9 types × 80 years = 약 3,251만 rows
+  '''
 
-**쿼리 예시:**
-```sql
--- 특정 사업장의 9개 리스크별 Exposure Score 조회
-SELECT risk_type, exposure_score, proximity_factor, normalized_asset_value
-FROM exposure_results
-WHERE site_id = 'uuid-site-id'
-ORDER BY exposure_score DESC;
-
--- 하천 홍수 노출도 높은 사업장 조회
-SELECT site_id, exposure_score, proximity_factor
-FROM exposure_results
-WHERE risk_type = 'river_flood' AND exposure_score > 0.7
-ORDER BY exposure_score DESC;
+  indexes {
+    (latitude, longitude, risk_type, target_year) [pk]
+    risk_type
+    target_year
+    (latitude, longitude)
+  }
+}
 ```
 
-| 컬럼명 | 타입 | 설명 | 역할 | 실제 사용 |
-|--------|------|------|------|----------|
-| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 | ✅ 모든 조회 |
-| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 | ✅ 모든 조회 |
-| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 리스크별 E Score 구분 | ✅ 리스크별 필터링 |
-| site_id | UUID | 사업장 ID | Application DB sites.id 참조 | ✅ 사업장 조회 |
-| exposure_score | REAL | 노출도 점수 (0.0~1.0) | **E 값** - H × E × V 계산용 | ✅ Physical Risk 계산 |
-| proximity_factor | REAL | 근접도 계수 (0.0~1.0) | 위험원과의 거리 반영 | ✅ ModelOPS `integrated_risk_agent.py` |
-| normalized_asset_value | REAL | 정규화 자산가치 (0.0~1.0) | 자산 규모 정규화 값 | ✅ E Score 계산 |
-| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 | ✅ 캐시 무효화 판단 |
+---
 
-> **proximity_factor 계산 코드** (`modelops/agents/integrated_risk_agent.py`):
-> ```python
-> # 10km 이내일수록 높은 값 (거리가 가까울수록 위험)
-> proximity_factor = max(0.0, 1.0 - (distance_m / 10000.0))
-> # 예: 거리 0m → 1.0, 거리 5km → 0.5, 거리 10km+ → 0.0
-> ```
+### 3. `exposure_results` - Exposure Score (E)
 
-**노출도 계산 공식:**
+```dbml
+Table exposure_results {
+  site_id uuid [not null, note: 'Application DB sites.id 참조']
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  target_year integer [not null, note: '목표 연도 (2021~2100)']
+  exposure_score real [not null, note: '노출도 점수 (0.0~100.0)']
+
+  Note: '''
+    Site별 Exposure 점수 (시나리오 독립적, 연도별)
+    예상 행 수: 실제 site 분석 시 생성
+  '''
+
+  indexes {
+    (site_id, risk_type, target_year) [pk]
+    site_id
+    risk_type
+    target_year
+    (latitude, longitude)
+    exposure_score
+  }
+}
+```
+
+---
+
+### 4. `vulnerability_results` - Vulnerability Score (V)
+
+```dbml
+Table vulnerability_results {
+  site_id uuid [not null, note: 'Application DB sites.id 참조']
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  target_year integer [not null, note: '목표 연도 (2021~2100)']
+  vulnerability_score real [not null, note: '취약성 점수 (0~100)']
+
+  Note: '''
+    Site별 Vulnerability 점수 (시나리오 독립적, 연도별)
+    예상 행 수: 실제 site 분석 시 생성
+    factors 예시: {"building_age": 25, "structure_type": "철근콘크리트", "seismic_design": false}
+  '''
+
+  indexes {
+    (site_id, risk_type, target_year) [pk]
+    site_id
+    risk_type
+    target_year
+    (latitude, longitude)
+    vulnerability_level
+    vulnerability_score
+  }
+}
+```
+
+---
+
+### 5. `aal_scaled_results` - AAL Scaled with Vulnerability
+
+```dbml
+Table aal_scaled_results {
+  site_id uuid [not null, note: 'Application DB sites.id 참조']
+  latitude decimal(9,6) [not null, note: '격자 위도']
+  longitude decimal(9,6) [not null, note: '격자 경도']
+  risk_type varchar(50) [not null, note: '위험 유형 (9가지)']
+  target_year integer [not null, note: '목표 연도 (2021~2100)']
+
+  ssp126_final_aal real [note: 'SSP1-2.6 최종 AAL']
+  ssp245_final_aal real [note: 'SSP2-4.5 최종 AAL']
+  ssp370_final_aal real [note: 'SSP3-7.0 최종 AAL']
+  ssp585_final_aal real [note: 'SSP5-8.5 최종 AAL']
+
+  Note: '''
+    Site별 Vulnerability 반영 최종 AAL (4개 시나리오, 연도별)
+    예상 행 수: 실제 site 분석 시 생성
+    공식: final_aal = base_aal × F_vuln × (1 - insurance_rate)
+  '''
+
+  indexes {
+    (site_id, risk_type, target_year) [pk]
+    site_id
+    risk_type
+    target_year
+    (latitude, longitude)
+  }
+}
+```
 ```
 E = w1 × proximity_factor + w2 × normalized_asset_value
 (w1, w2는 리스크 타입별 가중치)
@@ -739,173 +822,6 @@ E = w1 × proximity_factor + w2 × normalized_asset_value
 
 ---
 
-#### vulnerability_results - V (취약성) 결과
-
-**필요 이유:** ModelOPS Vulnerability Agent가 계산한 건물/시설 특성 기반 취약성 저장 (H × E × V 공식의 **V** 부분)
-
-**코드 위치:**
-- **저장**: `modelops/agents/vulnerability_agent.py`
-  - `VulnerabilityAgent.calculate()`: 건물 특성, 업종 기반 V Score 계산
-- **조회**: `fastapi/ai_agent/utils/database.py` (라인 1050-1100)
-  - `get_vulnerability_by_site()`: 사업장 ID로 V Score 조회
-- **건물 정보 조회**: `fastapi/ai_agent/utils/database.py`
-  - `get_building_info()`: building_aggregate_cache에서 건물 정보 조회
-
-**사용처:**
-- ModelOPS: VulnerabilityAgent가 결과 저장 (`save_vulnerability_results()`)
-- FastAPI AI Agent Node 2 (`building_characteristics_node`): 건물 정보 수집 → V Score 계산
-- FastAPI AI Agent Node 4 (`impact_analysis_node`): V Score 조회 → Physical Risk = H × E × V 계산
-- 리포트: 취약성 분석 섹션 (건물 연식, 구조, 업종 특성)
-
-**취약성 계산 요소 (factors JSONB):**
-```json
-{
-  "building_age": 25,           // 건물 연식 (년)
-  "building_structure": "RC",   // 구조 (RC: 철근콘크리트, S: 철골, W: 목조)
-  "floor_count": 5,             // 층수
-  "basement_floors": 2,         // 지하층수 (홍수 취약성)
-  "industry_code": "data_center", // 업종 코드 (industries.code)
-  "industry_vulnerability_coefficient": 0.85, // 업종별 취약성 계수
-  "drainage_capacity": "good",  // 배수 능력 (도시홍수용)
-  "fire_resistance": "1st"      // 내화등급 (산불용)
-}
-```
-
-**쿼리 예시:**
-```sql
--- 특정 사업장의 9개 리스크별 Vulnerability Score 조회
-SELECT risk_type, vulnerability_score, vulnerability_level, factors
-FROM vulnerability_results
-WHERE site_id = 'uuid-site-id'
-ORDER BY vulnerability_score DESC;
-
--- 도시 홍수 취약성 높은 사업장 (지하층 있음)
-SELECT site_id, vulnerability_score,
-       factors->>'basement_floors' as basement
-FROM vulnerability_results
-WHERE risk_type = 'urban_flood'
-  AND (factors->>'basement_floors')::int > 0
-ORDER BY vulnerability_score DESC;
-```
-
-| 컬럼명 | 타입 | 설명 | 역할 | 실제 사용 |
-|--------|------|------|------|----------|
-| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 | ✅ 좌표 기반 조회 |
-| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 | ✅ 좌표 기반 조회 |
-| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 리스크별 V Score 구분 | ✅ 리스크별 필터링 |
-| site_id | UUID | 사업장 ID | Application DB sites.id 참조 | ✅ 사업장 조회 |
-| vulnerability_score | REAL | 취약성 점수 (0~100) | **V 값** - H × E × V 계산용 | ✅ Physical Risk 계산 |
-| vulnerability_level | VARCHAR(20) | 등급 | VERY_LOW/LOW/MEDIUM/HIGH/VERY_HIGH | ✅ Frontend 등급 표시 |
-| factors | JSONB | 취약성 요인 상세 | 건물 연식, 구조, 업종 계수 등 | ✅ 리포트 상세 분석 |
-| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 | ✅ 캐시 무효화 판단 |
-
-**취약성 등급 기준:**
-| 점수 범위 | vulnerability_level | 설명 |
-|-----------|---------------------|------|
-| 0 ~ 20 | VERY_LOW | 매우 낮음 (신축, 내진설계) |
-| 20 ~ 40 | LOW | 낮음 |
-| 40 ~ 60 | MEDIUM | 보통 |
-| 60 ~ 80 | HIGH | 높음 |
-| 80 ~ 100 | VERY_HIGH | 매우 높음 (노후, 목조) |
-
-**CHECK 제약조건:** `chk_vuln_level_score` - vulnerability_score와 vulnerability_level 일치 검증
-
-**예상 데이터 규모:** 사업장 수 × 9 risk types (사업장별로 저장)
-
----
-
-#### aal_scaled_results - AAL 최종 결과
-
-**필요 이유:** ModelOPS AAL Scaling Agent가 계산한 취약성 보정 연간 평균 손실률(AAL) 저장 - **최종 재무적 영향 지표**
-
-**코드 위치:**
-- **저장**: `modelops/agents/aal_agent.py`
-  - `AALScalingAgent.calculate()`: P(H) × V 보정 → 최종 AAL 계산
-- **조회**: `fastapi/ai_agent/utils/database.py` (라인 1100-1150)
-  - `get_aal_by_site()`: 사업장 ID로 최종 AAL 조회
-- **리포트 생성**: `fastapi/ai_agent/nodes/report_generation_node.py`
-  - AAL 기반 예상 손실액 계산 및 리포트 작성
-
-**사용처:**
-- ModelOPS: AALScalingAgent가 결과 저장 (`save_aal_scaled_results()`)
-- FastAPI AI Agent Node 4 (`impact_analysis_node`): 최종 AAL 계산
-- FastAPI AI Agent Node 6 (`report_generation_node`): 예상 손실액 산출
-- 리포트: 재무적 영향 분석 섹션 (예상 손실액, 보험 권장)
-- Frontend: 대시보드 AAL 표시, 비용-편익 분석
-
-**계산 흐름:**
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ base_aal (probability_results.aal)                               │
-│ + vulnerability_scale (F_vuln = 0.9 + V_score/100 × 0.2)         │
-│ + insurance_rate (보험 가입률)                                    │
-│ + asset_value (자산가치)                                          │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ final_aal = base_aal × F_vuln × (1 - insurance_rate)             │
-│ expected_loss = final_aal × asset_value (원)                     │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-**쿼리 예시:**
-```sql
--- 특정 사업장의 9개 리스크별 AAL 및 예상 손실액 조회
-SELECT risk_type,
-       base_aal, vulnerability_scale, final_aal,
-       insurance_rate, expected_loss
-FROM aal_scaled_results
-WHERE site_id = 'uuid-site-id'
-ORDER BY expected_loss DESC;
-
--- 전체 사업장의 연간 총 예상 손실액 합계
-SELECT site_id, SUM(expected_loss) as total_expected_loss
-FROM aal_scaled_results
-GROUP BY site_id
-ORDER BY total_expected_loss DESC;
-
--- 보험 미가입 상태에서 손실 위험 높은 사업장
-SELECT site_id, risk_type, final_aal, expected_loss
-FROM aal_scaled_results
-WHERE insurance_rate = 0 AND final_aal > 0.1
-ORDER BY expected_loss DESC;
-```
-
-| 컬럼명 | 타입 | 설명 | 역할 | 실제 사용 |
-|--------|------|------|------|----------|
-| latitude | DECIMAL(9,6) PK | 격자 위도 | 위치 식별 | ✅ 좌표 기반 조회 |
-| longitude | DECIMAL(9,6) PK | 격자 경도 | 위치 식별 | ✅ 좌표 기반 조회 |
-| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 리스크별 AAL 구분 | ✅ 리스크별 필터링 |
-| site_id | UUID | 사업장 ID | Application DB sites.id 참조 | ✅ 사업장 조회 |
-| base_aal | REAL | 기본 AAL (0.0~1.0) | probability_results.aal 참조 | ✅ AAL 계산 입력 |
-| vulnerability_scale | REAL | F_vuln (0.9~1.1) | V Score 기반 스케일 계수 | ✅ AAL 보정 |
-| final_aal | REAL | 최종 AAL (0.0~1.0) | **핵심** - 취약성/보험 보정된 AAL | ✅ 리포트 핵심 지표 |
-| insurance_rate | REAL | 보험 보전율 (0.0~1.0) | 보험 가입률 (0=미가입, 1=완전 보전) | ⚠️ **항상 0.0** - 입력 기능 미구현 |
-| expected_loss | BIGINT | 예상 손실액 (원) | **핵심** - 연간 예상 손실액 | ✅ 대시보드, 리포트 |
-| calculated_at | TIMESTAMP | 계산 시점 | 데이터 신선도 확인 | ✅ 캐시 무효화 판단 |
-
-**계산 공식 상세:**
-```python
-# 취약성 스케일 계수 (0.9 ~ 1.1)
-F_vuln = 0.9 + (V_score / 100) * 0.2
-
-# 최종 AAL (보험 보정)
-final_aal = base_aal * F_vuln * (1 - insurance_rate)
-
-# 예상 손실액 (원)
-expected_loss = final_aal * asset_value
-```
-
-**예시:**
-- base_aal = 0.05 (5% 연간 손실률)
-- V_score = 75 (높은 취약성) → F_vuln = 0.9 + 0.75 × 0.2 = 1.05
-- insurance_rate = 0.3 (30% 보험 보전)
-- asset_value = 10억원
-- **final_aal** = 0.05 × 1.05 × 0.7 = **0.03675 (3.675%)**
-- **expected_loss** = 0.03675 × 10억 = **3,675만원/년**
-
-**예상 데이터 규모:** 사업장 수 × 9 risk types (사업장별로 저장)
 
 ---
 
@@ -1390,6 +1306,7 @@ LIMIT 10;
 | api_typhoon_besttrack | 기상청 베스트트랙 | 정밀 태풍 분석 | `09_load_typhoon_besttrack.py` |
 | api_disaster_yearbook | 행정안전부 재해연보 | 과거 피해 통계 | `15_load_disaster_yearbook.py` |
 | api_vworld_geocode | VWorld 역지오코딩 | 좌표 → 주소 변환 | `03_load_geocode.py` |
+| api_sgis_population | SGIS 인구통계 | 읍면동 단위 현재 인구 | `17_load_sgis_population.py` |
 
 #### 주요 테이블 상세
 
@@ -1414,6 +1331,17 @@ LIMIT 10;
 - 리포트: 위치 정보 표시
 
 **주요 컬럼:** `latitude`, `longitude`, `road_address` (도로명 주소), `jibun_address` (지번 주소), `sido`, `sigungu`, `dong`
+
+**api_sgis_population - SGIS 인구통계 캐시**
+
+**필요 이유:** SGIS(통계지리정보서비스) API 호출 결과 캐싱 - 읍면동 단위 현재 인구 데이터 100% 저장
+
+**사용처:**
+- ModelOPS ExposureAgent: 인구 기반 노출도(E) 계산
+- location_admin 테이블과 이름 매칭으로 population_current 필드 업데이트
+- 리포트: 현재 인구 정보 표시
+
+**주요 컬럼:** `sgis_code` (SGIS 8자리 행정구역코드), `admin_name` (읍면동명), `sido_name`, `sigungu_name`, `population` (인구수), `year` (기준연도)
 
 **api_typhoon_* 테이블들 - 태풍 정보 캐시**
 
@@ -1445,101 +1373,6 @@ WHERE pnu = '1168010100100010000';
 
 ---
 
-### 1.9 Site Risk Tables (3개)
-
-Site별 최종 리스크 분석 결과 및 이전 후보지 정보를 저장합니다.
-
-> ⚠️ **신규 추가 (2025-12-10)**: site_risk_results, site_risk_summary, candidate_sites 테이블 추가
-> ⚠️ **스키마 변경 (2025-12-10)**: 시나리오별/연도별 분석을 위해 ssp_scenario, target_year, probability 컬럼 추가
-
-**코드 위치 (공통):**
-- **FastAPI 저장**: `fastapi/ai_agent/nodes/risk_assessment_node.py`
-  - `save_site_risk_results()`: H × E × V 계산 결과 저장
-  - `save_site_risk_summary()`: 9개 리스크 요약 저장
-- **FastAPI 조회**: `fastapi/ai_agent/utils/database.py` (라인 1300-1400)
-  - `get_site_risk_results()`: 사업장 리스크 결과 조회
-  - `get_site_risk_summary()`: 사업장 리스크 요약 조회
-- **SpringBoot 조회**: FastAPI API 통해 간접 조회 (`GET /api/analysis/results/{site_id}`)
-
-#### site_risk_results - Site별 시나리오/연도/리스크별 결과
-
-**필요 이유:** FastAPI AI Agent가 계산한 site별 시나리오/연도/리스크타입별 최종 결과 저장 - **H × E × V = Physical Risk Score**
-
-**사용처:**
-- FastAPI AI Agent Node 3 (`risk_assessment_node`): H × E × V 계산 결과 저장
-- FastAPI AI Agent Node 6 (`report_generation_node`): 리포트 생성 시 조회
-- SpringBoot: 대시보드 리스크 조회 (FastAPI API 통해)
-- Frontend: 리스크 상세 분석 페이지
-
-**쿼리 예시:**
-```sql
--- 특정 사업장의 SSP2-2050 시나리오 9개 리스크 조회
-SELECT risk_type, hazard_score, exposure_score, vulnerability_score,
-       physical_risk_score_100, risk_level
-FROM site_risk_results
-WHERE site_id = 'uuid-site-id'
-  AND ssp_scenario = 'SSP2' AND target_year = 2050
-ORDER BY physical_risk_score_100 DESC;
-
--- 가장 높은 리스크 타입 조회
-SELECT risk_type, physical_risk_score_100, risk_level
-FROM site_risk_results
-WHERE site_id = 'uuid-site-id'
-ORDER BY physical_risk_score_100 DESC
-LIMIT 1;
-```
-
-| 컬럼명 | 타입 | 설명 | 역할 | 실제 사용 |
-|--------|------|------|------|----------|
-| site_id | UUID PK | 사업장 ID | Application DB sites 참조 | ✅ 사업장 조회 |
-| ssp_scenario | VARCHAR(10) PK | SSP 시나리오 | SSP1/SSP2/SSP3/SSP5 | ✅ 시나리오별 필터링 |
-| target_year | INTEGER PK | 분석 연도 | 2030/2050/2080 | ✅ 연도별 필터링 |
-| risk_type | VARCHAR(50) PK | 위험 유형 (9가지) | 복합 PK | ✅ 리스크별 필터링 |
-| hazard_score | REAL | H Score (0.0~1.0) | Hazard | ✅ H × E × V 계산 |
-| exposure_score | REAL | E Score (0.0~1.0) | Exposure | ✅ H × E × V 계산 |
-| vulnerability_score | REAL | V Score (0.0~1.0) | Vulnerability | ✅ H × E × V 계산 |
-| probability | REAL | P(H) (0.0~1.0) | 발생 확률 | ✅ 리포트 표시 |
-| aal_percentage | REAL | AAL (%) | 연평균 손실률 | ✅ 대시보드, 리포트 |
-| physical_risk_score | REAL | H × E × V (0.0~1.0) | 물리적 리스크 | ✅ 정규화 전 원본값 |
-| physical_risk_score_100 | REAL | 0~100 스케일 | UI 표시용 | ✅ Frontend 게이지 |
-| risk_level | VARCHAR(20) | 물리적 리스크 등급 | VERY_HIGH/HIGH/MEDIUM/LOW/VERY_LOW | ✅ Frontend 색상, 필터 |
-| calculation_details | JSONB | 계산 상세 | 디버깅용 | ⚠️ **제한적 사용** - 디버깅용 |
-| calculated_at | TIMESTAMP | 계산 시점 | 신선도 확인 | ✅ 캐시 무효화 |
-| analysis_job_id | UUID | 분석 작업 ID | 추적용 | ✅ 분석 이력 추적 |
-
-**PK 구조:** (site_id, ssp_scenario, target_year, risk_type)
-
-**예상 데이터 규모:** 사이트 수 × 4 시나리오 × 3 연도 × 9 리스크 = 사이트 × 108
-
----
-
-#### site_risk_summary - Site별 시나리오/연도별 요약
-
-**필요 이유:** Site별 시나리오/연도별 9개 리스크 타입을 통합한 요약 정보
-
-**사용처:**
-- FastAPI: 전체 리스크 등급 조회
-- SpringBoot: 대시보드 요약
-
-| 컬럼명 | 타입 | 설명 | 역할 | 실제 사용 |
-|--------|------|------|------|----------|
-| site_id | UUID PK | 사업장 ID | Application DB sites 참조 | ✅ 사업장 조회 |
-| ssp_scenario | VARCHAR(10) PK | SSP 시나리오 | SSP1/SSP2/SSP3/SSP5 | ✅ 시나리오별 필터링 |
-| target_year | INTEGER PK | 분석 연도 | 2030/2050/2080 | ✅ 연도별 필터링 |
-| avg_physical_risk_score | REAL | 9개 평균 (0~100) | 전체 물리적 리스크 | ✅ 대시보드 표시 |
-| total_aal_percentage | REAL | 9개 합계 (%) | 전체 AAL | ✅ 대시보드, 리포트 |
-| avg_hazard_score | REAL | H 평균 (0~1) | 평균 Hazard | ✅ 리포트 요약 |
-| avg_exposure_score | REAL | E 평균 (0~1) | 평균 Exposure | ✅ 리포트 요약 |
-| avg_vulnerability_score | REAL | V 평균 (0~1) | 평균 Vulnerability | ✅ 리포트 요약 |
-| highest_risk_type | VARCHAR(50) | 가장 높은 리스크 | 핵심 리스크 | ✅ 대시보드 하이라이트 |
-| highest_risk_score | REAL | 해당 점수 | 핵심 리스크 점수 | ✅ 대시보드 하이라이트 |
-| overall_risk_grade | VARCHAR(20) | 전체 등급 | A/B/C/D/F | ✅ 대시보드 뱃지 |
-| calculated_at | TIMESTAMP | 계산 시점 | 신선도 확인 | ✅ 캐시 무효화 |
-| analysis_job_id | UUID | 분석 작업 ID | 추적용 | ✅ 분석 이력 추적 |
-
-**PK 구조:** (site_id, ssp_scenario, target_year)
-
-**예상 데이터 규모:** 사이트 수 × 4 시나리오 × 3 연도 = 사이트 × 12
 
 ---
 
@@ -1557,23 +1390,11 @@ LIMIT 1;
 | name | VARCHAR(255) | 후보지 이름 | 표시용 |
 | road_address | VARCHAR(500) | 도로명 주소 | 위치 정보 |
 | jibun_address | VARCHAR(500) | 지번 주소 | 위치 정보 |
-| city | VARCHAR(100) | 도시 | 필터링 |
 | latitude | DECIMAL(10,8) | 위도 | 격자 매핑 |
 | longitude | DECIMAL(11,8) | 경도 | 격자 매핑 |
 | risk_score | INTEGER | 종합 리스크 점수 (0-100) | AI 계산 결과 |
-| risk_level | VARCHAR(20) | 리스크 레벨 | VERY_LOW/LOW/MEDIUM/HIGH/VERY_HIGH |
 | risks | JSONB | 개별 리스크 점수 | {flood, typhoon, heatwave, ...} |
 | aal | DECIMAL(15,2) | 연평균 손실 (AAL) | 재무 지표 |
-| cvar | DECIMAL(15,2) | 조건부 VaR | 재무 지표 |
-| estimated_cost | DECIMAL(15,2) | 이전 예상 비용 | 재무 지표 |
-| carbon_impact | DECIMAL(15,2) | 탄소 영향 | ESG 지표 |
-| cost_change | DECIMAL(15,2) | 비용 변화 | 재무 지표 |
-| location_summary | TEXT | 위치 요약 설명 | 표시용 |
-| advantages | TEXT[] | 장점 배열 | 표시용 |
-| disadvantages | TEXT[] | 단점 배열 | 표시용 |
-| is_active | BOOLEAN | 활성 여부 | 상태 관리 |
-| created_at | TIMESTAMP | 생성 시점 | 추적 |
-| updated_at | TIMESTAMP | 수정 시점 | 추적 |
 
 **인덱스:** location (lat, lon), risk_level, city, is_active
 
@@ -2071,6 +1892,7 @@ WHERE g.longitude = ROUND(sites.longitude::numeric, 2)
 | building_aggregate_cache | 국토교통부 건축물대장 | 06_load_buildings.py |
 | api_disaster_yearbook | 행정안전부 재해연보 | 15_load_disaster_yearbook.py |
 | api_typhoon_besttrack | 기상청 베스트트랙 | 09_load_typhoon_besttrack.py |
+| api_sgis_population | SGIS 인구통계 | 17_load_sgis_population.py |
 
 ---
 
@@ -2146,7 +1968,7 @@ WHERE g.longitude = ROUND(sites.longitude::numeric, 2)
 |-------------|----------|------|
 | Datawarehouse | 47개 | ✓ 완료 |
 | Application | 9개 | ✓ 완료 |
-| **합계** | **56개** | ✓ |
+| **합계** | **57개** | ✓ |
 
 ---
 

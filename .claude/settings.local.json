@@ -26,7 +26,8 @@
       "Bash(git fetch:*)",
       "Bash(git lfs:*)",
       "Bash(git rm:*)",
-      "Bash(ls \"c:\\Users\\SKAX\\Desktop\\modelops\\modelops\\agents\\probability_calculate\"\" | grep -E \"^[a-z_]+_probability \")"
+      "Bash(ls \"c:\\Users\\SKAX\\Desktop\\modelops\\modelops\\agents\\probability_calculate\"\" | grep -E \"^[a-z_]+_probability \")",
+      "Bash(git merge:*)"
     ],
     "deny": [],
     "ask": []

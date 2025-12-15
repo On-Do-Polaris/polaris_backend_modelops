@@ -76,7 +76,18 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
         if not typhoons and typhoon_frequency > 0:
             freq_score = min(typhoon_frequency / 20.0, 1.0)
             wind_score = min(max_wind_speed / 50.0, 1.0)
-            return round(0.6 * wind_score + 0.4 * freq_score, 4)
+            hazard_score = 0.6 * wind_score + 0.4 * freq_score
+
+            # 상세 결과 기록
+            if 'calculation_details' not in collected_data:
+                collected_data['calculation_details'] = {}
+            collected_data['calculation_details']['typhoon'] = {
+                'hazard_score': hazard_score,
+                'frequency': typhoon_frequency,   # DB에서 가져온 태풍 빈도
+                'max_wind': max_wind_speed,       # DB에서 가져온 최대풍속
+                'rx1day': rx1day                  # DB에서 가져온 1일 최대강수량
+            }
+            return round(hazard_score, 4)
 
         if not typhoons or lat is None or lon is None:
             # 데이터 없음 Fallback
@@ -118,6 +129,8 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
 
                 collected_data['calculation_details']['typhoon'] = {
                     'hazard_score': min(avg_impact, 1.0),
+                    'frequency': typhoon_frequency,   # DB에서 가져온 태풍 빈도
+                    'max_wind': max_wind_speed,       # DB에서 가져온 최대풍속
                     'impact_count': len(impacts),
                     'max_wind_speed_avg': sum(max_wind_speeds) / len(max_wind_speeds) if max_wind_speeds else 0,
                     'rx1day_mm': rx1day_mm,

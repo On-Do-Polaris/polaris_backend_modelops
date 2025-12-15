@@ -99,9 +99,9 @@ class RiverFloodHScoreAgent(BaseHazardHScoreAgent):
 
             collected_data['calculation_details']['river_flood'] = {
                 'hazard_score': hazard_score,
+                'rx1day': extreme_rainfall,    # DB에서 가져온 1일 최대강수량
                 'twi': twi,
                 'twi_score': twi_score,
-                'extreme_rainfall': extreme_rainfall,
                 'rainfall_score': rainfall_score,
                 'distance_to_river': distance_to_river,
                 'distance_factor': distance_factor

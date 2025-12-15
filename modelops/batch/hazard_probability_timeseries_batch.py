@@ -185,31 +185,44 @@ def calculate_probability(
         scenario: SSP 시나리오
         target_year: 분석 연도
         risk_type: 리스크 타입
-        hazard_score: H 점수 (0-1)
+        hazard_score: H 점수 (0-1) - 현재 미사용
 
     Returns:
         {
             'aal': float,                    # Annual Average Loss (확률)
-            'return_period_years': float,    # 재현주기
+            'bin_probabilities': List,       # bin별 발생확률
             'probability_level': str,        # Very High/High/Medium/Low/Very Low
             'raw_data': Dict
         }
     """
     try:
-        # ProbabilityAgent 호출
+        # ProbabilityAgent의 calculate() 메서드 호출 (Hazard/Exposure 패턴)
         agent = PROBABILITY_AGENTS[risk_type]
-        p_result = agent.calculate_probability(
-            hazard_score=hazard_score,
-            latitude=latitude,
-            longitude=longitude,
-            scenario=scenario,
-            target_year=target_year
+        p_result = agent.calculate(
+            lat=latitude,
+            lon=longitude,
+            ssp_scenario=scenario,
+            start_year=2021,
+            end_year=2100
         )
 
+        # AAL 기반 확률 레벨 분류
+        aal = p_result.get('aal', 0.0)
+        if aal >= 0.03:
+            probability_level = 'Very High'
+        elif aal >= 0.02:
+            probability_level = 'High'
+        elif aal >= 0.01:
+            probability_level = 'Medium'
+        elif aal >= 0.005:
+            probability_level = 'Low'
+        else:
+            probability_level = 'Very Low'
+
         return {
-            'aal': p_result.get('aal', 0.0),
-            'return_period_years': p_result.get('return_period_years', 0.0),
-            'probability_level': p_result.get('probability_level', 'Very Low'),
+            'aal': aal,
+            'bin_probabilities': p_result.get('bin_probabilities', []),
+            'probability_level': probability_level,
             'raw_data': p_result
         }
 
@@ -217,7 +230,7 @@ def calculate_probability(
         logger.error(f"Probability calculation failed for {risk_type} at ({latitude}, {longitude}): {e}")
         return {
             'aal': 0.0,
-            'return_period_years': 0.0,
+            'bin_probabilities': [],
             'probability_level': 'Very Low',
             'raw_data': {},
             'error': str(e)
@@ -333,7 +346,7 @@ def run_batch(
                             'target_year': year,
                             'risk_type': risk_type,
                             'aal': p_result['aal'],
-                            'return_period_years': p_result['return_period_years'],
+                            'bin_probabilities': p_result.get('bin_probabilities', []),
                             'probability_level': p_result['probability_level']
                         })
 

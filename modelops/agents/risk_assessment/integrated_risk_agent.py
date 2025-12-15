@@ -44,7 +44,7 @@ from ..vulnerability_calculate.water_stress_vulnerability_agent import WaterStre
 
 # HazardDataCollector
 from ...utils.hazard_data_collector import HazardDataCollector
-from ...data_loaders.mappers.long_term_mapper import LongTermDataMapper
+from ...data_loaders.long_term_mapper import LongTermDataMapper
 
 logger = logging.getLogger(__name__)
 

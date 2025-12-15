@@ -2,29 +2,41 @@
                     전체 에이전트 시스템 데이터 흐름
 ================================================================================
 
-1. Agent 종류별 데이터 흐름
+1. 의도한 구조 (Collector 패턴)
 --------------------------------------------------------------------------------
 
-[Probability Agent] - ClimateDataLoader 직접 사용
-┌──────────┐    ┌───────────────────┐    ┌──────────────────────┐    ┌──────────┐
-│  DB/API  │ -> │  ClimateDataLoader│ -> │  Probability Agent   │ -> │   결과   │
-└──────────┘    └───────────────────┘    └──────────────────────┘    └──────────┘
-                                         (내부 _build_collected_data)
+┌──────────┐    ┌──────────┐    ┌───────────────┐    ┌──────────┐    ┌──────────┐
+│  DB/API  │ -> │  Loader  │ -> │   Collector   │ -> │  Agent   │ -> │   결과   │
+│  (원천)  │    │  (조회)  │    │  (수집/통합)  │    │  (계산)  │    │  (출력)  │
+└──────────┘    └──────────┘    └───────────────┘    └──────────┘    └──────────┘
 
-[Hazard Score Agent] - HazardDataCollector 사용
-┌──────────┐    ┌──────────┐    ┌───────────────────┐    ┌──────────┐    ┌──────────┐
-│  DB/API  │ -> │  Loader  │ -> │ HazardDataCollector│ -> │ HScore   │ -> │   결과   │
-└──────────┘    └──────────┘    └───────────────────┘    │  Agent   │    └──────────┘
-                                                         └──────────┘
-
-[Exposure Agent] - collected_data 직접 전달
-┌──────────┐    ┌──────────┐    ┌──────────────────────┐    ┌──────────┐
-│  DB/API  │ -> │  Loader  │ -> │   Exposure Agent     │ -> │   결과   │
-└──────────┘    └──────────┘    └──────────────────────┘    └──────────┘
-                                (외부에서 collected_data 전달)
+* Collector가 여러 Loader를 통합 관리
+* Agent는 collected_data만 받아서 순수 계산
 
 
-2. 계층별 역할
+2. 현재 상태 (불일치)
+--------------------------------------------------------------------------------
+
+[Hazard Score Agent] - 의도한 패턴 ✅
+    DB → Loader → HazardDataCollector → Agent
+
+[Probability Agent] - 직접 호출로 변경됨 ❌
+    DB → Loader → Agent (내부에서 직접 Loader 호출)
+
+[Exposure Agent] - 의도한 패턴 ✅
+    DB → Loader → HazardDataCollector → collected_data → Agent
+
+[Vulnerability Agent] - Agent → DatabaseConnection 직접 호출 ❌
+    (초기 커밋: collected_data를 외부에서 받음 ✅)
+    (2b7c60b 커밋에서 fetch_building_data_from_db() 추가로 DB 직접 호출)
+
+* 참고: site_risk_calculator.py에서의 의도한 흐름:
+    HazardDataCollector.collect_all_data() → collected_data
+        → ExposureAgent.calculate_exposure(collected_data)
+        → VulnerabilityAgent.calculate_vulnerability(collected_data + exposure)
+
+
+3. 계층별 역할 (의도한 구조)
 --------------------------------------------------------------------------------
 
 [1] 원천 데이터 (DB/API)
@@ -36,33 +48,23 @@
     - BuildingDataFetcher: 건물 데이터 조회
     - 위치: modelops/data_loaders/
 
-[3] Collector (통합 담당) - 선택적 사용
-    - HazardDataCollector: Hazard Score Agent용
+[3] Collector (수집/통합 담당)
+    - HazardDataCollector: 모든 Loader 통합 → collected_data 생성
     - 위치: modelops/utils/hazard_data_collector.py
 
-[4] Agent (계산 담당)
-    - Probability Agent: 확률 P(H) 계산
-    - Hazard Score Agent: 위험도 점수 계산
-    - Exposure Agent: 노출도 E 계산
-    - Vulnerability Agent: 취약성 V 계산
+[4] Agent (순수 계산 담당)
+    - calculate_probability(collected_data) → 결과 반환
+    - Agent는 DB/Loader 직접 접근 X
     - 위치: modelops/agents/
 
 
-3. 데이터 흐름 예시 (폭염 Probability)
+4. TODO: Probability Agent 수정 필요
 --------------------------------------------------------------------------------
 
-[DB: kma_ssp_sgg261]
-     │ SQL Query
-     ▼
-[ClimateDataLoader.get_extreme_heat_timeseries()]
-     │ {'years': [...], 'wsdi': [...], 'txx': [...]}
-     ▼
-[Agent._build_collected_data()]
-     │ {'climate_data': {'wsdi': [...], 'txx': [...]}}
-     ▼
-[Agent.calculate_probability()]
-     │ KDE → bin 분류 → 확률 계산
-     ▼
-{'aal': 0.012, 'probabilities': [...]}
+현재 Probability Agent에 추가된 메서드:
+- calculate(lat, lon, ssp_scenario)  ← Agent가 직접 Loader 호출
+- _build_collected_data()            ← Agent 내부에서 변환
+
+→ Collector 패턴으로 통일 필요
 
 ================================================================================

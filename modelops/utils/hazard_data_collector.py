@@ -231,7 +231,10 @@ class HazardDataCollector:
             data['spatial_data'] = self.spatial_loader.get_landcover_data(lat, lon)
 
         if self.disaster_fetcher:
-            data['disaster_data'] = self.disaster_fetcher.get_nearest_river_info(lat, lon)
+            try:
+                data['disaster_data'] = self.disaster_fetcher.get_nearest_river_info(lat, lon)
+            except Exception as e:
+                logger.warning(f"하천정보 API 조회 실패 (무시하고 계속): {e}")
 
         if self.climate_loader:
             # hazard_calculate용 (단일 연도 데이터)
@@ -291,34 +294,53 @@ class HazardDataCollector:
         # 예시: data['extra_data']['distance_to_coast_m'] = ...
 
     def _collect_typhoon_data(self, lat: float, lon: float, data: Dict):
-        if not self.disaster_fetcher:
+        """
+        태풍 데이터 수집 (DB 우선, API fallback)
+        """
+        # 1. DB에서 태풍 데이터 로드 (climate_loader 사용)
+        if self.climate_loader:
+            typhoon_db_data = self.climate_loader.get_typhoon_data(lat, lon, self.target_year)
+
+            data['typhoon_data'] = {
+                'typhoons': typhoon_db_data.get('typhoons', []),
+                'typhoon_frequency': typhoon_db_data.get('typhoon_frequency', 0),
+                'max_wind_speed_ms': typhoon_db_data.get('max_wind_speed_ms', 30.0),
+                'data_source': typhoon_db_data.get('data_source', 'fallback')
+            }
+
+            data['climate_data']['rx1day'] = typhoon_db_data.get('rx1day')
+            data['climate_data']['max_1day_precipitation'] = typhoon_db_data.get('rx1day')
+            data['spatial_data']['distance_to_coast_m'] = typhoon_db_data.get('distance_to_coast_m')
+
             return
 
-        typhoons_all = []
-        
-        # 분석 기간 설정 (config 사용)
-        end_year = 2022
-        num_years = 10
-        
-        if config and hasattr(config, 'TYPHOON_HAZARD_PARAMS'):
-            period_params = config.TYPHOON_HAZARD_PARAMS.get('typhoon_analysis_period', {})
-            end_year = period_params.get('end_year', 2022)
-            num_years = period_params.get('num_years', 10)
-            
-        years_to_check = range(end_year, end_year - num_years, -1)
-        
-        for year in years_to_check:
-            # fetch_typhoon_besttrack 메서드가 DisasterAPIFetcher에 추가되었다고 가정
-            if hasattr(self.disaster_fetcher, 'fetch_typhoon_besttrack'):
-                result = self.disaster_fetcher.fetch_typhoon_besttrack(year)
-                if result.get('typhoons'):
-                    typhoons_all.extend(result['typhoons'])
-                
-        data['typhoon_data'] = {
-            'typhoons': typhoons_all,
-            'analysis_period_years': num_years,
-            'end_year': end_year
-        }
+        # 2. API fallback (disaster_fetcher 사용)
+        if self.disaster_fetcher:
+            typhoons_all = []
+
+            # 분석 기간 설정 (config 사용)
+            end_year = 2022
+            num_years = 10
+
+            if config and hasattr(config, 'TYPHOON_HAZARD_PARAMS'):
+                period_params = config.TYPHOON_HAZARD_PARAMS.get('typhoon_analysis_period', {})
+                end_year = period_params.get('end_year', 2022)
+                num_years = period_params.get('num_years', 10)
+
+            years_to_check = range(end_year, end_year - num_years, -1)
+
+            for year in years_to_check:
+                if hasattr(self.disaster_fetcher, 'fetch_typhoon_besttrack'):
+                    result = self.disaster_fetcher.fetch_typhoon_besttrack(year)
+                    if result.get('typhoons'):
+                        typhoons_all.extend(result['typhoons'])
+
+            data['typhoon_data'] = {
+                'typhoons': typhoons_all,
+                'analysis_period_years': num_years,
+                'end_year': end_year,
+                'data_source': 'api'
+            }
 
     def _collect_wildfire_data(self, lat: float, lon: float, data: Dict):
         if self.spatial_loader:
@@ -330,15 +352,16 @@ class HazardDataCollector:
             single_year_fwi = self.climate_loader.get_fwi_input_data(lat, lon, self.target_year)
             single_year_drought = self.climate_loader.get_drought_data(lat, lon, self.target_year)
 
-            # probability_calculate용 (월별 시계열 데이터)
+            # probability_calculate용 (월별 시계열 데이터) - 별도 키로 저장
             timeseries_data = self.climate_loader.get_wildfire_timeseries(lat, lon, 2021, 2100)
 
-            # 병합
+            # 단일값 우선 (hazard 계산용), timeseries는 별도 키로
             data['climate_data'] = {
                 **single_year_fwi,
-                **single_year_drought,
-                **timeseries_data
+                **single_year_drought
             }
+            # timeseries 배열은 별도 키로 저장 (probability 계산용)
+            data['wildfire_timeseries'] = timeseries_data
 
     def _collect_water_stress_data(self, lat: float, lon: float, data: Dict):
         if self.wamis_fetcher:

@@ -123,6 +123,10 @@ class WildfireHScoreAgent(BaseHazardHScoreAgent):
             
             collected_data['calculation_details']['wildfire'] = {
                 'hazard_score': hazard_score,
+                'ta': temp,              # DB에서 가져온 평균기온
+                'rhm': rh,               # DB에서 가져온 상대습도
+                'ws': wind_speed,        # DB에서 가져온 풍속
+                'rn': annual_rainfall,   # DB에서 가져온 연강수량
                 'fwi': fwi,
                 'wildfire_risk_index': wildfire_risk_index,
                 'sub_indices': {'ffmc': ffmc, 'dc': dc, 'isi': isi, 'bui': bui}

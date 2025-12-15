@@ -89,6 +89,10 @@ class ExtremeColdHScoreAgent(BaseHazardHScoreAgent):
 
             collected_data['calculation_details']['extreme_cold'] = {
                 'cci': cci,
+                'csdi': csix,      # 한파 지속일수
+                'tnn': tn_val,     # 최저기온
+                'fd0': tx10p,      # 서리일수
+                'id0': fd,         # 결빙일수
                 'factors': {
                     'tx10p_norm': tx10p_norm,
                     'csix_norm': csix_norm,

@@ -569,6 +569,7 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 
 		Args:
 			timeseries_data: get_typhoon_data() 반환값
+				- typhoons: 태풍 상세 레코드 리스트
 				- typhoon_frequency: 태풍 빈도
 				- max_wind_speed_ms: 최대 풍속
 				- distance_to_coast_m: 해안선 거리
@@ -576,25 +577,59 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 
 		Returns:
 			calculate_probability()에 전달할 collected_data
-
-		Note:
-			태풍 확률 계산은 복잡한 Best Track 데이터가 필요합니다.
-			ClimateDataLoader의 단순 조회로는 충분하지 않아
-			기본값으로 처리됩니다.
 		"""
-		# 태풍 데이터는 빈도 정보만 사용
 		typhoon_frequency = timeseries_data.get('typhoon_frequency', 0)
 		max_wind = timeseries_data.get('max_wind_speed_ms', 30.0)
+		typhoons = timeseries_data.get('typhoons', [])
 
-		# 간단한 빈도 기반 S_tc 추정 (연간)
-		# 태풍 빈도 * 평균 가중치로 대략적인 노출 지수 계산
-		estimated_s_tc = typhoon_frequency * 2.0  # 평균 가중치 2 가정
+		# typhoons 레코드를 typhoon_tracks 형식으로 변환
+		# {tcid+year: {year, storm_id, tracks: [...]}} 그룹핑
+		storm_dict = {}
+		for rec in typhoons:
+			tcid = rec.get('tcid', 'unknown')
+			year = rec.get('year', 2020)
+			storm_key = f"{tcid}_{year}"
 
+			if storm_key not in storm_dict:
+				storm_dict[storm_key] = {
+					'year': year,
+					'storm_id': tcid,
+					'tracks': []
+				}
+
+			# track_point 형식으로 변환 (None/-999 값 처리)
+			def safe_float(val, default):
+				if val is None or val == -999 or val == -999.0:
+					return default
+				try:
+					return float(val)
+				except:
+					return default
+
+			track_point = {
+				'lon': safe_float(rec.get('lon'), 0.0),
+				'lat': safe_float(rec.get('lat'), 0.0),
+				'grade': rec.get('grade') or 'TD',
+				'max_wind_speed': safe_float(rec.get('max_wind_speed'), 0.0),
+				'central_pressure': safe_float(rec.get('central_pressure'), 1000.0),
+				'gale_long': safe_float(rec.get('gale_long'), 200.0),  # 기본 강풍반경 200km
+				'gale_short': safe_float(rec.get('gale_short'), 150.0),
+				'gale_dir': safe_float(rec.get('gale_dir'), 0.0),
+				'storm_long': safe_float(rec.get('storm_long'), 100.0),  # 기본 폭풍반경 100km
+				'storm_short': safe_float(rec.get('storm_short'), 80.0),
+				'storm_dir': safe_float(rec.get('storm_dir'), 0.0),
+			}
+			storm_dict[storm_key]['tracks'].append(track_point)
+
+		typhoon_tracks = list(storm_dict.values())
+
+		# site_location은 calculate() 호출 시 설정됨
 		return {
 			'typhoon_data': {
-				'estimated_s_tc': estimated_s_tc,
+				'typhoon_tracks': typhoon_tracks,
 				'typhoon_frequency': typhoon_frequency,
 				'max_wind_speed_ms': max_wind,
+				'data_source': timeseries_data.get('data_source', 'unknown')
 			}
 		}
 
@@ -602,8 +637,9 @@ class TyphoonProbabilityAgent(BaseProbabilityAgent):
 		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
 		return {
 			'typhoon_data': {
-				'estimated_s_tc': 0.0,
+				'typhoon_tracks': [],
 				'typhoon_frequency': 0,
 				'max_wind_speed_ms': 30.0,
+				'data_source': 'fallback'
 			}
 		}

@@ -136,6 +136,10 @@ class BaseProbabilityAgent(ABC):
 				# 2. 자식 클래스에서 구현한 _build_collected_data() 호출
 				collected_data = self._build_collected_data(timeseries_data)
 
+			# 2-1. site_location 추가 (typhoon 등에서 필요)
+			if 'typhoon_data' in collected_data:
+				collected_data['typhoon_data']['site_location'] = {'lon': lon, 'lat': lat}
+
 			# 3. 기존 calculate_probability() 호출
 			return self.calculate_probability(collected_data)
 

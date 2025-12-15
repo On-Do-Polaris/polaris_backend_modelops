@@ -33,6 +33,7 @@ try:
         class Config:
             env_file = ".env"
             case_sensitive = False
+            extra = "ignore"  # 정의되지 않은 환경변수 무시
 
     settings = Settings()
 

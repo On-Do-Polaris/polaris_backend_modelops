@@ -118,6 +118,9 @@ class DroughtExposureAgent(BaseExposureAgent):
             ['cdd_days', 'cdd', 'consecutive_dry_days'],
             defaults['cdd_days']
         )
+        # cdd가 리스트인 경우 평균값 사용
+        if isinstance(cdd_days, list):
+            cdd_days = sum(cdd_days) / len(cdd_days) if cdd_days else defaults['cdd_days']
 
         # building_data에서도 확인
         if 'annual_rainfall_mm' in building_data and building_data['annual_rainfall_mm'] is not None:

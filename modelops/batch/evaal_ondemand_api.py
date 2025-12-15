@@ -104,16 +104,16 @@ def fetch_hazard_from_db(
         }
     """
     try:
-        db = DatabaseConnection()
-        h_result = db.fetch_hazard_result(
+        # fetch_hazard_results (복수형) 사용 - risk_type별 결과 반환
+        h_results = DatabaseConnection.fetch_hazard_results(
             latitude=latitude,
             longitude=longitude,
-            scenario=scenario,
+            risk_types=[risk_type],
             target_year=target_year,
-            risk_type=risk_type
+            scenario=scenario
         )
 
-        if not h_result:
+        if not h_results or risk_type not in h_results:
             logger.warning(
                 f"Hazard not found for {risk_type} at ({latitude}, {longitude}), "
                 f"{scenario}, {target_year} - using default"
@@ -124,7 +124,28 @@ def fetch_hazard_from_db(
                 'hazard_level': 'Very Low'
             }
 
-        return h_result
+        # 결과 추출 및 변환
+        h_data = h_results[risk_type]
+        scenario_col = f"{scenario.lower()}_score_100"
+        score_100 = h_data.get('hazard_score_100') or h_data.get(scenario_col, 0.0) or 0.0
+
+        # 등급 분류
+        if score_100 >= 80:
+            level = 'Very High'
+        elif score_100 >= 60:
+            level = 'High'
+        elif score_100 >= 40:
+            level = 'Medium'
+        elif score_100 >= 20:
+            level = 'Low'
+        else:
+            level = 'Very Low'
+
+        return {
+            'hazard_score': score_100 / 100.0,
+            'hazard_score_100': score_100,
+            'hazard_level': level
+        }
 
     except Exception as e:
         logger.error(f"Failed to fetch hazard from DB: {e}")
@@ -160,16 +181,16 @@ def fetch_probability_from_db(
         }
     """
     try:
-        db = DatabaseConnection()
-        p_result = db.fetch_probability_result(
+        # fetch_probability_results (복수형) 사용 - risk_type별 결과 반환
+        p_results = DatabaseConnection.fetch_probability_results(
             latitude=latitude,
             longitude=longitude,
-            scenario=scenario,
+            risk_types=[risk_type],
             target_year=target_year,
-            risk_type=risk_type
+            scenario=scenario
         )
 
-        if not p_result:
+        if not p_results or risk_type not in p_results:
             logger.warning(
                 f"Probability not found for {risk_type} at ({latitude}, {longitude}), "
                 f"{scenario}, {target_year} - using default"
@@ -180,7 +201,34 @@ def fetch_probability_from_db(
                 'probability_level': 'Very Low'
             }
 
-        return p_result
+        # 결과 추출 및 변환
+        p_data = p_results[risk_type]
+        aal = p_data.get('aal', 0.0) or 0.0
+
+        # AAL 기반 재현주기 추정 (1/AAL, 최대 1000년)
+        return_period = (1.0 / aal) if aal > 0 else 0.0
+        return_period = min(return_period, 1000.0)
+
+        # 등급 분류 (AAL 기반)
+        if aal >= 0.1:
+            level = 'Very High'
+        elif aal >= 0.05:
+            level = 'High'
+        elif aal >= 0.02:
+            level = 'Medium'
+        elif aal >= 0.01:
+            level = 'Low'
+        else:
+            level = 'Very Low'
+
+        return {
+            'aal': aal,
+            'return_period_years': return_period,
+            'probability_level': level,
+            'bin_probabilities': p_data.get('bin_probabilities'),
+            'calculation_details': p_data.get('calculation_details'),
+            'bin_data': p_data.get('bin_data')
+        }
 
     except Exception as e:
         logger.error(f"Failed to fetch probability from DB: {e}")
@@ -281,20 +329,23 @@ def calculate_exposure(
         # 필요한 데이터 추출
         building_data = collected_data.get('building_data', {})
         spatial_data = collected_data.get('spatial_data', {})
+        climate_data = collected_data.get('climate_data', {})
 
-        # ExposureAgent 호출
+        # ExposureAgent 호출 (climate_data도 kwargs로 전달)
         e_result = agent.calculate_exposure(
             building_data=building_data,
             spatial_data=spatial_data,
             latitude=latitude,
-            longitude=longitude
+            longitude=longitude,
+            climate_data=climate_data
         )
 
         exposure_score = e_result.get('score', 0.0)
 
         return {
             'exposure_score': exposure_score,
-            'raw_data': e_result
+            'raw_data': e_result,
+            'building_data': building_data  # Vulnerability에서 사용
         }
 
     except Exception as e:
@@ -343,7 +394,34 @@ def calculate_vulnerability(
             }
 
         # VulnerabilityAgent 호출
-        v_result = agent.calculate_vulnerability(exposure_data.get('raw_data', {}))
+        # exposure_data에 building_data 포함 → Vulnerability가 DB 데이터 사용 가능
+        raw_data = exposure_data.get('raw_data', {})
+        building_data = exposure_data.get('building_data', {})
+
+        # raw_data에 building 정보 추가 (Vulnerability가 사용할 수 있도록)
+        # flood_exposure 구조 추가 (River Flood Vulnerability가 사용)
+        # has_water_tank 등을 building에 병합 (Water Stress Vulnerability가 사용)
+        merged_building = {
+            **building_data,
+            'has_water_tank': raw_data.get('has_water_tank', building_data.get('has_water_tank')),
+            'water_tank_method': raw_data.get('water_tank_method', 'not_available'),
+            'elevation_m': raw_data.get('elevation_m', building_data.get('elevation_m', 50.0)),
+        }
+
+        raw_data_with_building = {
+            **raw_data,
+            'building': merged_building,
+            'flood_exposure': {
+                'in_flood_zone': raw_data.get('in_flood_zone', False),
+                'flood_zone_type': raw_data.get('flood_zone_type'),
+            }
+        }
+
+        v_result = agent.calculate_vulnerability(
+            raw_data_with_building,
+            latitude=latitude,
+            longitude=longitude
+        )
 
         return {
             'vulnerability_score': v_result.get('score', 50.0),
@@ -473,7 +551,9 @@ def _save_results_to_db(
     latitude: float,
     longitude: float,
     risk_types: List[str],
-    results: Dict[str, Any]
+    results: Dict[str, Any],
+    target_year: int = 2050,
+    scenario: str = 'SSP245'
 ) -> Dict[str, Any]:
     """
     계산 결과를 DB에 저장
@@ -483,11 +563,12 @@ def _save_results_to_db(
         longitude: 경도
         risk_types: 리스크 타입 리스트
         results: 계산 결과 딕셔너리
+        target_year: 목표 연도
+        scenario: SSP 시나리오
 
     Returns:
         저장 결과 요약
     """
-    db = DatabaseConnection()
     save_summary = {
         'exposure_saved': 0,
         'vulnerability_saved': 0,
@@ -500,19 +581,17 @@ def _save_results_to_db(
         exposure_records = []
         for risk_type in risk_types:
             e_data = results['exposure'].get(risk_type, {})
-            raw_data = e_data.get('raw_data', {})
 
             exposure_records.append({
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
-                'exposure_score': e_data.get('exposure_score', 0.0),
-                'proximity_factor': raw_data.get('proximity_factor', 0.0),
-                'normalized_asset_value': raw_data.get('normalized_asset_value', 0.0)
+                'target_year': target_year,
+                'exposure_score': e_data.get('exposure_score', 0.0)
             })
 
         if exposure_records:
-            db.save_exposure_results(exposure_records)
+            DatabaseConnection.save_exposure_results(exposure_records)
             save_summary['exposure_saved'] = len(exposure_records)
             logger.info(f"Saved {len(exposure_records)} exposure results")
 
@@ -525,13 +604,12 @@ def _save_results_to_db(
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
-                'vulnerability_score': v_data.get('vulnerability_score', 50.0),
-                'vulnerability_level': v_data.get('vulnerability_level', 'medium'),
-                'factors': v_data.get('factors', {})
+                'target_year': target_year,
+                'vulnerability_score': v_data.get('vulnerability_score', 50.0)
             })
 
         if vulnerability_records:
-            db.save_vulnerability_results(vulnerability_records)
+            DatabaseConnection.save_vulnerability_results(vulnerability_records)
             save_summary['vulnerability_saved'] = len(vulnerability_records)
             logger.info(f"Saved {len(vulnerability_records)} vulnerability results")
 
@@ -544,15 +622,13 @@ def _save_results_to_db(
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
-                'base_aal': aal_data.get('base_aal', 0.0),
-                'vulnerability_scale': aal_data.get('vulnerability_scale', 1.0),
-                'final_aal': aal_data.get('final_aal', 0.0),
-                'insurance_rate': aal_data.get('insurance_rate', 0.0),
-                'expected_loss': aal_data.get('expected_loss')
+                'target_year': target_year,
+                'scenario': scenario,
+                'final_aal': aal_data.get('final_aal', 0.0)
             })
 
         if aal_records:
-            db.save_aal_scaled_results(aal_records)
+            DatabaseConnection.save_aal_scaled_results(aal_records)
             save_summary['aal_saved'] = len(aal_records)
             logger.info(f"Saved {len(aal_records)} AAL scaled results")
 
@@ -670,7 +746,10 @@ def calculate_evaal_ondemand(
         save_summary = None
         if save_to_db:
             logger.info("Saving results to DB...")
-            save_summary = _save_results_to_db(latitude, longitude, risk_types, results)
+            save_summary = _save_results_to_db(
+                latitude, longitude, risk_types, results,
+                target_year=target_year, scenario=scenario
+            )
             logger.info(f"DB save completed: {save_summary}")
 
         # 메타데이터

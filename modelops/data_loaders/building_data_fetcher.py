@@ -159,7 +159,7 @@ class BuildingDataFetcher:
 
     def get_building_info(self, lat: float, lon: float) -> Dict:
         """
-        위/경도로 건물 정보 조회
+        위/경도로 건물 정보 조회 (building_aggregate_cache 테이블)
 
         Args:
             lat: 위도
@@ -173,12 +173,84 @@ class BuildingDataFetcher:
                 'floors_above': int,
                 'floors_below': int,
                 'total_area': float,
+                'has_seismic_design': bool,
                 'data_source': str
             }
         """
-        # TODO: 건물 테이블이 있으면 DB에서 조회
-        # 현재는 기본값 반환
-        return self._fallback_building()
+        if not DB_AVAILABLE:
+            return self._fallback_building()
+
+        try:
+            # 1. 좌표로 bjdong_cd 조회 (sigungu_cd는 location_grid에 없을 수 있음)
+            geocode = self.get_building_code_from_coords(lat, lon)
+            if not geocode or not geocode.get('bjdong_cd'):
+                logger.warning(f"No geocode found for ({lat}, {lon})")
+                return self._fallback_building()
+
+            bjdong_cd = geocode['bjdong_cd']
+
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 2. building_aggregate_cache에서 해당 지역 건물 정보 조회 (bjdong_cd로)
+                cursor.execute("""
+                    SELECT
+                        oldest_building_age_years,
+                        structure_types,
+                        purpose_types,
+                        max_ground_floors,
+                        max_underground_floors,
+                        total_floor_area_sqm,
+                        buildings_with_seismic,
+                        buildings_without_seismic,
+                        building_count
+                    FROM building_aggregate_cache
+                    WHERE bjdong_cd = %s
+                    ORDER BY building_count DESC
+                    LIMIT 1
+                """, (bjdong_cd,))
+
+                result = cursor.fetchone()
+
+                if result:
+                    # structure_types에서 가장 많은 구조 타입 추출
+                    structure = 'reinforced_concrete'
+                    if result['structure_types']:
+                        struct_types = result['structure_types']
+                        if isinstance(struct_types, dict) and struct_types:
+                            structure = max(struct_types, key=struct_types.get)
+
+                    # purpose_types에서 가장 많은 용도 추출
+                    main_purpose = 'residential'
+                    if result['purpose_types']:
+                        purpose_types = result['purpose_types']
+                        if isinstance(purpose_types, dict) and purpose_types:
+                            main_purpose = max(purpose_types, key=purpose_types.get)
+
+                    # 내진설계 여부
+                    with_seismic = result['buildings_with_seismic'] or 0
+                    without_seismic = result['buildings_without_seismic'] or 0
+                    has_seismic = with_seismic > without_seismic
+
+                    return {
+                        'building_age': result['oldest_building_age_years'] or 25,
+                        'structure': structure,
+                        'main_purpose': main_purpose,
+                        'floors_above': result['max_ground_floors'] or 5,
+                        'floors_below': result['max_underground_floors'] or 1,
+                        'total_area': float(result['total_floor_area_sqm'] or 1000.0),
+                        'has_seismic_design': has_seismic,
+                        'has_piloti': False,  # 필로티 정보는 별도 조회 필요
+                        'elevation_m': 50.0,  # DEM 기반 조회 필요
+                        'data_source': 'DB'
+                    }
+
+                logger.warning(f"No building data in cache for bjdong_cd={bjdong_cd}")
+                return self._fallback_building()
+
+        except Exception as e:
+            logger.error(f"Failed to get building info: {e}")
+            return self._fallback_building()
 
     def get_river_info(self, lat: float, lon: float) -> Dict:
         """
@@ -536,11 +608,19 @@ class BuildingDataFetcher:
             # 건물 정보
             'building_age': building.get('building_age', 25),
             'structure': building.get('structure', 'reinforced_concrete'),
+            'structure_type': building.get('structure', 'reinforced_concrete'),  # alias for vulnerability agents
             'main_purpose': building.get('main_purpose', 'residential'),
             'floors_above': building.get('floors_above', 5),
             'ground_floors': building.get('floors_above', 5),  # alias for exposure agents
             'floors_below': building.get('floors_below', 1),
             'total_area': building.get('total_area', 1000.0),
+            'total_area_m2': building.get('total_area', 1000.0),  # alias for vulnerability agents
+            'has_piloti': building.get('has_piloti', False),  # 필로티 여부
+            'has_seismic_design': building.get('has_seismic_design', False),  # 내진설계 여부
+            'elevation_m': building.get('elevation_m', 50.0),  # 해발고도 (DEM 기반)
+            # 저수조 여부 (법적 요건: 6층 이상 또는 연면적 3000m² 이상)
+            'has_water_tank': building.get('has_water_tank',
+                              building.get('floors_above', 5) >= 6 or building.get('total_area', 1000.0) >= 3000),
 
             # 하천 정보
             'river_name': river.get('river_name'),
@@ -549,6 +629,7 @@ class BuildingDataFetcher:
             'watershed_area_km2': river.get('watershed_area_km2', 100.0),
             'stream_order': river.get('stream_order', 2),
             'basin_name': river.get('basin_name'),
+            'flood_capacity': river.get('flood_capacity'),  # 하천 홍수량
 
             # 해안 정보
             'distance_to_coast_m': coast_distance,

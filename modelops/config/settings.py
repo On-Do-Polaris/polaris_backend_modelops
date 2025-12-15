@@ -12,11 +12,7 @@ try:
         database_user: str = "skala"
         database_password: str = "skala1234"
 
-        # Scheduler
-        probability_schedule_month: int = 1
-        probability_schedule_day: int = 1
-        probability_schedule_hour: int = 2
-        probability_schedule_minute: int = 0
+
 
         hazard_schedule_month: int = 1
         hazard_schedule_day: int = 1

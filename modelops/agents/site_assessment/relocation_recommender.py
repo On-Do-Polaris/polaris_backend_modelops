@@ -23,7 +23,7 @@ class RelocationRecommender:
     - 각 리스크별 상세 정보 포함
     """
 
-    def __init__(self, scenario='SSP245', target_year=2030):
+    def __init__(self, scenario='SSP245', target_year=2040):
         """
         RelocationRecommender 초기화
 
@@ -71,6 +71,7 @@ class RelocationRecommender:
                         'latitude': float,
                         'longitude': float,
                         'total_aal': float,
+                        'average_aal': float, # 추가: 평균 AAL
                         'average_integrated_risk': float,
                         'risk_details': {risk_type: {...}, ...}
                     },
@@ -107,15 +108,18 @@ class RelocationRecommender:
                         site_id=None  # 후보지는 site_id 없음
                     )
 
-                    # AAL 합계 계산
+                    # AAL 합계 및 평균 계산
                     total_aal = risk_result['summary']['total_final_aal']
+                    risk_count = risk_result['summary'].get('risk_count', 9)
+                    average_aal = total_aal / risk_count if risk_count > 0 else 0.0
+                    
                     avg_integrated_risk = risk_result['summary']['average_integrated_risk']
 
                     # 평가 결과 저장
                     evaluated_grids.append({
                         'latitude': latitude,
                         'longitude': longitude,
-                        'total_aal': total_aal,
+                        'average_aal': average_aal,
                         'average_integrated_risk': avg_integrated_risk,
                         'risk_result': risk_result
                     })
@@ -125,8 +129,8 @@ class RelocationRecommender:
                     # 실패한 격자는 건너뜀
                     continue
 
-            # Step 2: total_aal 기준 오름차순 정렬 (낮을수록 좋음)
-            evaluated_grids.sort(key=lambda x: x['total_aal'])
+            # Step 2: average_aal 기준 오름차순 정렬 (낮을수록 좋음)
+            evaluated_grids.sort(key=lambda x: x['average_aal'])
 
             # Step 3: top N개 선택
             top_candidates = evaluated_grids[:max_candidates]
@@ -159,7 +163,7 @@ class RelocationRecommender:
                     'rank': rank,
                     'latitude': candidate['latitude'],
                     'longitude': candidate['longitude'],
-                    'total_aal': round(candidate['total_aal'], 6),
+                    'average_aal': round(candidate['average_aal'], 6), 
                     'average_integrated_risk': round(candidate['average_integrated_risk'], 2),
                     'risk_details': risk_details
                 })
@@ -184,6 +188,86 @@ class RelocationRecommender:
             logger.error(f"이전 후보지 추천 실패: {e}", exc_info=True)
             raise
 
+    def compare_current_and_candidates(
+        self,
+        current_site: Dict[str, Any],
+        candidate_result: Dict[str, Any],
+        building_info: Dict[str, Any],
+        asset_info: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        현재 사업장과 후보지들 간의 리스크 비교
+        
+        Args:
+            current_site: 현재 사업장 정보 {'latitude': ..., 'longitude': ...}
+            candidate_result: recommend_locations의 반환값
+            building_info: 건물 정보
+            asset_info: 자산 정보
+            
+        Returns:
+            비교 결과 (현재 사업장 vs 후보지 1, 2, 3...)
+        """
+        try:
+            # 1. 현재 사업장 리스크 계산
+            current_result = self.risk_calculator.calculate_site_risks(
+                latitude=current_site['latitude'],
+                longitude=current_site['longitude'],
+                building_info=building_info,
+                asset_info=asset_info,
+                site_id='current_site'
+            )
+            
+            # 요약 정보 추출
+            c_summary = current_result['summary']
+            current_avg_risk = c_summary['average_integrated_risk']
+            risk_count = c_summary.get('risk_count', 9)
+            current_avg_aal = c_summary['total_final_aal'] / risk_count if risk_count > 0 else 0.0 # total_final_aal로 부터 평균 AAL 계산
+
+            # 리스크별 상세
+            current_details = {}
+            for risk_type in self.risk_calculator.RISK_TYPES:
+                 current_details[risk_type] = {
+                    'integrated_risk_score': current_result['integrated_risk'][risk_type].get('integrated_risk_score', 0.0),
+                    'final_aal': current_result['aal_scaled'][risk_type].get('final_aal', 0.0)
+                 }
+
+            comparison_data = {
+                'current_site': {
+                    'latitude': current_site['latitude'],
+                    'longitude': current_site['longitude'],
+                    'average_integrated_risk': round(current_avg_risk, 2),
+                    'average_aal': round(current_avg_aal, 6),
+                    'risk_details': current_details
+                },
+                'candidates': []
+            }
+
+            # 2. 후보지 정보 추가
+            for cand in candidate_result['candidates']:
+                # 후보지 데이터 재구성
+                cand_details = {}
+                for r_type, r_data in cand['risk_details'].items():
+                    cand_details[r_type] = {
+                        'integrated_risk_score': r_data['integrated_risk_score'],
+                        'final_aal': r_data['final_aal']
+                    }
+
+                comparison_data['candidates'].append({
+                    'rank': cand['rank'],
+                    'latitude': cand['latitude'],
+                    'longitude': cand['longitude'],
+                    'average_integrated_risk': cand['average_integrated_risk'],
+                    'average_aal': cand['average_aal'],
+                    'risk_details': cand_details,
+                    'improvement_aal': round(current_avg_aal - cand['average_aal'], 6), # 평균 AAL 개선도
+                    'improvement_risk': round(current_avg_risk - cand['average_integrated_risk'], 2)
+                })
+
+            return comparison_data
+
+        except Exception as e:
+            logger.error(f"비교 분석 실패: {e}", exc_info=True)
+            raise
     def compare_two_locations(
         self,
         location_a: Tuple[float, float],

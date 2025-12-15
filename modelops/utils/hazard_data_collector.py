@@ -143,6 +143,16 @@ class HazardDataCollector:
         except Exception as e:
             logger.warning(f"건물 데이터 수집 실패: {e}")
 
+        # 2-1. 공간 데이터 (Exposure 계산에 필요 - 모든 리스크 타입에 공통)
+        try:
+            if self.spatial_loader:
+                # 토지피복 데이터
+                landcover_data = self.spatial_loader.get_landcover_data(lat, lon)
+                collected_data['spatial_data'].update(landcover_data)
+                logger.debug(f"토지피복 데이터 수집 완료: {landcover_data.get('landcover_type', 'unknown')}")
+        except Exception as e:
+            logger.warning(f"공간 데이터 수집 실패: {e}")
+
         # 3. 리스크 유형별 특화 데이터 수집
         if risk_type == 'extreme_heat':
             self._collect_heat_data(lat, lon, collected_data)

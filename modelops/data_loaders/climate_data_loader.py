@@ -637,38 +637,79 @@ class ClimateDataLoader:
                 if dist_result:
                     result['distance_to_coast_m'] = float(dist_result['distance_m'])
 
-                # 2. 태풍 이력 조회 (api_typhoon_besttrack에서 500km 이내 통과 태풍)
+                # 2. 태풍 이력 조회 - api_typhoon_track 우선, 없으면 besttrack fallback
                 cursor.execute("""
-                    SELECT COUNT(DISTINCT year || '-' || tcid) as typhoon_count,
-                           MAX(max_wind_speed) as max_wind
-                    FROM api_typhoon_besttrack
+                    SELECT COUNT(DISTINCT year || '_' || typ_seq) as typhoon_count,
+                           MAX(wind_speed_ms) as max_wind
+                    FROM api_typhoon_track
                     WHERE ST_DWithin(
-                        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                        location::geography,
                         ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
                         500000
                     )
                 """, (lon, lat))
                 typhoon_result = cursor.fetchone()
+
+                # api_typhoon_track에 데이터가 없으면 besttrack에서 조회
+                if not typhoon_result or typhoon_result['typhoon_count'] == 0:
+                    cursor.execute("""
+                        SELECT COUNT(DISTINCT year || '-' || tcid) as typhoon_count,
+                               MAX(max_wind_speed) as max_wind
+                        FROM api_typhoon_besttrack
+                        WHERE ST_DWithin(
+                            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                            500000
+                        )
+                    """, (lon, lat))
+                    typhoon_result = cursor.fetchone()
+
                 if typhoon_result:
                     result['typhoon_frequency'] = int(typhoon_result['typhoon_count'] or 0)
                     result['max_wind_speed_ms'] = float(typhoon_result['max_wind'] or 30.0)
 
-                # 2-2. 태풍 상세 레코드 조회 (TCI 계산용)
+                # 2-2. 태풍 상세 레코드 조회 - api_typhoon_track 우선 (반경 데이터 있음)
                 cursor.execute("""
-                    SELECT tcid, year, month, day, hour,
+                    SELECT CONCAT(year, '_', typ_seq) as tcid, year,
+                           EXTRACT(MONTH FROM typ_tm)::int as month,
+                           EXTRACT(DAY FROM typ_tm)::int as day,
+                           EXTRACT(HOUR FROM typ_tm)::int as hour,
                            longitude as lon, latitude as lat,
-                           max_wind_speed, central_pressure,
-                           gale_long, gale_short, typhoon_name
-                    FROM api_typhoon_besttrack
+                           grade, wind_speed_ms as max_wind_speed, pressure_hpa as central_pressure,
+                           rad15_km as gale_long, rad15_km as gale_short, direction as gale_dir,
+                           rad25_km as storm_long, rad25_km as storm_short, direction as storm_dir,
+                           CONCAT('TYP_', typ_seq) as typhoon_name
+                    FROM api_typhoon_track
                     WHERE ST_DWithin(
-                        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                        location::geography,
                         ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
                         500000
                     )
-                    ORDER BY year DESC, month DESC, day DESC
-                    LIMIT 50
+                    ORDER BY year DESC, typ_tm DESC
+                    LIMIT 100
                 """, (lon, lat))
                 typhoon_records = cursor.fetchall()
+
+                # api_typhoon_track에 데이터가 없으면 api_typhoon_besttrack에서 조회
+                if not typhoon_records:
+                    cursor.execute("""
+                        SELECT tcid, year, month, day, hour,
+                               longitude as lon, latitude as lat,
+                               grade, max_wind_speed, central_pressure,
+                               gale_long, gale_short, gale_dir,
+                               storm_long, storm_short, storm_dir,
+                               typhoon_name
+                        FROM api_typhoon_besttrack
+                        WHERE ST_DWithin(
+                            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                            500000
+                        )
+                        ORDER BY year DESC, month DESC, day DESC
+                        LIMIT 100
+                    """, (lon, lat))
+                    typhoon_records = cursor.fetchall()
+
                 if typhoon_records:
                     result['typhoons'] = [dict(rec) for rec in typhoon_records]
 

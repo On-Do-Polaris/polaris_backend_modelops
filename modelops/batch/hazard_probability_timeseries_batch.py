@@ -149,11 +149,21 @@ def calculate_hazard(
         agent = HAZARD_AGENTS[risk_type]
         h_result = agent.calculate_hazard_score(collected_data)
 
+        # DB 값 추적 로그 (calculation_details에서 실제 사용된 값 확인)
+        calc_details = collected_data.get('calculation_details', {}).get(risk_type, {})
+        data_source = collected_data.get('climate_data', {}).get('data_source', 'unknown')
+        logger.debug(
+            f"[H] {risk_type}: score={h_result.get('hazard_score', 0):.4f}, "
+            f"source={data_source}, details={calc_details}"
+        )
+
         return {
             'hazard_score': h_result.get('hazard_score', 0.0),  # 0-1
             'hazard_score_100': h_result.get('hazard_score_100', 0.0),  # 0-100
             'hazard_level': h_result.get('hazard_level', 'Very Low'),
-            'raw_data': h_result
+            'raw_data': h_result,
+            'calculation_details': calc_details,
+            'data_source': data_source
         }
 
     except Exception as e:
@@ -219,11 +229,21 @@ def calculate_probability(
         else:
             probability_level = 'Very Low'
 
+        # DB 값 추적 로그
+        calc_details = p_result.get('calculation_details', {})
+        data_source = p_result.get('data_source', 'unknown')
+        logger.debug(
+            f"[P] {risk_type}: aal={aal:.6f}, source={data_source}, "
+            f"method={calc_details.get('method', 'N/A')}, years={calc_details.get('total_years', 0)}"
+        )
+
         return {
             'aal': aal,
             'bin_probabilities': p_result.get('bin_probabilities', []),
             'probability_level': probability_level,
-            'raw_data': p_result
+            'raw_data': p_result,
+            'calculation_details': calc_details,
+            'data_source': data_source
         }
 
     except Exception as e:

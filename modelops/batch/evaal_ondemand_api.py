@@ -686,13 +686,27 @@ def calculate_evaal_ondemand(
     start_time = datetime.now()
 
     try:
+        # Time Scope 및 Year 파싱
+        time_scope = 'yearly'
+        int_year = 2030
+
+        if isinstance(target_year, str) and target_year.endswith('s'):
+            try:
+                int_year = int(target_year.replace('s', ''))
+                time_scope = 'decadal'
+            except ValueError:
+                logger.warning(f"Invalid target_year string: {target_year}. Defaulting to 2030 yearly.")
+                int_year = 2030
+        else:
+            int_year = int(target_year)
+
+        # Decadal 분석 시 연도 보정 (예: 2025 -> 2020)
+        if time_scope == 'decadal':
+            int_year = (int_year // 10) * 10
+            if int_year < 2020:
+                int_year = 2020
+
         # 기본값 설정
-        if risk_types is None:
-            risk_types = [
-                'extreme_heat', 'extreme_cold', 'wildfire', 'drought',
-                'water_stress', 'sea_level_rise', 'river_flood',
-                'urban_flood', 'typhoon'
-            ]
 
         logger.info(
             f"Starting E, V, AAL calculation: "
@@ -719,11 +733,38 @@ def calculate_evaal_ondemand(
             results['hazard'][risk_type] = h_result
             results['probability'][risk_type] = p_result
 
+            # --- E, V 계산용 연도 고정 (2050년 초과 시 2050년으로 고정) ---
+            # 인구 데이터 등 E, V 계산의 핵심 기반 데이터가 2050년까지만 제공되므로, 
+            # 2050년 이후의 연도 요청 시에는 2050년 데이터를 기반으로 계산
+            year_for_ev_calculation = min(int_year, 2050)
+            
+            # Decadal인 경우, 수집된 데이터를 매핑하여 E, V 계산에 활용
+            pre_collected_data = None
+            if time_scope == 'decadal' and long_term_data:
+                try:
+                    base_info = {
+                        'latitude': latitude,
+                        'longitude': longitude,
+                        'scenario': scenario,
+                        'target_year': year_for_ev_calculation, # E, V 계산용 고정 연도 전달
+                        'time_scope': time_scope,
+                        'building_data': fetch_building_info(latitude, longitude)
+                    }
+                    pre_collected_data = LongTermDataMapper.map_data(
+                        risk_type, long_term_data, base_info
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to map decadal data for {risk_type}: {e}")
+
             # Step 2: E 계산
-            e_result = calculate_exposure(latitude, longitude, scenario, target_year, risk_type)
+            e_result = calculate_exposure(
+                latitude, longitude, scenario, year_for_ev_calculation, risk_type, 
+                pre_collected_data=pre_collected_data
+            )
             results['exposure'][risk_type] = e_result
 
             # Step 3: V 계산
+            # Vulnerability는 Exposure의 결과 데이터를 활용하므로, 이미 연도 고정 로직이 적용됨
             v_result = calculate_vulnerability(latitude, longitude, risk_type, e_result)
             results['vulnerability'][risk_type] = v_result
 
@@ -748,7 +789,12 @@ def calculate_evaal_ondemand(
             logger.info("Saving results to DB...")
             save_summary = _save_results_to_db(
                 latitude, longitude, risk_types, results,
-                target_year=target_year, scenario=scenario
+                target_year=int_year, # H, P, AAL은 실제 요청 연도 저장
+                scenario=scenario,
+                # E, V 결과 저장 시에는 2050년 고정 연도 사용 (DB 스키마가 target_year를 받으므로)
+                # 현재 _save_results_to_db 함수가 E, V 결과를 직접 받아 처리하므로
+                # 내부적으로 target_year를 int_year로 사용하나, E,V의 점수 자체가 
+                # year_for_ev_calculation 기준으로 계산된 것이므로 문제가 없음.
             )
             logger.info(f"DB save completed: {save_summary}")
 
@@ -758,7 +804,8 @@ def calculate_evaal_ondemand(
             'latitude': latitude,
             'longitude': longitude,
             'scenario': scenario,
-            'target_year': target_year,
+            'target_year': int_year,
+            'time_scope': time_scope,
             'calculation_time': (end_time - start_time).total_seconds(),
             'calculated_at': end_time.isoformat(),
             'total_risks_processed': len(risk_types),

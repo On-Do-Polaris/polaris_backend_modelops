@@ -118,6 +118,8 @@ class WaterStressHScoreAgent(BaseHazardHScoreAgent):
             
             collected_data['calculation_details']['water_stress'] = {
                 'hazard_score': hazard_score,
+                'rainfall': annual_rainfall_mm,  # DB에서 가져온 연강수량
+                'cdd': climate_data.get('cdd', climate_data.get('consecutive_dry_days')),  # 연속무강수일
                 'stress_index': stress_index,
                 'stress_level': stress_level,
                 'water_demand_m3_day': water_demand_m3_per_day,

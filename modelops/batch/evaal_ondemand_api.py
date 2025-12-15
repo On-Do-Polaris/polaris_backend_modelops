@@ -465,6 +465,102 @@ def calculate_integrated_risk(
     }
 
 
+# ========== DB 저장 함수 ==========
+def _save_results_to_db(
+    latitude: float,
+    longitude: float,
+    risk_types: List[str],
+    results: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    계산 결과를 DB에 저장
+
+    Args:
+        latitude: 위도
+        longitude: 경도
+        risk_types: 리스크 타입 리스트
+        results: 계산 결과 딕셔너리
+
+    Returns:
+        저장 결과 요약
+    """
+    db = DatabaseConnection()
+    save_summary = {
+        'exposure_saved': 0,
+        'vulnerability_saved': 0,
+        'aal_saved': 0,
+        'errors': []
+    }
+
+    try:
+        # 1. Exposure 결과 저장
+        exposure_records = []
+        for risk_type in risk_types:
+            e_data = results['exposure'].get(risk_type, {})
+            raw_data = e_data.get('raw_data', {})
+
+            exposure_records.append({
+                'latitude': latitude,
+                'longitude': longitude,
+                'risk_type': risk_type,
+                'exposure_score': e_data.get('exposure_score', 0.0),
+                'proximity_factor': raw_data.get('proximity_factor', 0.0),
+                'normalized_asset_value': raw_data.get('normalized_asset_value', 0.0)
+            })
+
+        if exposure_records:
+            db.save_exposure_results(exposure_records)
+            save_summary['exposure_saved'] = len(exposure_records)
+            logger.info(f"Saved {len(exposure_records)} exposure results")
+
+        # 2. Vulnerability 결과 저장
+        vulnerability_records = []
+        for risk_type in risk_types:
+            v_data = results['vulnerability'].get(risk_type, {})
+
+            vulnerability_records.append({
+                'latitude': latitude,
+                'longitude': longitude,
+                'risk_type': risk_type,
+                'vulnerability_score': v_data.get('vulnerability_score', 50.0),
+                'vulnerability_level': v_data.get('vulnerability_level', 'medium'),
+                'factors': v_data.get('factors', {})
+            })
+
+        if vulnerability_records:
+            db.save_vulnerability_results(vulnerability_records)
+            save_summary['vulnerability_saved'] = len(vulnerability_records)
+            logger.info(f"Saved {len(vulnerability_records)} vulnerability results")
+
+        # 3. AAL Scaled 결과 저장
+        aal_records = []
+        for risk_type in risk_types:
+            aal_data = results['aal'].get(risk_type, {})
+
+            aal_records.append({
+                'latitude': latitude,
+                'longitude': longitude,
+                'risk_type': risk_type,
+                'base_aal': aal_data.get('base_aal', 0.0),
+                'vulnerability_scale': aal_data.get('vulnerability_scale', 1.0),
+                'final_aal': aal_data.get('final_aal', 0.0),
+                'insurance_rate': aal_data.get('insurance_rate', 0.0),
+                'expected_loss': aal_data.get('expected_loss')
+            })
+
+        if aal_records:
+            db.save_aal_scaled_results(aal_records)
+            save_summary['aal_saved'] = len(aal_records)
+            logger.info(f"Saved {len(aal_records)} AAL scaled results")
+
+    except Exception as e:
+        error_msg = f"DB save error: {str(e)}"
+        logger.error(error_msg)
+        save_summary['errors'].append(error_msg)
+
+    return save_summary
+
+
 # ========== 메인 API 함수 ==========
 def calculate_evaal_ondemand(
     latitude: float,
@@ -473,7 +569,8 @@ def calculate_evaal_ondemand(
     target_year: int = 2030,
     risk_types: Optional[List[str]] = None,
     insurance_rate: float = 0.0,
-    asset_value: Optional[float] = None
+    asset_value: Optional[float] = None,
+    save_to_db: bool = False
 ) -> Dict[str, Any]:
     """
     E, V, AAL On-Demand 계산 (API 호출용 메인 함수)
@@ -486,6 +583,7 @@ def calculate_evaal_ondemand(
         risk_types: 리스크 타입 리스트 (None이면 전체 9개)
         insurance_rate: 보험 가입률 (0-1)
         asset_value: 자산 가치 (선택)
+        save_to_db: DB 저장 여부 (기본 False)
 
     Returns:
         {
@@ -565,6 +663,13 @@ def calculate_evaal_ondemand(
         # 요약 통계 계산
         summary = _calculate_summary(results)
 
+        # DB 저장 (옵션)
+        save_summary = None
+        if save_to_db:
+            logger.info("Saving results to DB...")
+            save_summary = _save_results_to_db(latitude, longitude, risk_types, results)
+            logger.info(f"DB save completed: {save_summary}")
+
         # 메타데이터
         end_time = datetime.now()
         metadata = {
@@ -574,14 +679,15 @@ def calculate_evaal_ondemand(
             'target_year': target_year,
             'calculation_time': (end_time - start_time).total_seconds(),
             'calculated_at': end_time.isoformat(),
-            'total_risks_processed': len(risk_types)
+            'total_risks_processed': len(risk_types),
+            'saved_to_db': save_to_db
         }
 
         logger.info(
             f"E, V, AAL calculation completed: {metadata['calculation_time']:.2f}s"
         )
 
-        return {
+        response = {
             'status': 'success',
             'latitude': latitude,
             'longitude': longitude,
@@ -591,6 +697,12 @@ def calculate_evaal_ondemand(
             'summary': summary,
             'metadata': metadata
         }
+
+        # 저장 결과 포함
+        if save_summary:
+            response['save_summary'] = save_summary
+
+        return response
 
     except Exception as e:
         logger.error(f"E, V, AAL calculation failed: {e}", exc_info=True)

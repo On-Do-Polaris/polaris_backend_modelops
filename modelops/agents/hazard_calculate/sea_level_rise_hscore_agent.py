@@ -62,6 +62,8 @@ class SeaLevelRiseHScoreAgent(BaseHazardHScoreAgent):
                     collected_data['calculation_details'] = {}
                 collected_data['calculation_details']['sea_level_rise'] = {
                     'hazard_score': 0.0,
+                    'slr': 0.0,                     # 내륙은 해수면상승 영향 없음
+                    'distance': distance_to_coast,  # 해안 거리
                     'note': 'Inland area (>10km from coast)'
                 }
                 return 0.0
@@ -94,8 +96,8 @@ class SeaLevelRiseHScoreAgent(BaseHazardHScoreAgent):
             
             collected_data['calculation_details']['sea_level_rise'] = {
                 'hazard_score': hazard_score,
-                'slr_cm': slr_cm,
-                'distance_to_coast_m': distance_to_coast
+                'slr': slr_cm,                     # DB에서 가져온 해수면상승 (cm)
+                'distance': distance_to_coast      # 해안 거리 (m)
             }
 
             return round(hazard_score, 4)

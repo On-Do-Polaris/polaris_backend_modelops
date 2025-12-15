@@ -128,6 +128,7 @@ class UrbanFloodHScoreAgent(BaseHazardHScoreAgent):
             
             collected_data['calculation_details']['urban_flood'] = {
                 'hazard_score': hazard_score,
+                'rx1day': extreme_rainfall_1day,  # DB에서 가져온 1일 최대강수량
                 'effective_drainage': effective_drainage,
                 'rainfall_excess': rainfall_excess,
                 'factors': {

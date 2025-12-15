@@ -549,6 +549,9 @@ class ClimateDataLoader:
             }
         """
         try:
+            # TA: 기온
+            ta = self._extract_value('TA', lat, lon, year)
+
             # RHM: 상대습도
             rhm = self._extract_value('RHM', lat, lon, year)
 
@@ -561,11 +564,15 @@ class ClimateDataLoader:
             data_source = 'DB' if rhm is not None else 'fallback'
 
             return {
+                'temperature': float(ta) if ta is not None else 25.0,
+                'ta': float(ta) if ta is not None else 25.0,  # 추가
+                'avg_temperature': float(ta) if ta is not None else 25.0,  # 추가
                 'relative_humidity': float(rhm) if rhm is not None else 65.0,
                 'rhm': float(rhm) if rhm is not None else 65.0,  # 추가
                 'wind_speed_ms': float(ws) if ws is not None else 3.5,
                 'ws': float(ws) if ws is not None else 3.5,  # 추가
                 'annual_rainfall_mm': float(annual_rainfall) if annual_rainfall else 1200.0,
+                'rn': float(annual_rainfall) if annual_rainfall else 1200.0,  # 추가
                 'climate_scenario': self.scenario,
                 'year': year,
                 'data_source': data_source
@@ -573,11 +580,15 @@ class ClimateDataLoader:
         except Exception as e:
             logger.error(f"FWI 입력 데이터 로드 실패: {e}")
             return {
+                'temperature': 25.0,
+                'ta': 25.0,
+                'avg_temperature': 25.0,
                 'relative_humidity': 65.0,
                 'rhm': 65.0,
                 'wind_speed_ms': 3.5,
                 'ws': 3.5,
                 'annual_rainfall_mm': 1200.0,
+                'rn': 1200.0,
                 'climate_scenario': self.scenario,
                 'year': year,
                 'data_source': 'fallback'
@@ -641,6 +652,25 @@ class ClimateDataLoader:
                 if typhoon_result:
                     result['typhoon_frequency'] = int(typhoon_result['typhoon_count'] or 0)
                     result['max_wind_speed_ms'] = float(typhoon_result['max_wind'] or 30.0)
+
+                # 2-2. 태풍 상세 레코드 조회 (TCI 계산용)
+                cursor.execute("""
+                    SELECT tcid, year, month, day, hour,
+                           longitude as lon, latitude as lat,
+                           max_wind_speed, central_pressure,
+                           gale_long, gale_short, typhoon_name
+                    FROM api_typhoon_besttrack
+                    WHERE ST_DWithin(
+                        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                        500000
+                    )
+                    ORDER BY year DESC, month DESC, day DESC
+                    LIMIT 50
+                """, (lon, lat))
+                typhoon_records = cursor.fetchall()
+                if typhoon_records:
+                    result['typhoons'] = [dict(rec) for rec in typhoon_records]
 
                 # 3. RX1DAY 조회
                 rx1day = self._extract_value('RX1DAY', lat, lon, year)

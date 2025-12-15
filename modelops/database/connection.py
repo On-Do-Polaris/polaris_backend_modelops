@@ -280,70 +280,119 @@ class DatabaseConnection:
     @staticmethod
     def save_probability_results(results: List[Dict[str, Any]]) -> None:
         """
-        P(H) 계산 결과 저장 (업데이트: aal, bin_probabilities, calculation_details)
+        P(H) 계산 결과 저장
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_aal, ssp245_aal, ssp370_aal, ssp585_aal
+            - ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs
 
         Args:
             results: 저장할 결과 리스트
                 - latitude: 위도
                 - longitude: 경도
+                - scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
+                - target_year: 분석 연도
                 - risk_type: 리스크 타입
-                - aal: AAL (Annual Average Loss) = Σ(P[i] × DR[i])
-                - bin_probabilities: bin별 발생확률 배열 (JSON)
-                - calculation_details: 계산 상세정보 (JSON)
-                - bin_data: (하위 호환성) bin별 상세 정보 (선택)
+                - aal: AAL (Annual Average Loss)
+                - bin_probabilities: bin별 발생확률 배열
         """
         import json
+
+        # 시나리오 → 컬럼명 매핑
+        scenario_to_aal_col = {
+            'SSP126': 'ssp126_aal',
+            'SSP245': 'ssp245_aal',
+            'SSP370': 'ssp370_aal',
+            'SSP585': 'ssp585_aal'
+        }
+        scenario_to_bin_col = {
+            'SSP126': 'ssp126_bin_probs',
+            'SSP245': 'ssp245_bin_probs',
+            'SSP370': 'ssp370_bin_probs',
+            'SSP585': 'ssp585_bin_probs'
+        }
 
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
-                # bin_probabilities와 calculation_details를 JSON으로 변환
-                bin_prob_json = json.dumps(result.get('bin_probabilities', []))
-                calc_details_json = json.dumps(result.get('calculation_details', {}))
-                bin_data_json = json.dumps(result.get('bin_data', {}))
+                scenario = result.get('scenario', 'SSP245')
+                aal_col = scenario_to_aal_col.get(scenario)
+                bin_col = scenario_to_bin_col.get(scenario)
 
-                cursor.execute("""
+                if not aal_col or not bin_col:
+                    continue  # 알 수 없는 시나리오는 스킵
+
+                bin_probs_json = json.dumps(result.get('bin_probabilities', []))
+
+                # UPSERT: 해당 시나리오 컬럼만 업데이트
+                cursor.execute(f"""
                     INSERT INTO probability_results
-                    (latitude, longitude, risk_type, aal, bin_probabilities,
-                     calculation_details, bin_data, calculated_at)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
+                    (latitude, longitude, risk_type, target_year, {aal_col}, {bin_col})
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (latitude, longitude, risk_type, target_year)
                     DO UPDATE SET
-                        aal = EXCLUDED.aal,
-                        bin_probabilities = EXCLUDED.bin_probabilities,
-                        calculation_details = EXCLUDED.calculation_details,
-                        bin_data = EXCLUDED.bin_data,
-                        calculated_at = EXCLUDED.calculated_at
+                        {aal_col} = EXCLUDED.{aal_col},
+                        {bin_col} = EXCLUDED.{bin_col}
                 """, (
                     result['latitude'],
                     result['longitude'],
                     result['risk_type'],
+                    result['target_year'],
                     result.get('aal', 0.0),
-                    bin_prob_json,
-                    calc_details_json,
-                    bin_data_json
+                    bin_probs_json
                 ))
 
     @staticmethod
     def save_hazard_results(results: List[Dict[str, Any]]) -> None:
-        """Hazard Score 계산 결과 저장"""
+        """
+        Hazard Score 계산 결과 저장
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_score_100, ssp245_score_100, ssp370_score_100, ssp585_score_100
+
+        Args:
+            results: 저장할 결과 리스트
+                - latitude: 위도
+                - longitude: 경도
+                - scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
+                - target_year: 분석 연도
+                - risk_type: 리스크 타입
+                - hazard_score_100: 0-100 점수
+        """
+        # 시나리오 → 컬럼명 매핑
+        scenario_to_column = {
+            'SSP126': 'ssp126_score_100',
+            'SSP245': 'ssp245_score_100',
+            'SSP370': 'ssp370_score_100',
+            'SSP585': 'ssp585_score_100'
+        }
+
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
-                cursor.execute("""
+                scenario = result.get('scenario', 'SSP245')
+                column_name = scenario_to_column.get(scenario)
+
+                if not column_name:
+                    continue  # 알 수 없는 시나리오는 스킵
+
+                # UPSERT: 해당 시나리오 컬럼만 업데이트
+                cursor.execute(f"""
                     INSERT INTO hazard_results
-                    (latitude, longitude, risk_type, hazard_score,
-                     hazard_score_100, hazard_level, calculated_at)
-                    VALUES (%(latitude)s, %(longitude)s, %(risk_type)s,
-                            %(hazard_score)s, %(hazard_score_100)s,
-                            %(hazard_level)s, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
+                    (latitude, longitude, risk_type, target_year, {column_name})
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (latitude, longitude, risk_type, target_year)
                     DO UPDATE SET
-                        hazard_score = EXCLUDED.hazard_score,
-                        hazard_score_100 = EXCLUDED.hazard_score_100,
-                        hazard_level = EXCLUDED.hazard_level,
-                        calculated_at = EXCLUDED.calculated_at
-                """, result)
+                        {column_name} = EXCLUDED.{column_name}
+                """, (
+                    result['latitude'],
+                    result['longitude'],
+                    result['risk_type'],
+                    result['target_year'],
+                    result.get('hazard_score_100', 0.0)
+                ))
 
     @staticmethod
     def fetch_building_info(latitude: float, longitude: float) -> Dict[str, Any]:
@@ -694,45 +743,80 @@ class DatabaseConnection:
 
     @staticmethod
     def fetch_hazard_results(latitude: float, longitude: float,
-                            risk_types: List[str] = None) -> Dict[str, Dict[str, Any]]:
+                            risk_types: List[str] = None,
+                            target_year: int = None,
+                            scenario: str = None) -> Dict[str, Dict[str, Any]]:
         """
         Hazard Score 조회
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_score_100, ssp245_score_100, ssp370_score_100, ssp585_score_100
 
         Args:
             latitude: 위도
             longitude: 경도
             risk_types: 조회할 리스크 타입 목록 (None이면 전체)
+            target_year: 조회할 연도 (None이면 전체)
+            scenario: 조회할 시나리오 (SSP126, SSP245, SSP370, SSP585, None이면 전체)
 
         Returns:
             {
-                'extreme_heat': {'hazard_score': 0.75, 'hazard_score_100': 75, ...},
+                'extreme_heat': {
+                    'target_year': 2050,
+                    'ssp126_score_100': 45.0,
+                    'ssp245_score_100': 55.0,
+                    'ssp370_score_100': 65.0,
+                    'ssp585_score_100': 75.0
+                },
                 ...
             }
         """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
 
+            # 기본 쿼리
+            query = """
+                SELECT risk_type, target_year,
+                       ssp126_score_100, ssp245_score_100,
+                       ssp370_score_100, ssp585_score_100
+                FROM hazard_results
+                WHERE latitude = %s AND longitude = %s
+            """
+            params = [latitude, longitude]
+
             if risk_types:
-                cursor.execute("""
-                    SELECT risk_type, hazard_score, hazard_score_100, hazard_level
-                    FROM hazard_results
-                    WHERE latitude = %s AND longitude = %s
-                      AND risk_type = ANY(%s)
-                """, (latitude, longitude, risk_types))
-            else:
-                cursor.execute("""
-                    SELECT risk_type, hazard_score, hazard_score_100, hazard_level
-                    FROM hazard_results
-                    WHERE latitude = %s AND longitude = %s
-                """, (latitude, longitude))
+                query += " AND risk_type = ANY(%s)"
+                params.append(risk_types)
+
+            if target_year:
+                query += " AND target_year = %s"
+                params.append(target_year)
+
+            query += " ORDER BY risk_type, target_year"
+
+            cursor.execute(query, params)
 
             results = {}
             for row in cursor.fetchall():
-                results[row['risk_type']] = {
-                    'hazard_score': row['hazard_score'],
-                    'hazard_score_100': row['hazard_score_100'],
-                    'hazard_level': row['hazard_level']
+                risk_type = row['risk_type']
+                year = row['target_year']
+                key = f"{risk_type}_{year}" if target_year is None else risk_type
+
+                result_data = {
+                    'target_year': year,
+                    'ssp126_score_100': row['ssp126_score_100'],
+                    'ssp245_score_100': row['ssp245_score_100'],
+                    'ssp370_score_100': row['ssp370_score_100'],
+                    'ssp585_score_100': row['ssp585_score_100']
                 }
+
+                # 특정 시나리오만 요청한 경우
+                if scenario:
+                    scenario_col = f"{scenario.lower()}_score_100"
+                    result_data['hazard_score_100'] = row.get(scenario_col, 0.0)
+
+                results[key] = result_data
 
             return results
 

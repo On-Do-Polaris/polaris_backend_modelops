@@ -159,11 +159,15 @@ class RelocationRecommender:
                         'final_aal': aal_data.get('final_aal', 0.0)
                     }
 
+                # total_aal 계산 (9개 리스크의 final_aal 합계)
+                total_aal = sum(risk_data.get('final_aal', 0.0) for risk_data in risk_details.values())
+
                 candidates.append({
                     'rank': rank,
                     'latitude': candidate['latitude'],
                     'longitude': candidate['longitude'],
-                    'average_aal': round(candidate['average_aal'], 6), 
+                    'total_aal': round(total_aal, 6),
+                    'average_aal': round(candidate['average_aal'], 6),
                     'average_integrated_risk': round(candidate['average_integrated_risk'], 2),
                     'risk_details': risk_details
                 })

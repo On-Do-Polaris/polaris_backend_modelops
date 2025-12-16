@@ -1246,6 +1246,7 @@ Table candidate_sites {
 
   // 재무 지표
   aal decimal(15,2) [note: '연평균 손실 (AAL)']
+  aal_by_risk jsonb [note: '개별 aal 점수']
   cvar decimal(15,2) [note: '조건부 VaR']
   estimated_cost decimal(15,2) [note: '이전 예상 비용']
   carbon_impact decimal(15,2) [note: '탄소 영향']
@@ -1260,6 +1261,9 @@ Table candidate_sites {
   is_active boolean [default: true, note: '활성 여부']
   created_at timestamp [note: '생성 시점']
   updated_at timestamp [note: '수정 시점']
+
+  // 참조 사업장
+  site_id uuid [note: '참조 ID']
 
   Note: '사업장 이전 후보지 정보 (FastAPI/AI Agent 관리)'
 

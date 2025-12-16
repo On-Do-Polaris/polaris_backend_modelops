@@ -1,9 +1,13 @@
 '''
 파일명: drought_probability_agent.py
-최종 수정일: 2025-12-11
-버전: v2.0
+최종 수정일: 2025-12-14
+버전: v3.0
 파일 개요: 가뭄 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v3.0 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-12-11: v2.0 - 월별 SPEI12에서 연도별 최솟값으로 변경
 		* 강도지표: X_drought(t) = min SPEI12(t,m) (연도별 최솟값)
 		* 연도별 AAL 계산으로 다른 에이전트와 통일
@@ -185,3 +189,37 @@ class DroughtProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 3  # bin4: SPEI12 <= -2.0
 
 		return bin_indices
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 시계열 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_drought_timeseries() 반환값
+				- years: 연도 리스트
+				- cdd: CDD 값 리스트
+				- spei12: SPEI12 값 리스트
+				- climate_scenario: SSP 시나리오
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+		"""
+		spei12_list = timeseries_data.get('spei12', [])
+
+		return {
+			'climate_data': {
+				'spei12': spei12_list,
+			},
+			'years': timeseries_data.get('years', []),
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		# 30년치 기본 SPEI12 데이터 생성 (-0.5 ~ -1.5 범위)
+		default_spei12 = [-0.5 - i * 0.03 for i in range(30)]
+		return {
+			'climate_data': {
+				'spei12': default_spei12,
+			},
+		}

@@ -1,9 +1,13 @@
 '''
 파일명: extreme_heat_probability_agent.py
-최종 수정일: 2025-11-24
-버전: v2
+최종 수정일: 2025-12-14
+버전: v3
 파일 개요: 극심한 고온 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v3 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-11-24: v2 - 분위수 기반 동적 bin 설정으로 변경
 		* bin: Q80, Q90, Q95, Q99 분위수 기반 5단계
 		* 기준기간 데이터로 분위수 임계값 계산
@@ -197,4 +201,45 @@ class ExtremeHeatProbabilityAgent(BaseProbabilityAgent):
 				bin_indices[idx] = 4  # bin5: ≥ Q99
 
 		return bin_indices
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 시계열 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_extreme_heat_timeseries() 반환값
+				- years: 연도 리스트
+				- wsdi: WSDI 값 리스트
+				- txx: 최고기온 리스트
+				- climate_scenario: SSP 시나리오
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+		"""
+		wsdi_list = timeseries_data.get('wsdi', [])
+		txx_list = timeseries_data.get('txx', [])
+
+		# 기준기간 데이터 (첫 30년을 baseline으로 사용)
+		baseline_wsdi = wsdi_list[:30] if len(wsdi_list) >= 30 else wsdi_list
+
+		return {
+			'climate_data': {
+				'wsdi': wsdi_list,
+				'txx': txx_list,
+			},
+			'baseline_wsdi': baseline_wsdi,
+			'years': timeseries_data.get('years', []),
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		# 30년치 기본 WSDI 데이터 생성
+		default_wsdi = [10 + i * 0.3 for i in range(30)]
+		return {
+			'climate_data': {
+				'wsdi': default_wsdi,
+			},
+			'baseline_wsdi': default_wsdi,
+		}
 

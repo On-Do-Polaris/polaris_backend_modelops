@@ -35,17 +35,23 @@ class SiteRiskRequest(BaseModel):
     asset_info: Optional[AssetInfo] = Field(None, description="자산 정보")
 
 
+class CalculationResult(BaseModel):
+    """개별 시나리오/연도 계산 결과"""
+    scenario: str = Field(..., description="SSP 시나리오")
+    year: int = Field(..., description="목표 연도")
+    status: str = Field(..., description="계산 상태 (success/failed)")
+    error_message: Optional[str] = Field(None, description="에러 메시지 (실패 시)")
+
+
 class SiteRiskResponse(BaseModel):
-    """사업장 리스크 계산 응답"""
+    """사업장 리스크 계산 응답 (전체 시나리오/연도)"""
     site_id: Optional[str] = Field(None, description="사업장 ID")
     latitude: float = Field(..., description="위도")
     longitude: float = Field(..., description="경도")
-    hazard: Dict[str, Any] = Field(..., description="9개 리스크별 H 점수")
-    exposure: Dict[str, Any] = Field(..., description="9개 리스크별 E 점수")
-    vulnerability: Dict[str, Any] = Field(..., description="9개 리스크별 V 점수")
-    integrated_risk: Dict[str, Any] = Field(..., description="9개 리스크별 통합 점수 (H × E × V / 10000)")
-    aal_scaled: Dict[str, Any] = Field(..., description="9개 리스크별 AAL")
-    summary: Dict[str, Any] = Field(..., description="요약 통계")
+    total_calculations: int = Field(..., description="총 계산 개수")
+    successful_calculations: int = Field(..., description="성공한 계산 개수")
+    failed_calculations: int = Field(..., description="실패한 계산 개수")
+    results: List[CalculationResult] = Field(..., description="시나리오/연도별 계산 결과")
     calculated_at: datetime = Field(..., description="계산 시각")
 
 
@@ -64,7 +70,8 @@ class SearchCriteria(BaseModel):
 
 class SiteRelocationRequest(BaseModel):
     """사업장 이전 후보지 추천 요청"""
-    candidate_grids: List[CandidateGrid] = Field(..., description="후보 격자 리스트 (~1000개)")
+    site_id: Optional[str] = Field(None, description="참조 사업장 ID (candidate_sites 테이블 연결용)")
+    candidate_grids: Optional[List[CandidateGrid]] = Field(None, description="후보 격자 리스트 (제공하지 않으면 고정 10개 위치 사용)")
     building_info: BuildingInfo = Field(..., description="건물 정보")
     asset_info: Optional[AssetInfo] = Field(None, description="자산 정보")
     search_criteria: Optional[SearchCriteria] = Field(default_factory=SearchCriteria, description="검색 조건")
@@ -95,5 +102,6 @@ class SiteRelocationResponse(BaseModel):
     """사업장 이전 후보지 추천 응답"""
     candidates: List[LocationCandidate] = Field(..., description="추천 후보지 리스트 (최대 3개)")
     total_grids_evaluated: int = Field(..., description="평가된 격자 총 개수")
+    total_saved_to_db: int = Field(..., description="DB에 저장된 후보지 개수")
     search_criteria: SearchCriteria = Field(..., description="검색 조건")
     calculated_at: datetime = Field(..., description="계산 시각")

@@ -1,7 +1,11 @@
 '''
 파일명: typhoon_hscore_agent.py
+최종 수정일: 2025-12-14
+버전: v2
 설명: 태풍(Typhoon) 리스크 Hazard 점수(H) 산출 Agent
-업데이트: HazardCalculator 로직 통합 (TCI 기반)
+변경 이력:
+    - v1: HazardCalculator 로직 통합 (TCI 기반)
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
 '''
 from typing import Dict, Any, Tuple
 import math
@@ -20,6 +24,9 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
     - KMA 태풍 베스트트랙 데이터 기반 과거 태풍 영향 분석
     - TCI (Typhoon Comprehensive Index) = 0.55×Wind + 0.45×Rain
     - 거리 감쇠 적용
+
+    데이터 흐름:
+    - HazardDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -30,7 +37,7 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
         태풍 Hazard 점수 계산
 
         Args:
-            collected_data: 수집된 데이터 딕셔너리
+            collected_data: HazardDataCollector가 수집한 데이터
                 - typhoon_data: typhoons 리스트 포함
                 - climate_data: Rx1day 데이터 포함 (max_1day_precipitation)
                 - latitude, longitude: 분석 위치
@@ -44,6 +51,43 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
 
         lat = collected_data.get('latitude')
         lon = collected_data.get('longitude')
+
+        # collected_data에서 태풍 빈도/최대풍속 추출 (data_loaders가 DB에서 수집)
+        typhoon_frequency = self.get_value_with_fallback(
+            typhoon_data_dict,
+            ['typhoon_frequency', 'frequency', 'count'],
+            0
+        )
+        max_wind_speed = self.get_value_with_fallback(
+            typhoon_data_dict,
+            ['max_wind_speed_ms', 'max_wind_speed', 'wind_speed'],
+            30.0
+        )
+
+        # collected_data에서 rx1day 추출
+        rx1day = self.get_value_with_fallback(
+            climate_data,
+            ['max_1day_precipitation', 'rx1day', 'max_1day_rainfall_mm'],
+            200.0
+        )
+        climate_data['max_1day_precipitation'] = rx1day
+
+        # 태풍 데이터가 없고 빈도 데이터가 있으면 빈도 기반 계산
+        if not typhoons and typhoon_frequency > 0:
+            freq_score = min(typhoon_frequency / 20.0, 1.0)
+            wind_score = min(max_wind_speed / 50.0, 1.0)
+            hazard_score = 0.6 * wind_score + 0.4 * freq_score
+
+            # 상세 결과 기록
+            if 'calculation_details' not in collected_data:
+                collected_data['calculation_details'] = {}
+            collected_data['calculation_details']['typhoon'] = {
+                'hazard_score': hazard_score,
+                'frequency': typhoon_frequency,   # DB에서 가져온 태풍 빈도
+                'max_wind': max_wind_speed,       # DB에서 가져온 최대풍속
+                'rx1day': rx1day                  # DB에서 가져온 1일 최대강수량
+            }
+            return round(hazard_score, 4)
 
         if not typhoons or lat is None or lon is None:
             # 데이터 없음 Fallback
@@ -85,6 +129,8 @@ class TyphoonHScoreAgent(BaseHazardHScoreAgent):
 
                 collected_data['calculation_details']['typhoon'] = {
                     'hazard_score': min(avg_impact, 1.0),
+                    'frequency': typhoon_frequency,   # DB에서 가져온 태풍 빈도
+                    'max_wind': max_wind_speed,       # DB에서 가져온 최대풍속
                     'impact_count': len(impacts),
                     'max_wind_speed_avg': sum(max_wind_speeds) / len(max_wind_speeds) if max_wind_speeds else 0,
                     'rx1day_mm': rx1day_mm,

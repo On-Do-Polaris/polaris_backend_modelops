@@ -1,9 +1,13 @@
 '''
 파일명: wildfire_probability_agent.py
-최종 수정일: 2025-12-11
-버전: v3.0
+최종 수정일: 2025-12-14
+버전: v4.0
 파일 개요: 산불 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v4.0 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-12-11: v3.0 - 월별 FWI에서 연도별 최대 FWI로 변경
 		* 강도지표: X_fire(t) = max FWI(t,m) (연도별 최대값)
 		* 연도별 AAL 계산으로 다른 에이전트와 통일
@@ -245,3 +249,68 @@ class WildfireProbabilityAgent(BaseProbabilityAgent):
 		fwi = humidity_factor * wind_factor * temp_factor * rain_factor * 5
 
 		return max(fwi, 0.0)  # 음수 방지
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 시계열 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_wildfire_timeseries() 반환값
+				- years: 연도 리스트
+				- ta: 평균기온 리스트
+				- rhm: 상대습도 리스트
+				- ws: 풍속 리스트
+				- rn: 강수량 리스트
+				- cdd: 연속무강수일 리스트
+				- climate_scenario: SSP 시나리오
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+		"""
+		years = timeseries_data.get('years', [])
+		ta_list = timeseries_data.get('ta', [])
+		rhm_list = timeseries_data.get('rhm', [])
+		ws_list = timeseries_data.get('ws', [])
+		rn_list = timeseries_data.get('rn', [])
+
+		# 연간 데이터를 월별로 확장 (12개월 반복)
+		n_years = len(years)
+		monthly_ta = []
+		monthly_rhm = []
+		monthly_ws = []
+		monthly_rn = []
+
+		for i in range(n_years):
+			ta_val = ta_list[i] if i < len(ta_list) else 15.0
+			rhm_val = rhm_list[i] if i < len(rhm_list) else 65.0
+			ws_val = ws_list[i] if i < len(ws_list) else 3.5
+			rn_val = (rn_list[i] / 12.0) if i < len(rn_list) else 100.0  # 연강수량을 월평균으로
+			for _ in range(12):
+				monthly_ta.append(ta_val)
+				monthly_rhm.append(rhm_val)
+				monthly_ws.append(ws_val)
+				monthly_rn.append(rn_val)
+
+		return {
+			'climate_data': {
+				'ta': monthly_ta,
+				'rhm': monthly_rhm,
+				'ws': monthly_ws,
+				'rn': monthly_rn,
+			},
+			'years': years,
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		# 30년치 월별 기본 데이터 생성
+		n_months = 30 * 12
+		return {
+			'climate_data': {
+				'ta': [20.0] * n_months,
+				'rhm': [65.0] * n_months,
+				'ws': [3.5] * n_months,
+				'rn': [50.0] * n_months,
+			},
+		}

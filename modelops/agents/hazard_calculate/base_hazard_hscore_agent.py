@@ -1,18 +1,16 @@
 '''
 파일명: base_hazard_hscore_agent.py
-최종 수정일: 2025-11-21
-버전: v1
-파일 개요: Hazard 점수(H) 계산 베이스 Agent
+최종 수정일: 2025-12-14
+버전: v3
+파일 개요: Hazard 점수(H) 계산 베이스 Agent (순수 계산 로직만)
 변경 이력:
 	- 2025-11-21: v1 - H×E×V에서 H만 계산하도록 분리
-		* Exposure, Vulnerability 계산 제거
-		* Hazard 점수만 계산
-		* 클래스명: BasePhysicalRiskScoreAgent → BaseHazardHScoreAgent
+	- 2025-12-13: v2 - DB 연동 기능 추가
+	- 2025-12-14: v3 - 원래 설계 복원 (DB 로직 제거, 순수 계산만)
 '''
 from typing import Dict, Any
 from abc import ABC, abstractmethod
 import logging
-  
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +19,11 @@ class BaseHazardHScoreAgent(ABC):
 	"""
 	Hazard 점수(H) 계산 베이스 Agent
 	기후 위험의 강도 및 발생 빈도 평가
+
+	원래 설계:
+	- Agent는 순수 계산 로직만 담당
+	- 데이터는 HazardDataCollector → data_loaders에서 수집
+	- Agent는 collected_data를 받아 계산만 수행
 	"""
 
 	def __init__(self, risk_type: str):
@@ -28,53 +31,64 @@ class BaseHazardHScoreAgent(ABC):
 		BaseHazardHScoreAgent 초기화
 
 		Args:
-			risk_type: 리스크 타입 (예: 'high_temperature', 'typhoon')
+			risk_type: 리스크 타입 (예: 'extreme_heat', 'typhoon')
 		"""
 		self.risk_type = risk_type
 		self.logger = logger
 		self.logger.info(f"{risk_type} Hazard Score Agent 초기화")
 
-	def calculate_hazard_score(
-		self,
-		collected_data: Dict[str, Any]
-	) -> Dict[str, Any]:
+	def calculate_hazard_score(self, collected_data: Dict[str, Any]) -> Dict[str, Any]:
 		"""
-		Hazard 점수(H) 계산
+		Hazard 점수 계산 진입점
 
 		Args:
-			collected_data: 수집된 기후 데이터
+			collected_data: HazardDataCollector가 수집한 데이터
+				{
+					'latitude': float,
+					'longitude': float,
+					'risk_type': str,
+					'scenario': str,
+					'target_year': int,
+					'climate_data': {...},
+					'spatial_data': {...},
+					'building_data': {...},
+					...
+				}
 
 		Returns:
-			Hazard 점수 딕셔너리
-				- risk_type: 리스크 타입
-				- hazard_score: Hazard 점수 (0.0 ~ 1.0)
-				- hazard_score_100: 100점 스케일 점수
-				- hazard_level: 위험 등급
-				- calculation_details: 계산 상세 내역
-				- status: 계산 상태
+			{
+				'risk_type': str,
+				'hazard_score': float (0-1),
+				'hazard_score_100': float (0-100),
+				'hazard_level': str,
+				'recommendation': str,
+				'details': {...},
+				'status': str
+			}
 		"""
-		self.logger.info(f"{self.risk_type} Hazard Score 계산 시작")
-
 		try:
-			# Hazard 점수 계산 (추상 메서드)
+			# 하위 클래스에서 구현한 calculate_hazard() 호출
 			hazard_score = self.calculate_hazard(collected_data)
 
-			# 100점 스케일 변환
+			# 0-100 스케일로 변환
 			hazard_score_100 = hazard_score * 100
 
-			# 위험 등급 산출
+			# 위험 등급 및 권고사항
 			hazard_level = self.get_hazard_level(hazard_score_100)
+			recommendation = self.get_recommendation(hazard_score_100)
 
 			result = {
 				'risk_type': self.risk_type,
-				'hazard_score': round(hazard_score, 4),
-				'hazard_score_100': round(hazard_score_100, 2),
+				'hazard_score': hazard_score,
+				'hazard_score_100': hazard_score_100,
 				'hazard_level': hazard_level,
-				'calculation_details': {
-					'formula': 'Hazard Score (H) - 기후 위험 강도 및 발생 빈도',
-					'result': {
-						'Hazard Score': round(hazard_score, 4),
-						'Hazard Score (100-scale)': round(hazard_score_100, 2)
+				'recommendation': recommendation,
+				'details': {
+					'input_data': {
+						'scenario': collected_data.get('scenario', 'SSP245'),
+						'target_year': collected_data.get('target_year', 2030),
+						'latitude': collected_data.get('latitude'),
+						'longitude': collected_data.get('longitude'),
 					}
 				},
 				'status': 'completed'
@@ -97,11 +111,10 @@ class BaseHazardHScoreAgent(ABC):
 	@abstractmethod
 	def calculate_hazard(self, collected_data: Dict[str, Any]) -> float:
 		"""
-		Hazard 점수 계산
-		기후 위험의 강도 및 발생 빈도 평가
+		Hazard 점수 계산 (하위 클래스에서 구현)
 
 		Args:
-			collected_data: 수집된 기후 데이터
+			collected_data: 수집된 데이터 (climate_data, spatial_data 등)
 
 		Returns:
 			Hazard 점수 (0.0 ~ 1.0)
@@ -155,3 +168,45 @@ class BaseHazardHScoreAgent(ABC):
 		}
 
 		return recommendations.get(hazard_level, '정기적인 위험 재평가가 필요합니다.')
+
+	# ==================== 유틸리티 메서드 ====================
+
+	def normalize_score(self, value: float, min_val: float, max_val: float,
+						clip: bool = True) -> float:
+		"""
+		값을 0-1 범위로 정규화
+
+		Args:
+			value: 정규화할 값
+			min_val: 최소값
+			max_val: 최대값
+			clip: True이면 0-1 범위로 클리핑
+
+		Returns:
+			정규화된 값 (0.0 ~ 1.0)
+		"""
+		if max_val == min_val:
+			return 0.5
+
+		normalized = (value - min_val) / (max_val - min_val)
+
+		if clip:
+			return max(0.0, min(1.0, normalized))
+		return normalized
+
+	def get_value_with_fallback(self, data: Dict, keys: list, fallback: Any) -> Any:
+		"""
+		딕셔너리에서 값을 찾되, 여러 키를 순차적으로 시도
+
+		Args:
+			data: 데이터 딕셔너리
+			keys: 시도할 키 목록
+			fallback: 모든 키가 없을 때 반환할 기본값
+
+		Returns:
+			찾은 값 또는 기본값
+		"""
+		for key in keys:
+			if key in data and data[key] is not None:
+				return data[key]
+		return fallback

@@ -1,9 +1,13 @@
 '''
 파일명: water_stress_probability_agent.py
-최종 수정일: 2025-11-23
-버전: v2
+최종 수정일: 2025-12-14
+버전: v3
 파일 개요: 물부족 리스크 확률 P(H) 계산 Agent
 변경 이력:
+	- 2025-12-14: v3 - Hazard/Exposure 패턴 적용
+		* _build_collected_data() 메서드 추가
+		* calculate(lat, lon, ssp_scenario) 지원
+		* ClimateDataLoader 기반 데이터 fetch
 	- 2025-11-23: v2 - Aqueduct 4.0 BWS 기반 미래 용수이용량 추정 추가
 		* SSP 시나리오별 미래 용수이용량 계산
 		* 1년 단위 선형 보간 (2019, 2030, 2050, 2080 앵커)
@@ -571,3 +575,47 @@ class WaterStressProbabilityAgent(BaseProbabilityAgent):
 		et0_monthly = et0_daily * 30
 
 		return max(et0_monthly, 0.0)  # 음수 방지
+
+	def _build_collected_data(self, timeseries_data: Dict[str, Any]) -> Dict[str, Any]:
+		"""
+		ClimateDataLoader에서 가져온 데이터를 collected_data 형식으로 변환
+
+		Args:
+			timeseries_data: get_water_stress_data() 반환값
+				- annual_rainfall_mm: 연간 강수량
+				- consecutive_dry_days: 연속 무강수일
+				- cdd: CDD 값
+				- data_source: 데이터 소스
+
+		Returns:
+			calculate_probability()에 전달할 collected_data
+
+		Note:
+			물부족 계산은 WAMIS 용수이용량, 유량 데이터 등이 필요합니다.
+			ClimateDataLoader의 단순 조회로는 충분하지 않아
+			기본값 기반 추정을 사용합니다.
+		"""
+		annual_rainfall = timeseries_data.get('annual_rainfall_mm', 1200.0)
+		cdd = timeseries_data.get('cdd', 15)
+
+		# 간단한 WSI 추정 (강수량 기반)
+		# 가뭄 지역일수록 WSI가 높음
+		# 기본 용수이용량 / 기준 수자원량으로 추정
+		estimated_wsi = 0.3 if annual_rainfall > 1000 else 0.6
+
+		return {
+			'water_data': [
+				{'year': 2020, 'withdrawal': 1e9}  # 기본 용수이용량 10억톤
+			],
+			'estimated_wsi': estimated_wsi,
+			'climate_scenario': timeseries_data.get('climate_scenario', 'SSP245')
+		}
+
+	def _get_fallback_data(self) -> Dict[str, Any]:
+		"""ClimateDataLoader가 없을 때 사용할 기본 데이터"""
+		return {
+			'water_data': [
+				{'year': 2020, 'withdrawal': 1e9}
+			],
+			'estimated_wsi': 0.4,
+		}

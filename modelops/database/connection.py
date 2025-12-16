@@ -51,6 +51,35 @@ class DatabaseConnection:
             """)
             return [dict(row) for row in cursor.fetchall()]
 
+    def fetch_all_grid_points(self) -> List[tuple]:
+        """
+        모든 격자점 좌표 조회 (배치 처리용)
+
+        Returns:
+            [(latitude, longitude), ...] 튜플 리스트
+        """
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            # location_grid 테이블에서 격자점 조회
+            cursor.execute("""
+                SELECT DISTINCT latitude, longitude
+                FROM location_grid
+                ORDER BY latitude, longitude
+            """)
+            rows = cursor.fetchall()
+            if rows:
+                return [(row['latitude'], row['longitude']) for row in rows]
+
+            # location_grid가 비어있으면 기후 데이터 테이블에서 조회
+            cursor.execute("""
+                SELECT DISTINCT latitude, longitude
+                FROM wsdi_data
+                ORDER BY latitude, longitude
+                LIMIT 100
+            """)
+            rows = cursor.fetchall()
+            return [(row['latitude'], row['longitude']) for row in rows]
+
     @staticmethod
     def fetch_climate_data(latitude: float, longitude: float, risk_type: str = None,
                           ssp_scenario: str = 'ssp2') -> Dict[str, Any]:
@@ -280,70 +309,119 @@ class DatabaseConnection:
     @staticmethod
     def save_probability_results(results: List[Dict[str, Any]]) -> None:
         """
-        P(H) 계산 결과 저장 (업데이트: aal, bin_probabilities, calculation_details)
+        P(H) 계산 결과 저장
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_aal, ssp245_aal, ssp370_aal, ssp585_aal
+            - ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs
 
         Args:
             results: 저장할 결과 리스트
                 - latitude: 위도
                 - longitude: 경도
+                - scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
+                - target_year: 분석 연도
                 - risk_type: 리스크 타입
-                - aal: AAL (Annual Average Loss) = Σ(P[i] × DR[i])
-                - bin_probabilities: bin별 발생확률 배열 (JSON)
-                - calculation_details: 계산 상세정보 (JSON)
-                - bin_data: (하위 호환성) bin별 상세 정보 (선택)
+                - aal: AAL (Annual Average Loss)
+                - bin_probabilities: bin별 발생확률 배열
         """
         import json
+
+        # 시나리오 → 컬럼명 매핑
+        scenario_to_aal_col = {
+            'SSP126': 'ssp126_aal',
+            'SSP245': 'ssp245_aal',
+            'SSP370': 'ssp370_aal',
+            'SSP585': 'ssp585_aal'
+        }
+        scenario_to_bin_col = {
+            'SSP126': 'ssp126_bin_probs',
+            'SSP245': 'ssp245_bin_probs',
+            'SSP370': 'ssp370_bin_probs',
+            'SSP585': 'ssp585_bin_probs'
+        }
 
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
-                # bin_probabilities와 calculation_details를 JSON으로 변환
-                bin_prob_json = json.dumps(result.get('bin_probabilities', []))
-                calc_details_json = json.dumps(result.get('calculation_details', {}))
-                bin_data_json = json.dumps(result.get('bin_data', {}))
+                scenario = result.get('scenario', 'SSP245')
+                aal_col = scenario_to_aal_col.get(scenario)
+                bin_col = scenario_to_bin_col.get(scenario)
 
-                cursor.execute("""
+                if not aal_col or not bin_col:
+                    continue  # 알 수 없는 시나리오는 스킵
+
+                bin_probs_json = json.dumps(result.get('bin_probabilities', []))
+
+                # UPSERT: 해당 시나리오 컬럼만 업데이트
+                cursor.execute(f"""
                     INSERT INTO probability_results
-                    (latitude, longitude, risk_type, aal, bin_probabilities,
-                     calculation_details, bin_data, calculated_at)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
+                    (latitude, longitude, risk_type, target_year, {aal_col}, {bin_col})
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (latitude, longitude, risk_type, target_year)
                     DO UPDATE SET
-                        aal = EXCLUDED.aal,
-                        bin_probabilities = EXCLUDED.bin_probabilities,
-                        calculation_details = EXCLUDED.calculation_details,
-                        bin_data = EXCLUDED.bin_data,
-                        calculated_at = EXCLUDED.calculated_at
+                        {aal_col} = EXCLUDED.{aal_col},
+                        {bin_col} = EXCLUDED.{bin_col}
                 """, (
                     result['latitude'],
                     result['longitude'],
                     result['risk_type'],
+                    result['target_year'],
                     result.get('aal', 0.0),
-                    bin_prob_json,
-                    calc_details_json,
-                    bin_data_json
+                    bin_probs_json
                 ))
 
     @staticmethod
     def save_hazard_results(results: List[Dict[str, Any]]) -> None:
-        """Hazard Score 계산 결과 저장"""
+        """
+        Hazard Score 계산 결과 저장
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_score_100, ssp245_score_100, ssp370_score_100, ssp585_score_100
+
+        Args:
+            results: 저장할 결과 리스트
+                - latitude: 위도
+                - longitude: 경도
+                - scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
+                - target_year: 분석 연도
+                - risk_type: 리스크 타입
+                - hazard_score_100: 0-100 점수
+        """
+        # 시나리오 → 컬럼명 매핑
+        scenario_to_column = {
+            'SSP126': 'ssp126_score_100',
+            'SSP245': 'ssp245_score_100',
+            'SSP370': 'ssp370_score_100',
+            'SSP585': 'ssp585_score_100'
+        }
+
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
-                cursor.execute("""
+                scenario = result.get('scenario', 'SSP245')
+                column_name = scenario_to_column.get(scenario)
+
+                if not column_name:
+                    continue  # 알 수 없는 시나리오는 스킵
+
+                # UPSERT: 해당 시나리오 컬럼만 업데이트
+                cursor.execute(f"""
                     INSERT INTO hazard_results
-                    (latitude, longitude, risk_type, hazard_score,
-                     hazard_score_100, hazard_level, calculated_at)
-                    VALUES (%(latitude)s, %(longitude)s, %(risk_type)s,
-                            %(hazard_score)s, %(hazard_score_100)s,
-                            %(hazard_level)s, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
+                    (latitude, longitude, risk_type, target_year, {column_name})
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (latitude, longitude, risk_type, target_year)
                     DO UPDATE SET
-                        hazard_score = EXCLUDED.hazard_score,
-                        hazard_score_100 = EXCLUDED.hazard_score_100,
-                        hazard_level = EXCLUDED.hazard_level,
-                        calculated_at = EXCLUDED.calculated_at
-                """, result)
+                        {column_name} = EXCLUDED.{column_name}
+                """, (
+                    result['latitude'],
+                    result['longitude'],
+                    result['risk_type'],
+                    result['target_year'],
+                    result.get('hazard_score_100', 0.0)
+                ))
 
     @staticmethod
     def fetch_building_info(latitude: float, longitude: float) -> Dict[str, Any]:
@@ -405,6 +483,24 @@ class DatabaseConnection:
             return {row['risk_type']: row['base_aal'] for row in cursor.fetchall()}
 
     @staticmethod
+    def _get_or_create_site_id(cursor, latitude: float, longitude: float) -> str:
+        """
+        좌표 기반 deterministic site_id 생성 (UUID5)
+
+        Args:
+            cursor: DB cursor (unused, kept for interface compatibility)
+            latitude: 위도
+            longitude: 경도
+
+        Returns:
+            site_id (UUID string)
+        """
+        # 좌표 기반 deterministic UUID 생성 (uuid5)
+        namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')  # DNS namespace
+        name = f"site:{latitude:.6f}:{longitude:.6f}"
+        return str(uuid.uuid5(namespace, name))
+
+    @staticmethod
     def save_exposure_results(results: List[Dict[str, Any]]) -> None:
         """
         E (Exposure) 계산 결과 저장
@@ -414,32 +510,31 @@ class DatabaseConnection:
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
-                - exposure_score: 노출도 점수 (0-1)
-                - proximity_factor: 근접도 (0-1)
-                - normalized_asset_value: 정규화된 자산가치 (0-1)
+                - exposure_score: 노출도 점수 (0-100)
+                - target_year: 목표 연도 (선택, 기본 2050)
         """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
+                lat, lon = result['latitude'], result['longitude']
+                risk_type = result['risk_type']
+                target_year = result.get('target_year', 2050)
+                score = result.get('exposure_score', 0.0)
+
+                # site_id 조회/생성
+                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+
+                # 기존 데이터 삭제 후 삽입 (site_id, risk_type, target_year 기준)
+                cursor.execute("""
+                    DELETE FROM exposure_results
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
+                """, (site_id, risk_type, target_year))
+
                 cursor.execute("""
                     INSERT INTO exposure_results
-                    (latitude, longitude, risk_type, exposure_score, proximity_factor,
-                     normalized_asset_value, calculated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
-                    DO UPDATE SET
-                        exposure_score = EXCLUDED.exposure_score,
-                        proximity_factor = EXCLUDED.proximity_factor,
-                        normalized_asset_value = EXCLUDED.normalized_asset_value,
-                        calculated_at = EXCLUDED.calculated_at
-                """, (
-                    result['latitude'],
-                    result['longitude'],
-                    result['risk_type'],
-                    result.get('exposure_score', 0.0),
-                    result.get('proximity_factor', 0.0),
-                    result.get('normalized_asset_value', 0.0)
-                ))
+                    (site_id, latitude, longitude, risk_type, target_year, exposure_score)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (site_id, lat, lon, risk_type, target_year, score))
 
     @staticmethod
     def save_vulnerability_results(results: List[Dict[str, Any]]) -> None:
@@ -452,35 +547,30 @@ class DatabaseConnection:
                 - longitude: 경도
                 - risk_type: 리스크 타입
                 - vulnerability_score: 취약성 점수 (0-100)
-                - vulnerability_level: 취약성 등급
-                - factors: 취약성 요인 딕셔너리 (JSONB)
+                - target_year: 목표 연도 (선택, 기본 2050)
         """
-        import json
-
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
-                factors_json = json.dumps(result.get('factors', {}))
+                lat, lon = result['latitude'], result['longitude']
+                risk_type = result['risk_type']
+                target_year = result.get('target_year', 2050)
+                score = result.get('vulnerability_score', 0.0)
+
+                # site_id 조회/생성
+                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+
+                # 기존 데이터 삭제 후 삽입
+                cursor.execute("""
+                    DELETE FROM vulnerability_results
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
+                """, (site_id, risk_type, target_year))
 
                 cursor.execute("""
                     INSERT INTO vulnerability_results
-                    (latitude, longitude, risk_type, vulnerability_score,
-                     vulnerability_level, factors, calculated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
-                    DO UPDATE SET
-                        vulnerability_score = EXCLUDED.vulnerability_score,
-                        vulnerability_level = EXCLUDED.vulnerability_level,
-                        factors = EXCLUDED.factors,
-                        calculated_at = EXCLUDED.calculated_at
-                """, (
-                    result['latitude'],
-                    result['longitude'],
-                    result['risk_type'],
-                    result.get('vulnerability_score', 0.0),
-                    result.get('vulnerability_level', 'medium'),
-                    factors_json
-                ))
+                    (site_id, latitude, longitude, risk_type, target_year, vulnerability_score)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (site_id, lat, lon, risk_type, target_year, score))
 
     @staticmethod
     def save_aal_scaled_results(results: List[Dict[str, Any]]) -> None:
@@ -492,38 +582,34 @@ class DatabaseConnection:
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
-                - base_aal: 기본 AAL
-                - vulnerability_scale: F_vuln (0.9-1.1)
+                - target_year: 목표 연도
+                - scenario: SSP 시나리오 (SSP126, SSP245, SSP370, SSP585)
                 - final_aal: 최종 AAL
-                - insurance_rate: 보험 보전율 (기본 0.0)
-                - expected_loss: 예상 손실액 (선택, 기본 None)
         """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             for result in results:
+                lat, lon = result['latitude'], result['longitude']
+                risk_type = result['risk_type']
+                target_year = result.get('target_year', 2050)
+                scenario = result.get('scenario', 'SSP245').lower()
+                final_aal = result.get('final_aal', 0.0)
+                aal_column = f"{scenario}_final_aal"
+
+                # site_id 조회/생성
+                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+
+                # 기존 데이터 삭제 후 삽입
                 cursor.execute("""
+                    DELETE FROM aal_scaled_results
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
+                """, (site_id, risk_type, target_year))
+
+                cursor.execute(f"""
                     INSERT INTO aal_scaled_results
-                    (latitude, longitude, risk_type, base_aal, vulnerability_scale,
-                     final_aal, insurance_rate, expected_loss, calculated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (latitude, longitude, risk_type)
-                    DO UPDATE SET
-                        base_aal = EXCLUDED.base_aal,
-                        vulnerability_scale = EXCLUDED.vulnerability_scale,
-                        final_aal = EXCLUDED.final_aal,
-                        insurance_rate = EXCLUDED.insurance_rate,
-                        expected_loss = EXCLUDED.expected_loss,
-                        calculated_at = EXCLUDED.calculated_at
-                """, (
-                    result['latitude'],
-                    result['longitude'],
-                    result['risk_type'],
-                    result.get('base_aal', 0.0),
-                    result.get('vulnerability_scale', 1.0),
-                    result.get('final_aal', 0.0),
-                    result.get('insurance_rate', 0.0),
-                    result.get('expected_loss')
-                ))
+                    (site_id, latitude, longitude, risk_type, target_year, {aal_column})
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (site_id, lat, lon, risk_type, target_year, final_aal))
 
     # ==================== Batch Jobs 관리 메서드 ====================
 
@@ -694,58 +780,102 @@ class DatabaseConnection:
 
     @staticmethod
     def fetch_hazard_results(latitude: float, longitude: float,
-                            risk_types: List[str] = None) -> Dict[str, Dict[str, Any]]:
+                            risk_types: List[str] = None,
+                            target_year: int = None,
+                            scenario: str = None) -> Dict[str, Dict[str, Any]]:
         """
         Hazard Score 조회
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_score_100, ssp245_score_100, ssp370_score_100, ssp585_score_100
 
         Args:
             latitude: 위도
             longitude: 경도
             risk_types: 조회할 리스크 타입 목록 (None이면 전체)
+            target_year: 조회할 연도 (None이면 전체)
+            scenario: 조회할 시나리오 (SSP126, SSP245, SSP370, SSP585, None이면 전체)
 
         Returns:
             {
-                'extreme_heat': {'hazard_score': 0.75, 'hazard_score_100': 75, ...},
+                'extreme_heat': {
+                    'target_year': 2050,
+                    'ssp126_score_100': 45.0,
+                    'ssp245_score_100': 55.0,
+                    'ssp370_score_100': 65.0,
+                    'ssp585_score_100': 75.0
+                },
                 ...
             }
         """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
 
+            # 기본 쿼리
+            query = """
+                SELECT risk_type, target_year,
+                       ssp126_score_100, ssp245_score_100,
+                       ssp370_score_100, ssp585_score_100
+                FROM hazard_results
+                WHERE latitude = %s AND longitude = %s
+            """
+            params = [latitude, longitude]
+
             if risk_types:
-                cursor.execute("""
-                    SELECT risk_type, hazard_score, hazard_score_100, hazard_level
-                    FROM hazard_results
-                    WHERE latitude = %s AND longitude = %s
-                      AND risk_type = ANY(%s)
-                """, (latitude, longitude, risk_types))
-            else:
-                cursor.execute("""
-                    SELECT risk_type, hazard_score, hazard_score_100, hazard_level
-                    FROM hazard_results
-                    WHERE latitude = %s AND longitude = %s
-                """, (latitude, longitude))
+                query += " AND risk_type = ANY(%s)"
+                params.append(risk_types)
+
+            if target_year:
+                query += " AND target_year = %s"
+                params.append(target_year)
+
+            query += " ORDER BY risk_type, target_year"
+
+            cursor.execute(query, params)
 
             results = {}
             for row in cursor.fetchall():
-                results[row['risk_type']] = {
-                    'hazard_score': row['hazard_score'],
-                    'hazard_score_100': row['hazard_score_100'],
-                    'hazard_level': row['hazard_level']
+                risk_type = row['risk_type']
+                year = row['target_year']
+                key = f"{risk_type}_{year}" if target_year is None else risk_type
+
+                result_data = {
+                    'target_year': year,
+                    'ssp126_score_100': row['ssp126_score_100'],
+                    'ssp245_score_100': row['ssp245_score_100'],
+                    'ssp370_score_100': row['ssp370_score_100'],
+                    'ssp585_score_100': row['ssp585_score_100']
                 }
+
+                # 특정 시나리오만 요청한 경우
+                if scenario:
+                    scenario_col = f"{scenario.lower()}_score_100"
+                    result_data['hazard_score_100'] = row.get(scenario_col, 0.0)
+
+                results[key] = result_data
 
             return results
 
     @staticmethod
     def fetch_probability_results(latitude: float, longitude: float,
-                                 risk_types: List[str] = None) -> Dict[str, Dict[str, Any]]:
+                                 risk_types: List[str] = None,
+                                 target_year: int = None,
+                                 scenario: str = None) -> Dict[str, Dict[str, Any]]:
         """
         P(H) 조회
+
+        테이블 스키마:
+            - latitude, longitude, risk_type, target_year (PK)
+            - ssp126_aal, ssp245_aal, ssp370_aal, ssp585_aal
+            - ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs
 
         Args:
             latitude: 위도
             longitude: 경도
             risk_types: 조회할 리스크 타입 목록 (None이면 전체)
+            target_year: 조회할 연도 (None이면 최신)
+            scenario: 조회할 시나리오 (SSP126, SSP245, SSP370, SSP585, None이면 전체)
 
         Returns:
             {
@@ -756,28 +886,53 @@ class DatabaseConnection:
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
 
+            # 기본 쿼리 - 시나리오별 컬럼 조회
+            query = """
+                SELECT risk_type, target_year,
+                       ssp126_aal, ssp245_aal, ssp370_aal, ssp585_aal,
+                       ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs
+                FROM probability_results
+                WHERE latitude = %s AND longitude = %s
+            """
+            params = [latitude, longitude]
+
             if risk_types:
-                cursor.execute("""
-                    SELECT risk_type, aal, bin_probabilities, calculation_details, bin_data
-                    FROM probability_results
-                    WHERE latitude = %s AND longitude = %s
-                      AND risk_type = ANY(%s)
-                """, (latitude, longitude, risk_types))
-            else:
-                cursor.execute("""
-                    SELECT risk_type, aal, bin_probabilities, calculation_details, bin_data
-                    FROM probability_results
-                    WHERE latitude = %s AND longitude = %s
-                """, (latitude, longitude))
+                query += " AND risk_type = ANY(%s)"
+                params.append(risk_types)
+
+            if target_year:
+                query += " AND target_year = %s"
+                params.append(target_year)
+
+            query += " ORDER BY risk_type, target_year"
+
+            cursor.execute(query, params)
 
             results = {}
             for row in cursor.fetchall():
-                results[row['risk_type']] = {
-                    'aal': row['aal'],
-                    'bin_probabilities': row['bin_probabilities'],
-                    'calculation_details': row['calculation_details'],
-                    'bin_data': row['bin_data']
+                risk_type = row['risk_type']
+                year = row['target_year']
+                key = f"{risk_type}_{year}" if target_year is None else risk_type
+
+                result_data = {
+                    'target_year': year,
+                    'ssp126_aal': row['ssp126_aal'],
+                    'ssp245_aal': row['ssp245_aal'],
+                    'ssp370_aal': row['ssp370_aal'],
+                    'ssp585_aal': row['ssp585_aal'],
+                    'ssp126_bin_probs': row['ssp126_bin_probs'],
+                    'ssp245_bin_probs': row['ssp245_bin_probs'],
+                    'ssp370_bin_probs': row['ssp370_bin_probs'],
+                    'ssp585_bin_probs': row['ssp585_bin_probs']
                 }
+
+                # 특정 시나리오만 요청한 경우, aal과 bin_probabilities 키 추가
+                if scenario:
+                    scenario_lower = scenario.lower()
+                    result_data['aal'] = row.get(f'{scenario_lower}_aal', 0.0)
+                    result_data['bin_probabilities'] = row.get(f'{scenario_lower}_bin_probs')
+
+                results[key] = result_data
 
             return results
 
@@ -837,3 +992,111 @@ class DatabaseConnection:
                 'population_change_2020_2050': 0,
                 'population_change_rate_percent': 0.0
             }
+
+    @staticmethod
+    def save_candidate_site(
+        latitude: float,
+        longitude: float,
+        aal: float = None,
+        aal_by_risk: Dict[str, float] = None,
+        risk_score: int = None,
+        risks: Dict[str, Any] = None,
+        reference_site_id: str = None
+    ) -> str:
+        """
+        후보지 추천 결과 저장 (E, V, AAL 계산 결과 중심)
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            aal: 연평균 손실 평균 (9개 리스크 평균)
+            aal_by_risk: 리스크별 개별 AAL {risk_type: final_aal}
+            risk_score: 종합 리스크 점수 (0-100)
+            risks: 개별 리스크 점수 (JSON)
+            reference_site_id: 참조 사업장 ID (요청에서 전달된 site_id)
+
+        Returns:
+            생성된 후보지 ID (UUID string)
+        """
+        candidate_id = str(uuid.uuid4())
+        # name 필드는 NOT NULL이므로 임시 값을 사용합니다.
+        # 필요하다면 이 로직을 수정하여 실제 이름을 제공해야 합니다.
+        generated_name = f"Candidate Site ({latitude:.4f}, {longitude:.4f})"
+
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO candidate_sites (
+                    id, name, latitude, longitude,
+                    aal, aal_by_risk, risk_score, risks, site_id,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s::jsonb, %s, %s::jsonb, %s,
+                    NOW(), NOW()
+                )
+                RETURNING id
+            """, (
+                candidate_id, generated_name, latitude, longitude,
+                aal, json.dumps(aal_by_risk) if aal_by_risk else None,
+                risk_score, json.dumps(risks) if risks else None,
+                reference_site_id
+            ))
+
+            return candidate_id
+
+    @staticmethod
+    def check_candidate_exists(
+        latitude: float,
+        longitude: float,
+        scenario: str,
+        target_year: int,
+        tolerance: float = 0.0001
+    ) -> bool:
+        """
+        후보지가 이미 평가되었는지 확인
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            scenario: SSP 시나리오
+            target_year: 목표 연도
+            tolerance: 좌표 허용 오차 (기본 0.0001도 ≈ 11m)
+
+        Returns:
+            True if exists with complete data, False otherwise
+        """
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 1. candidate_sites 테이블에서 좌표 매칭
+                cursor.execute("""
+                    SELECT id
+                    FROM candidate_sites
+                    WHERE ABS(latitude - %s) < %s
+                      AND ABS(longitude - %s) < %s
+                """, (latitude, tolerance, longitude, tolerance))
+
+                if not cursor.fetchone():
+                    return False
+
+                # 2. site_id 생성 (deterministic UUID)
+                site_id = DatabaseConnection._get_or_create_site_id(cursor, latitude, longitude)
+
+                # 3. E, V, AAL 데이터 완전성 확인 (9개 리스크 타입 모두 존재해야 함)
+                cursor.execute("""
+                    SELECT
+                        (SELECT COUNT(DISTINCT risk_type) FROM exposure_results
+                         WHERE site_id = %s AND target_year = %s) as e_count,
+                        (SELECT COUNT(DISTINCT risk_type) FROM vulnerability_results
+                         WHERE site_id = %s AND target_year = %s) as v_count,
+                        (SELECT COUNT(DISTINCT risk_type) FROM aal_scaled_results
+                         WHERE site_id = %s AND target_year = %s) as aal_count
+                """, (site_id, target_year, site_id, target_year, site_id, target_year))
+
+                result = cursor.fetchone()
+                return result['e_count'] == 9 and result['v_count'] == 9 and result['aal_count'] == 9
+        except Exception as e:
+            logger.warning(f"중복 체크 실패 ({latitude}, {longitude}): {e}")
+            return False  # 오류 시 중복 아님으로 간주하여 계산 진행

@@ -212,7 +212,7 @@ class SiteRiskCalculator:
                 }
 
             # Step 4: DB 저장
-            self._save_results(latitude, longitude, site_id, results)
+            # self._save_results(latitude, longitude, site_id, results)
 
             # Step 5: 요약 통계
             summary = self._calculate_summary(results)

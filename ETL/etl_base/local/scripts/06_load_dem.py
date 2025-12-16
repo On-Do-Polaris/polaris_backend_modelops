@@ -145,7 +145,7 @@ def load_dem() -> None:
             y DOUBLE PRECISION NOT NULL,
             elevation DOUBLE PRECISION NOT NULL,
             region VARCHAR(100),
-            geom GEOMETRY(Point, 5174)
+            geom GEOMETRY(Point, 5186)
         );
     """)
     conn.commit()
@@ -185,7 +185,7 @@ def load_dem() -> None:
                         if len(batch_data) >= batch_size:
                             cursor.executemany("""
                                 INSERT INTO raw_dem (x, y, elevation, region, geom)
-                                VALUES (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 5174))
+                                VALUES (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 5186))
                             """, batch_data)
                             insert_count += len(batch_data)
                             batch_data = []
@@ -235,7 +235,7 @@ def load_dem() -> None:
     if batch_data:
         cursor.executemany("""
             INSERT INTO raw_dem (x, y, elevation, region, geom)
-            VALUES (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 5174))
+            VALUES (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 5186))
         """, batch_data)
         insert_count += len(batch_data)
         conn.commit()

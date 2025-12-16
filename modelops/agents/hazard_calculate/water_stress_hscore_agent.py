@@ -1,7 +1,11 @@
 '''
 파일명: water_stress_hscore_agent.py
+최종 수정일: 2025-12-14
+버전: v2
 설명: 물 부족(Water Stress) 리스크 Hazard 점수(H) 산출 Agent
-업데이트: HazardCalculator 로직 통합 (WAMIS 용수이용량 + 기후 강수량 기반)
+변경 이력:
+    - v1: HazardCalculator 로직 통합 (WAMIS 용수이용량 + 기후 강수량 기반)
+    - v2: 원래 설계 복원 (DB 로직 제거, 순수 계산만)
 '''
 from typing import Dict, Any
 from .base_hazard_hscore_agent import BaseHazardHScoreAgent
@@ -15,12 +19,15 @@ class WaterStressHScoreAgent(BaseHazardHScoreAgent):
     - 물부족지수(Water Stress Index) = 용수수요량 / 용수공급량
     - 용수수요량: WAMIS 권역별 생활/공업/농업 용수 이용량 합계
     - 용수공급량: 연강수량 × 유역면적 × 유출계수
-    
+
     Hazard Score 변환:
     - Index < 1.0 (No Stress) → 0.2
     - 1.0 ≤ Index < 1.5 (Mild) → 0.4
     - 1.5 ≤ Index < 2.0 (Moderate) → 0.7
     - Index ≥ 2.0 (Severe) → 1.0
+
+    데이터 흐름:
+    - HazardDataCollector → data_loaders (DB) → collected_data → 이 Agent
     """
 
     def __init__(self):
@@ -31,7 +38,7 @@ class WaterStressHScoreAgent(BaseHazardHScoreAgent):
         물 부족 Hazard 점수 계산
 
         Args:
-            collected_data: 수집된 데이터 딕셔너리
+            collected_data: HazardDataCollector가 수집한 데이터
                 - wamis_data: watershed_info, water_usage 포함
                 - climate_data: annual_rainfall_mm 포함
 
@@ -40,6 +47,24 @@ class WaterStressHScoreAgent(BaseHazardHScoreAgent):
         """
         wamis_data = collected_data.get('wamis_data', {})
         climate_data = collected_data.get('climate_data', {})
+
+        # collected_data에서 강수량 추출 (data_loaders가 DB에서 수집)
+        annual_rainfall = self.get_value_with_fallback(
+            climate_data,
+            ['annual_rainfall_mm', 'rn', 'total_rainfall'],
+            1200.0
+        )
+        climate_data['annual_rainfall_mm'] = annual_rainfall
+
+        # collected_data에서 유역 정보 추출
+        watershed_info = wamis_data.get('watershed_info', {})
+        runoff_coef = self.get_value_with_fallback(
+            watershed_info,
+            ['runoff_coef', 'runoff_coefficient'],
+            0.6
+        )
+        watershed_info['runoff_coef'] = runoff_coef
+        wamis_data['watershed_info'] = watershed_info
 
         try:
             # 1. 데이터 추출
@@ -93,6 +118,8 @@ class WaterStressHScoreAgent(BaseHazardHScoreAgent):
             
             collected_data['calculation_details']['water_stress'] = {
                 'hazard_score': hazard_score,
+                'rainfall': annual_rainfall_mm,  # DB에서 가져온 연강수량
+                'cdd': climate_data.get('cdd', climate_data.get('consecutive_dry_days')),  # 연속무강수일
                 'stress_index': stress_index,
                 'stress_level': stress_level,
                 'water_demand_m3_day': water_demand_m3_per_day,

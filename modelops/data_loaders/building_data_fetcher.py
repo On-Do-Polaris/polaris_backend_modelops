@@ -1,821 +1,725 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-건축물 대장 API를 활용한 건물 정보 자동 조회
-위/경도 → 건물 정보 자동 수집
+Building Data Fetcher (DB 기반)
+건물 정보 및 주소 정보를 PostgreSQL DB에서 조회
 
-Fallback 값: 모든 기본값은 정부 통계 기반 (TCFD 투명성 원칙 준수)
+변경 이력:
+    - 2025-12-14: API 기반 → DB 기반으로 전환
 """
 
-import os
-import requests
-import xmltodict
-from pathlib import Path
-from dotenv import load_dotenv
-from typing import Dict, Optional
-from geopy.distance import geodesic
+import logging
+from typing import Dict, Optional, Any
+from datetime import datetime
 
-# 통계 기반 Fallback 상수 import
-from modelops.config.fallback_constants import (
-    BUILDING_FALLBACK,
-    RIVER_FALLBACK,
-    COAST_FALLBACK,
-    DISASTER_FALLBACK,
-    get_flood_history_by_region,
-    DATA_SOURCES,
-)
-
-# 환경변수 로드
-BASE_DIR = Path(__file__).parent.parent.parent
-load_dotenv(BASE_DIR / ".env")
-
-# 하천 차수 추출 모듈
 try:
-    from .stream_order_simple import StreamOrderExtractor, get_stream_order_fallback
-    STREAM_ORDER_AVAILABLE = True
+    from ..database.connection import DatabaseConnection
+    DB_AVAILABLE = True
 except ImportError:
-    STREAM_ORDER_AVAILABLE = False
-    print("⚠️  stream_order_simple 모듈 import 실패 - 하천 차수는 기본값 사용")
+    DB_AVAILABLE = False
 
-# 재난안전데이터 API 모듈
+# 통계 기반 Fallback 상수
 try:
-    from .disaster_api_fetcher import DisasterAPIFetcher
-    DISASTER_API_AVAILABLE = True
+    from modelops.config.fallback_constants import (
+        BUILDING_FALLBACK,
+        RIVER_FALLBACK,
+        COAST_FALLBACK,
+        DATA_SOURCES,
+    )
+    FALLBACK_AVAILABLE = True
 except ImportError:
-    DISASTER_API_AVAILABLE = False
-    print("⚠️  disaster_api_fetcher 모듈 import 실패 - 재난 데이터는 기본값 사용")
+    FALLBACK_AVAILABLE = False
+    BUILDING_FALLBACK = {
+        'building_age': 25,
+        'structure': 'reinforced_concrete',
+        'main_purpose': 'residential',
+        'floors_above': 5,
+        'floors_below': 1,
+        'total_area': 1000.0,
+    }
+    RIVER_FALLBACK = {
+        'distance_to_river_m': 10000.0,
+        'watershed_area_km2': 100.0,
+        'stream_order': 2,
+    }
+    COAST_FALLBACK = {
+        'distance_to_coast_m': 50000.0,
+    }
+
+logger = logging.getLogger(__name__)
+
 
 class BuildingDataFetcher:
-    """건축물 정보 자동 조회 클래스"""
+    """
+    건물 정보 조회 클래스 (DB 기반)
+
+    데이터 소스: PostgreSQL DB
+    테이블: api_vworld_geocode, api_river_info, location_grid 등
+    """
 
     def __init__(self):
-        self.building_api_key = os.getenv("BUILDING_API_KEY")
-        self.vworld_api_key = os.getenv("VWORLD_API_KEY")
-        self.building_base_url = "https://apis.data.go.kr/1613000/BldRgstHubService"
-
-        # 하천 차수 추출기 초기화
-        if STREAM_ORDER_AVAILABLE:
-            try:
-                self.stream_extractor = StreamOrderExtractor()
-            except Exception as e:
-                print(f"   ⚠️  StreamOrderExtractor 초기화 실패: {e}")
-                self.stream_extractor = None
-        else:
-            self.stream_extractor = None
-
-        # 재난안전데이터 API 초기화
-        if DISASTER_API_AVAILABLE:
-            try:
-                self.disaster_fetcher = DisasterAPIFetcher()
-            except Exception as e:
-                print(f"   ⚠️  DisasterAPIFetcher 초기화 실패: {e}")
-                self.disaster_fetcher = None
-        else:
-            self.disaster_fetcher = None
+        """초기화"""
+        if not DB_AVAILABLE:
+            logger.warning("DatabaseConnection not available")
 
     def get_building_code_from_coords(self, lat: float, lon: float) -> Optional[Dict]:
         """
-        위/경도 → 시군구코드, 법정동코드, 번/지 변환
-        V-World Geocoder API 사용 (EPSG:4326 WGS84 좌표계)
+        위/경도 → 시군구코드, 법정동코드 조회
+
+        Args:
+            lat: 위도 (WGS84)
+            lon: 경도 (WGS84)
 
         Returns:
             {
-                'sido': str,  # 시도명
-                'sigungu': str,  # 시군구명
-                'dong': str,  # 법정동명
-                'dong_code': str,  # 법정동코드
-                'bun': str,  # 본번
-                'ji': str,  # 부번
-                'full_address': str,  # 전체 주소
-                'parcel_address': str,  # 지번 주소
-                'road_address': str,  # 도로명 주소
+                'sigungu_cd': str,
+                'bjdong_cd': str,
+                'dong_code': str,
+                'sido': str,
+                'sigungu': str,
+                'dong': str,
+                'full_address': str,
+                'data_source': str
             }
         """
-        url = "https://api.vworld.kr/req/address"
-        params = {
-            "service": "address",
-            "request": "getAddress",
-            "version": "2.0",
-            "crs": "EPSG:4326",
-            "point": f"{lon},{lat}",
-            "format": "json",
-            "type": "BOTH",  # 도로명 + 지번 둘 다
-            "zipcode": "true",
-            "simple": "false",
-            "key": self.vworld_api_key
-        }
+        if not DB_AVAILABLE:
+            return self._fallback_geocode()
 
         try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
 
-            if data['response']['status'] != 'OK':
-                print(f"   ⚠️  V-World API 응답 실패: {data['response'].get('status')}")
-                return None
+                # api_vworld_geocode에서 가장 가까운 좌표 찾기
+                cursor.execute("""
+                    SELECT
+                        sigungu_cd,
+                        bjdong_cd,
+                        dong_code,
+                        sido,
+                        sigungu,
+                        dong,
+                        full_address,
+                        ST_Distance(
+                            location::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                        ) AS distance_m
+                    FROM api_vworld_geocode
+                    ORDER BY location <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+                    LIMIT 1
+                """, (lon, lat, lon, lat))
 
-            results = data['response']['result']
-            if not results:
-                print(f"   ⚠️  해당 좌표의 주소 정보 없음")
-                return None
+                result = cursor.fetchone()
 
-            # 지번 주소 찾기 (type='parcel')
-            parcel_result = None
-            road_result = None
+                if result and result['distance_m'] < 5000:  # 5km 이내
+                    return {
+                        'sigungu_cd': result['sigungu_cd'],
+                        'bjdong_cd': result['bjdong_cd'],
+                        'dong_code': result['dong_code'],
+                        'sido': result['sido'],
+                        'sigungu': result['sigungu'],
+                        'dong': result['dong'],
+                        'full_address': result['full_address'],
+                        'data_source': 'DB'
+                    }
 
-            for item in results:
-                if item.get('type') == 'parcel':
-                    parcel_result = item
-                elif item.get('type') == 'road':
-                    road_result = item
+                # location_grid에서 시도
+                cursor.execute("""
+                    SELECT
+                        sigungu_cd,
+                        bjdong_cd,
+                        dong_code,
+                        sido,
+                        sigungu,
+                        dong,
+                        full_address
+                    FROM location_grid
+                    ORDER BY SQRT(POWER(longitude - %s, 2) + POWER(latitude - %s, 2))
+                    LIMIT 1
+                """, (lon, lat))
 
-            # 지번 주소 우선 사용
-            if parcel_result:
-                structure = parcel_result.get('structure', {})
+                result = cursor.fetchone()
 
-                # 번지 정보 파싱 (level5 또는 number1/number2)
-                bun = structure.get('number1', '')
-                ji = structure.get('number2', '')
+                if result:
+                    return {
+                        'sigungu_cd': result['sigungu_cd'],
+                        'bjdong_cd': result['bjdong_cd'],
+                        'dong_code': result['dong_code'],
+                        'sido': result['sido'],
+                        'sigungu': result['sigungu'],
+                        'dong': result['dong'],
+                        'full_address': result['full_address'],
+                        'data_source': 'DB'
+                    }
 
-                # number1/number2가 없으면 level5에서 파싱
-                if not bun:
-                    level5 = structure.get('level5', '')
-                    if level5 and '-' in level5:
-                        parts = level5.split('-')
-                        bun = parts[0]
-                        ji = parts[1] if len(parts) > 1 else ''
-                    elif level5:
-                        bun = level5
-                        ji = ''
-
-                result_dict = {
-                    'sido': structure.get('level1', ''),
-                    'sigungu': structure.get('level2', ''),
-                    'dong': structure.get('level4L', ''),  # 법정동명
-                    'dong_code': structure.get('level4LC', ''),  # 법정동코드 (10자리)
-                    'bun': bun,
-                    'ji': ji,
-                    'full_address': parcel_result.get('text', ''),
-                    'parcel_address': parcel_result.get('text', ''),
-                    'road_address': road_result.get('text', '') if road_result else '',
-                    'zipcode': parcel_result.get('zipcode', ''),
-                }
-
-                print(f"   ✅ 지번 주소: {result_dict['parcel_address']}")
-                if result_dict['bun']:
-                    print(f"      본번/부번: {result_dict['bun']}-{result_dict['ji'] if result_dict['ji'] else '0'}")
-                if result_dict['dong_code']:
-                    print(f"      법정동코드: {result_dict['dong_code']}")
-
-                return result_dict
-
-            elif road_result:
-                # 도로명 주소만 있는 경우
-                structure = road_result.get('structure', {})
-                print(f"   ⚠️  지번 주소 없음, 도로명 주소만 사용")
-
-                return {
-                    'sido': structure.get('level1', ''),
-                    'sigungu': structure.get('level2', ''),
-                    'dong': structure.get('level4L', ''),
-                    'dong_code': structure.get('level4LC', ''),
-                    'bun': '',
-                    'ji': '',
-                    'full_address': road_result.get('text', ''),
-                    'parcel_address': '',
-                    'road_address': road_result.get('text', ''),
-                    'zipcode': road_result.get('zipcode', ''),
-                }
-
-            return None
+                return self._fallback_geocode()
 
         except Exception as e:
-            print(f"   ⚠️  주소 조회 실패: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+            logger.error(f"Failed to get building code: {e}")
+            return self._fallback_geocode()
 
-    def get_admin_code(self, sigungu_name: str, dong_name: str, dong_code: str = None) -> Optional[Dict]:
+    def get_building_info(self, lat: float, lon: float) -> Dict:
         """
-        시군구명, 동명 → 행정코드 변환
+        위/경도로 건물 정보 조회 (building_aggregate_cache 테이블)
 
         Args:
-            sigungu_name: 시군구명 (예: 강남구)
-            dong_name: 법정동명 (예: 삼성동)
-            dong_code: V-World에서 받은 법정동코드 10자리 (예: 1168010500)
-
-        Returns:
-            {'sigungu_cd': str, 'bjdong_cd': str}
-        """
-        # 시군구 코드 매핑 (서울/경기 주요 지역)
-        sigungu_codes = {
-            '종로구': '11110', '중구': '11140', '용산구': '11170',
-            '성동구': '11200', '광진구': '11215', '동대문구': '11230',
-            '중랑구': '11260', '성북구': '11290', '강북구': '11305',
-            '도봉구': '11320', '노원구': '11350', '은평구': '11380',
-            '서대문구': '11410', '마포구': '11440', '양천구': '11470',
-            '강서구': '11500', '구로구': '11530', '금천구': '11545',
-            '영등포구': '11560', '동작구': '11590', '관악구': '11620',
-            '서초구': '11650', '강남구': '11680', '송파구': '11710',
-            '강동구': '11740',
-            '수원시': '41110', '성남시': '41130', '고양시': '41280',
-            '용인시': '41460', '부천시': '41190', '안산시': '41270',
-            '남양주시': '41360', '화성시': '41590', '평택시': '41220',
-            '유성구': '30200', '서구': '30170', '대덕구': '30230',
-            '동구': '30110', '중구': '30140'
-        }
-
-        sigungu_cd = sigungu_codes.get(sigungu_name, '11680')  # 기본값: 강남구
-
-        # 법정동 코드 처리
-        if dong_code and len(dong_code) == 10:
-            # V-World 법정동코드 (10자리) → 건축물대장 법정동코드 (5자리)
-            # 예: 1168010500 → 10500
-            bjdong_cd = dong_code[-5:]  # 뒤 5자리
-        else:
-            # 법정동코드 없으면 전체 조회
-            bjdong_cd = '00000'
-
-        return {
-            'sigungu_cd': sigungu_cd,
-            'bjdong_cd': bjdong_cd
-        }
-
-    def get_building_title_info(self, sigungu_cd: str, bjdong_cd: str = '00000',
-                                 bun: str = None, ji: str = None) -> Optional[Dict]:
-        """
-        건축물 표제부 조회 - 구조, 용도, 층수 등
-
-        Args:
-            sigungu_cd: 시군구코드 (5자리)
-            bjdong_cd: 법정동코드 (5자리)
-            bun: 본번 (선택, 정확한 건물 특정시)
-            ji: 부번 (선택, 정확한 건물 특정시)
-
-        Note:
-            본번/부번은 4자리 0-패딩 필요 (예: 16 → 0016)
-            본번/부번으로 조회시 결과가 없으면, 법정동 전체 조회로 재시도
-        """
-        url = f"{self.building_base_url}/getBrTitleInfo"
-
-        # 본번/부번 0-패딩 (4자리)
-        if bun:
-            bun = bun.zfill(4)
-        if ji:
-            ji = ji.zfill(4)
-
-        # 1차 시도: 본번/부번 포함 조회
-        params = {
-            "serviceKey": self.building_api_key,
-            "sigunguCd": sigungu_cd,
-            "bjdongCd": bjdong_cd,
-            "_type": "json",
-            "numOfRows": 100,  # 법정동 전체 조회시 많은 결과 대비
-            "pageNo": 1
-        }
-
-        if bun:
-            params['bun'] = bun
-        if ji:
-            params['ji'] = ji
-
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-
-            if data['response']['header']['resultCode'] == '00':
-                body = data['response'].get('body', {})
-                items = body.get('items', {})
-
-                # items가 비어있거나 ''인 경우 처리
-                if not items or items == '' or 'item' not in items:
-                    # 본번/부번으로 조회 실패시, 법정동만으로 재시도
-                    if bun or ji:
-                        print(f"   ⚠️  본번/부번({bun}-{ji})으로 조회 실패, 법정동 전체 조회 재시도...")
-                        params.pop('bun', None)
-                        params.pop('ji', None)
-                        response = requests.get(url, params=params, timeout=10)
-                        data = response.json()
-
-                        if data['response']['header']['resultCode'] == '00':
-                            body = data['response'].get('body', {})
-                            items = body.get('items', {})
-
-                            if not items or items == '' or 'item' not in items:
-                                print(f"   ⚠️  법정동 전체 조회도 실패")
-                                return None
-                        else:
-                            return None
-                    else:
-                        print(f"   ⚠️  건축물 조회 결과 없음 (시군구: {sigungu_cd}, 법정동: {bjdong_cd})")
-                        return None
-
-                item_list = items['item']
-
-                # 리스트가 비어있는 경우 → 재시도
-                if isinstance(item_list, list) and len(item_list) == 0:
-                    # 본번/부번으로 조회 실패시, 법정동만으로 재시도
-                    if bun or ji:
-                        print(f"   ⚠️  본번/부번({bun}-{ji})으로 건물 리스트 비어있음, 법정동 전체 조회 재시도...")
-                        params.pop('bun', None)
-                        params.pop('ji', None)
-                        response = requests.get(url, params=params, timeout=10)
-                        data = response.json()
-
-                        if data['response']['header']['resultCode'] == '00':
-                            body = data['response'].get('body', {})
-                            items = body.get('items', {})
-
-                            if items and items != '' and 'item' in items:
-                                item_list = items['item']
-                                if not (isinstance(item_list, list) and len(item_list) == 0):
-                                    print(f"   ✅ 법정동 전체 조회 성공")
-                                else:
-                                    print(f"   ⚠️  법정동 전체 조회도 빈 리스트")
-                                    return None
-                            else:
-                                print(f"   ⚠️  법정동 전체 조회도 실패")
-                                return None
-                        else:
-                            return None
-                    else:
-                        print(f"   ⚠️  건축물 리스트 비어있음")
-                        return None
-
-                # 리스트인 경우 첫 번째 항목, 딕셔너리인 경우 그대로
-                item = item_list[0] if isinstance(item_list, list) else item_list
-
-                # 여러 건물이 있으면 경고
-                if isinstance(item_list, list) and len(item_list) > 1:
-                    print(f"   ⚠️  법정동 내 건물 {len(item_list)}개 발견, 첫 번째 건물 사용")
-
-                result = {
-                    'mgmBldrgstPk': item.get('mgmBldrgstPk', ''),  # 건축물 관리번호 (PK)
-                    'grndFlrCnt': int(item.get('grndFlrCnt', 0) or 0),  # 지상층수
-                    'ugrndFlrCnt': int(item.get('ugrndFlrCnt', 0) or 0),  # 지하층수
-                    'useAprDay': item.get('useAprDay', '20000101'),  # 사용승인일
-                    'strctCdNm': item.get('strctCdNm', '기타'),  # 구조
-                    'mainPurpsCdNm': item.get('mainPurpsCdNm', '기타'),  # 주용도
-                    'etcPurps': item.get('etcPurps', ''),  # 기타용도
-                    'heit': float(item.get('heit', 0) or 0),  # 높이
-                    'platArea': float(item.get('platArea', 0) or 0),  # 대지면적
-                    'archArea': float(item.get('archArea', 0) or 0),  # 건축면적
-                    'totArea': float(item.get('totArea', 0) or 0),  # 연면적
-                }
-
-                print(f"   ✅ 건축물 API 조회 성공: {result['mainPurpsCdNm']}, {result['grndFlrCnt']}층")
-                return result
-
-        except Exception as e:
-            print(f"   ⚠️  건축물 조회 실패: {e}")
-            import traceback
-            print(f"   상세: {traceback.format_exc()}")
-            return None
-
-    def get_building_age(self, use_apr_day: str) -> int:
-        """사용승인일 → 건물 연령 계산"""
-        try:
-            year = int(use_apr_day[:4])
-            from datetime import datetime
-            current_year = datetime.now().year
-            return current_year - year
-        except:
-            return 30  # 기본값: 30년
-
-    def classify_building_type(self, main_purpose: str) -> str:
-        """건물 주용도 → 리스크 계산용 건물 유형 분류"""
-        if '단독' in main_purpose or '다가구' in main_purpose or '다세대' in main_purpose:
-            return '주택'
-        elif '아파트' in main_purpose or '연립' in main_purpose:
-            return '아파트'
-        elif '상업' in main_purpose or '판매' in main_purpose or '근린' in main_purpose:
-            return '상가'
-        elif '공장' in main_purpose or '창고' in main_purpose:
-            return '공장'
-        elif '업무' in main_purpose or '오피스' in main_purpose:
-            return '사무실'
-        else:
-            return '기타'
-
-    def has_piloti_structure(self, strct_cd_nm: str, grnd_flr_cnt: int) -> bool:
-        """필로티 구조 추정 (구조 + 층수 기반)"""
-        # 철근콘크리트조 + 3층 이상일 경우 필로티 가능성 있음
-        if '철근콘크리트' in strct_cd_nm and grnd_flr_cnt >= 3:
-            return False  # 보수적으로 False (필로티 없음으로 가정)
-        return False
-
-    def get_floor_info(self, mgm_bld_pk: str) -> Optional[Dict]:
-        """
-        건축물 층별개요 조회 - 저수조 보유 여부 확인
-
-        Args:
-            mgm_bld_pk: 건축물 관리번호 (mgmBldrgstPk)
+            lat: 위도
+            lon: 경도
 
         Returns:
             {
-                'has_water_tank': bool,  # 저수조 보유 여부
-                'tank_floors': list,  # 저수조가 있는 층 정보
-                'method': str,  # 확인 방법 ('api_etcPurps' or 'not_found')
+                'building_age': int,
+                'structure': str,
+                'main_purpose': str,
+                'floors_above': int,
+                'floors_below': int,
+                'total_area': float,
+                'has_seismic_design': bool,
+                'data_source': str
             }
-            또는 None (API 조회 실패)
         """
-        if not mgm_bld_pk:
-            return None
-
-        url = f"{self.building_base_url}/getBrFlrOulnInfo"
-        params = {
-            'serviceKey': self.building_api_key,
-            'mgmBldrgstPk': mgm_bld_pk,
-            'numOfRows': 100,  # 최대 층수
-            'pageNo': 1,
-            '_type': 'json'
-        }
+        if not DB_AVAILABLE:
+            return self._fallback_building()
 
         try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
+            # 1. 좌표로 bjdong_cd 조회 (sigungu_cd는 location_grid에 없을 수 있음)
+            geocode = self.get_building_code_from_coords(lat, lon)
+            if not geocode or not geocode.get('bjdong_cd'):
+                logger.warning(f"No geocode found for ({lat}, {lon})")
+                return self._fallback_building()
 
-            # 응답 구조 확인: 'response' 키가 있는지 (getBrTitleInfo 형식) 또는 직접 'header'가 있는지 (getBrFlrOulnInfo 형식)
-            if 'response' in data:
-                # getBrTitleInfo 형식
-                header = data['response']['header']
-                body = data['response'].get('body', {})
-            else:
-                # getBrFlrOulnInfo 형식
-                header = data.get('header', {})
-                body = data.get('body', {})
+            bjdong_cd = geocode['bjdong_cd']
 
-            if header.get('resultCode') != '00':
-                print(f"   ⚠️  층별개요 API 오류: {header.get('resultMsg', 'N/A')}")
-                return None
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
 
-            items = body.get('items', {})
+                # 2. building_aggregate_cache에서 해당 지역 건물 정보 조회 (bjdong_cd로)
+                cursor.execute("""
+                    SELECT
+                        oldest_building_age_years,
+                        structure_types,
+                        purpose_types,
+                        max_ground_floors,
+                        max_underground_floors,
+                        total_floor_area_sqm,
+                        buildings_with_seismic,
+                        buildings_without_seismic,
+                        building_count
+                    FROM building_aggregate_cache
+                    WHERE bjdong_cd = %s
+                    ORDER BY building_count DESC
+                    LIMIT 1
+                """, (bjdong_cd,))
 
-            if not items or items == '' or 'item' not in items:
-                print(f"   ⚠️  층별 데이터 없음")
-                return None
+                result = cursor.fetchone()
 
-            item_list = items['item']
-            if not isinstance(item_list, list):
-                item_list = [item_list]
+                if result:
+                    # structure_types에서 가장 많은 구조 타입 추출
+                    structure = 'reinforced_concrete'
+                    if result['structure_types']:
+                        struct_types = result['structure_types']
+                        if isinstance(struct_types, dict) and struct_types:
+                            structure = max(struct_types, key=struct_types.get)
 
-            # 저수조 키워드 검색
-            keywords = ['저수조', '물탱크', '수조', '급수탱크', '물탱크실', '저수조실']
-            tank_floors = []
+                    # purpose_types에서 가장 많은 용도 추출
+                    main_purpose = 'residential'
+                    if result['purpose_types']:
+                        purpose_types = result['purpose_types']
+                        if isinstance(purpose_types, dict) and purpose_types:
+                            main_purpose = max(purpose_types, key=purpose_types.get)
 
-            for floor in item_list:
-                etc_purps = floor.get('etcPurps', '')
-                if etc_purps and any(kw in etc_purps for kw in keywords):
-                    tank_floors.append({
-                        'floor_no': floor.get('flrNo', ''),
-                        'floor_name': floor.get('flrNoNm', ''),
-                        'etc_purps': etc_purps,
-                        'area': floor.get('area', ''),
-                    })
+                    # 내진설계 여부
+                    with_seismic = result['buildings_with_seismic'] or 0
+                    without_seismic = result['buildings_without_seismic'] or 0
+                    has_seismic = with_seismic > without_seismic
 
-            has_tank = len(tank_floors) > 0
+                    return {
+                        'building_age': result['oldest_building_age_years'] or 25,
+                        'structure': structure,
+                        'main_purpose': main_purpose,
+                        'floors_above': result['max_ground_floors'] or 5,
+                        'floors_below': result['max_underground_floors'] or 1,
+                        'total_area': float(result['total_floor_area_sqm'] or 1000.0),
+                        'has_seismic_design': has_seismic,
+                        'has_piloti': False,  # 필로티 정보는 별도 조회 필요
+                        'elevation_m': 50.0,  # DEM 기반 조회 필요
+                        'data_source': 'DB'
+                    }
 
-            if has_tank:
-                print(f"   ✅ 저수조 발견: {len(tank_floors)}개 층 (층별개요 API etcPurps 필드)")
-                for tf in tank_floors:
-                    print(f"      - {tf['floor_name']}: {tf['etc_purps']}")
-            else:
-                print(f"   ℹ️  층별개요 조회 완료: 저수조 키워드 미발견 ({len(item_list)}개 층 검사)")
-
-            return {
-                'has_water_tank': has_tank,
-                'tank_floors': tank_floors,
-                'method': 'api_etcPurps' if has_tank else 'not_found_in_api',
-                'total_floors_checked': len(item_list),
-            }
+                logger.warning(f"No building data in cache for bjdong_cd={bjdong_cd}")
+                return self._fallback_building()
 
         except Exception as e:
-            print(f"   ⚠️  층별개요 조회 실패: {e}")
-            return None
+            logger.error(f"Failed to get building info: {e}")
+            return self._fallback_building()
 
     def get_river_info(self, lat: float, lon: float) -> Dict:
         """
-        하천 정보 조회 (V-World WFS API 사용)
-        - 하천까지 거리
-        - 하천 차수
-        - 유역 정보
+        가장 가까운 하천 정보 조회
+
+        Args:
+            lat: 위도
+            lon: 경도
+
+        Returns:
+            {
+                'river_name': str,
+                'river_grade': int,
+                'distance_to_river_m': float,
+                'watershed_area_km2': float,
+                'stream_order': int,
+                'basin_name': str,
+                'data_source': str
+            }
         """
-        url = "http://api.vworld.kr/req/wfs"
-        params = {
-            "service": "wfs",
-            "request": "GetFeature",
-            "typename": "lt_c_wkmstrm",  # 하천 레이어
-            "version": "1.1.0",
-            "srsname": "EPSG:4326",
-            "bbox": f"{lon-0.05},{lat-0.05},{lon+0.05},{lat+0.05}",
-            "output": "application/json",
-            "key": self.vworld_api_key
-        }
+        if not DB_AVAILABLE:
+            return self._fallback_river()
 
         try:
-            response = requests.get(url, params=params, timeout=15)
-            data = response.json()
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
 
-            features = data.get('features', [])
-            if not features:
-                raise ValueError("주변 10km 이내 하천 정보 없음 - V-World WFS API 응답 없음")
+                cursor.execute("""
+                    WITH river_distances AS (
+                        SELECT
+                            river_name,
+                            river_grade,
+                            watershed_area_km2,
+                            flood_capacity,
+                            basin_name,
+                            LEAST(
+                                COALESCE(ST_Distance(
+                                    start_geom::geography,
+                                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                                ), 999999999),
+                                COALESCE(ST_Distance(
+                                    end_geom::geography,
+                                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                                ), 999999999)
+                            ) AS distance_m
+                        FROM api_river_info
+                        WHERE start_geom IS NOT NULL OR end_geom IS NOT NULL
+                    )
+                    SELECT
+                        river_name,
+                        river_grade,
+                        distance_m AS distance_to_river_m,
+                        COALESCE(watershed_area_km2, 100.0) AS watershed_area_km2,
+                        flood_capacity,
+                        basin_name,
+                        CASE
+                            WHEN river_grade = 0 THEN 5
+                            WHEN river_grade = 1 THEN 4
+                            WHEN river_grade = 2 THEN 3
+                            ELSE 2
+                        END AS stream_order
+                    FROM river_distances
+                    ORDER BY distance_m ASC
+                    LIMIT 1
+                """, (lon, lat, lon, lat))
 
-            # 가장 가까운 하천 찾기
-            min_distance = float('inf')
-            nearest_river = None
+                result = cursor.fetchone()
 
-            for feature in features[:10]:  # 최대 10개 확인
-                geom = feature.get('geometry', {})
-                coords = geom.get('coordinates', [])
-                properties = feature.get('properties', {})
+                if result:
+                    return {
+                        'river_name': result['river_name'],
+                        'river_grade': result['river_grade'],
+                        'distance_to_river_m': float(result['distance_to_river_m']),
+                        'watershed_area_km2': float(result['watershed_area_km2']),
+                        'stream_order': int(result['stream_order']),
+                        'flood_capacity': result['flood_capacity'],
+                        'basin_name': result['basin_name'],
+                        'data_source': 'DB'
+                    }
 
-                if coords:
-                    # 첫 번째 포인트 찾기 (MultiLineString 등 중첩 구조 대응)
-                    point = coords[0]
-                    while isinstance(point, list) and len(point) > 0 and isinstance(point[0], list):
-                        point = point[0]
-                    
-                    if isinstance(point, list) and len(point) >= 2:
-                        river_lon, river_lat = point[0], point[1]
-                    else:
-                        continue # 좌표 형식이 이상하면 건너뜀
-
-                    distance = geodesic((lat, lon), (river_lat, river_lon)).meters
-
-                    if distance < min_distance:
-                        min_distance = distance
-                        nearest_river = {
-                            'distance_m': distance,
-                            'stream_order': int(properties.get('stream_order', properties.get('strahler', 3))),
-                            'river_name': properties.get('name', properties.get('riv_name', '미상')),
-                            'watershed_code': properties.get('watershed_cd', ''),
-                        }
-
-            if nearest_river:
-                print(f"   ✅ 하천 정보: {nearest_river['river_name']}, 거리 {nearest_river['distance_m']:.0f}m, 차수 {nearest_river['stream_order']}")
-                return nearest_river
-            else:
-                raise ValueError("하천 좌표 파싱 실패")
+                return self._fallback_river()
 
         except Exception as e:
-            error_msg = f"⚠️  [TCFD 경고] 하천 정보 조회 실패: {e}"
-            print(f"   {error_msg}")
-            raise ValueError(error_msg)
+            logger.error(f"Failed to get river info: {e}")
+            return self._fallback_river()
 
     def get_distance_to_coast(self, lat: float, lon: float) -> float:
         """
-        해안선까지 거리 계산
-        간단한 추정: 위도 기반 (북위 34-38도 사이면 육지)
-        """
-        # 한국 해안선 주요 지점들 (간단한 추정)
-        coastal_points = [
-            (35.1796, 129.0756),  # 부산
-            (37.4563, 126.7052),  # 인천
-            (33.5097, 126.4914),  # 제주
-            (38.2080, 128.5912),  # 속초
-            (34.8118, 128.4170),  # 통영
-        ]
+        해안선까지의 거리 조회
 
-        min_distance = 100000  # 100km (내륙)
-        for coast_lat, coast_lon in coastal_points:
-            distance = geodesic((lat, lon), (coast_lat, coast_lon)).meters
-            min_distance = min(min_distance, distance)
-
-        return min_distance
-
-    def get_stream_order_from_dem(self, lat: float, lon: float) -> Optional[Dict]:
-        """
-        DEM 데이터로부터 하천 차수 추출 (투명한 방법)
+        Args:
+            lat: 위도
+            lon: 경도
 
         Returns:
-            {'stream_order': int, 'flow_accumulation': float, 'method': str}
-            또는 None (실패시)
+            거리 (미터)
         """
-        if not self.stream_extractor:
-            return None
+        if not DB_AVAILABLE:
+            return COAST_FALLBACK.get('distance_to_coast_m', 50000.0)
 
         try:
-            result = self.stream_extractor.get_stream_order_at_point(
-                lat, lon,
-                flow_threshold=500,
-                search_radius=100
-            )
-            return result
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    SELECT
+                        ST_Distance(
+                            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                        ) AS distance_m
+                    FROM sea_level_grid
+                    ORDER BY distance_m
+                    LIMIT 1
+                """, (lon, lat))
+
+                result = cursor.fetchone()
+
+                if result:
+                    return float(result['distance_m'])
+
+                return COAST_FALLBACK.get('distance_to_coast_m', 50000.0)
+
         except Exception as e:
-            print(f"   ⚠️  DEM 하천 차수 추출 실패: {e}")
-            return None
+            logger.error(f"Failed to get coast distance: {e}")
+            return COAST_FALLBACK.get('distance_to_coast_m', 50000.0)
 
-    def fetch_all_building_data(self, lat: float, lon: float) -> Dict:
+    def get_population_data(self, lat: float, lon: float, years: list = None) -> Dict:
         """
-        위/경도 → 모든 필요한 건물 정보 자동 수집
-        TCFD 공시용: API 실패시 에러 발생, 기본값 사용 안함
-        """
-        print(f"   🔍 건축물 정보 조회 중...")
-        errors = []
+        좌표 기반 인구 데이터 조회 (현재 + 미래)
 
-        # 1. 좌표 → 주소/행정코드
-        addr_info = self.get_building_code_from_coords(lat, lon)
-        if not addr_info:
-            errors.append("[TCFD 에러] V-World Geocoder API 실패 - 주소 조회 불가")
+        데이터 소스: location_admin 테이블
+        - level=3 (읍면동): population_current (현재인구)
+        - level=1 (시도): population_2020~2050 (장래인구추계)
 
-        # 2. 행정코드 가져오기
-        if addr_info:
-            codes = self.get_admin_code(
-                addr_info.get('sigungu', ''),
-                addr_info.get('dong', ''),
-                addr_info.get('dong_code', '')  # V-World 법정동코드 전달
-            )
-        else:
-            codes = None
+        Args:
+            lat: 위도 (WGS84)
+            lon: 경도 (WGS84)
+            years: 조회할 연도 리스트 (기본값: [2020, 2025, 2030, 2040, 2050])
 
-        # 3. 건축물 정보 조회
-        building_info = None
-        if codes:
-            building_info = self.get_building_title_info(
-                codes['sigungu_cd'],
-                codes['bjdong_cd'],
-                addr_info.get('bun'),
-                addr_info.get('ji')
-            )
-
-        if not building_info:
-            errors.append(f"[TCFD 에러] 건축물대장 API 실패 - 건물 정보 조회 불가 (시군구: {codes['sigungu_cd'] if codes else 'N/A'})")
-
-        # 4. 하천 정보 조회 (거리 + 차수)
-        river_info = None
-        try:
-            river_info = self.get_river_info(lat, lon)
-        except Exception as e:
-            errors.append(str(e))
-
-        # 4-2. DEM으로부터 하천 차수 추출 (투명한 방법)
-        dem_stream_info = self.get_stream_order_from_dem(lat, lon)
-        if dem_stream_info:
-            print(f"   ✅ DEM 하천 차수: {dem_stream_info['stream_order']} (방법: {dem_stream_info['method']})")
-
-        # 4-3. 재난안전데이터 API로 하천정보 조회
-        disaster_river_info = None
-        if self.disaster_fetcher:
-            try:
-                disaster_river_info = self.disaster_fetcher.get_nearest_river_info(lat, lon)
-            except Exception as e:
-                errors.append(str(e))
-
-        # 5. 해안 거리 조회
-        coast_distance = self.get_distance_to_coast(lat, lon)
-
-        # 6. 데이터 정리
-        if building_info:
-            building_age = self.get_building_age(building_info['useAprDay'])
-            build_year = int(building_info['useAprDay'][:4])
-            building_type = self.classify_building_type(building_info['mainPurpsCdNm'])
-            has_piloti = self.has_piloti_structure(building_info['strctCdNm'], building_info['grndFlrCnt'])
-
-            # 6-1. 저수조 정보 조회 (층별개요 API)
-            water_tank_info = None
-            if building_info.get('mgmBldrgstPk'):
-                water_tank_info = self.get_floor_info(building_info['mgmBldrgstPk'])
-
-            result = {
-                # 건축물 기본 정보 (실제 API 데이터)
-                'basement_floors': building_info['ugrndFlrCnt'],
-                'ground_floors': building_info['grndFlrCnt'],
-                'total_area_m2': building_info['totArea'],  # 연면적 (㎡)
-                'building_age': building_age,
-                'build_year': build_year,
-                'building_type': building_type,
-                'structure': building_info['strctCdNm'],
-                'main_purpose': building_info['mainPurpsCdNm'],
-                'has_piloti': has_piloti,
+        Returns:
+            {
+                'emd_code': str,          # 읍면동 코드
+                'emd_name': str,          # 읍면동 이름
+                'sido_code': str,         # 시도 코드
+                'sido_name': str,         # 시도 이름
+                'population_current': int, # 읍면동 현재인구
+                'population_by_year': {2020: int, 2030: int, ...},  # 시도 미래인구
+                'population_2020': int,
+                'population_2030': int,
+                'population_2050': int,
+                'data_source': str
             }
+        """
+        if years is None:
+            years = [2020, 2025, 2030, 2040, 2050]
 
-            # 저수조 정보 추가 (API 조회 성공시)
-            if water_tank_info:
-                result['has_water_tank'] = water_tank_info['has_water_tank']
-                result['water_tank_method'] = water_tank_info['method']
-                result['water_tank_floors'] = water_tank_info.get('tank_floors', [])
+        if not DB_AVAILABLE:
+            return self._fallback_population(years)
+
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 1. 좌표 → 읍면동(level=3) 찾기
+                # location_admin.centroid는 SRID 5174 (Korean TM), 입력은 WGS84 (4326)
+                cursor.execute("""
+                    SELECT
+                        admin_code,
+                        admin_name,
+                        sido_code,
+                        sigungu_code,
+                        population_current
+                    FROM location_admin
+                    WHERE level = 3
+                      AND centroid IS NOT NULL
+                    ORDER BY centroid <-> ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 5174)
+                    LIMIT 1
+                """, (lon, lat))
+
+                emd_result = cursor.fetchone()
+
+                if not emd_result:
+                    logger.warning(f"No 읍면동 found for ({lat}, {lon})")
+                    return self._fallback_population(years)
+
+                emd_code = emd_result['admin_code']
+                emd_name = emd_result['admin_name']
+                sido_code = emd_result['sido_code']
+                sigungu_code = emd_result['sigungu_code']
+                population_current = emd_result['population_current'] or 0
+
+                # population_current가 없으면 api_sgis_population에서 시군구 인구 조회 (매핑 테이블 사용)
+                if population_current == 0 and sido_code and sigungu_code:
+                    cursor.execute("""
+                        SELECT SUM(asp.population) as pop
+                        FROM sido_code_mapping sido
+                        JOIN sigungu_code_mapping scm
+                            ON sido.admin_sido = scm.sido_code
+                        JOIN api_sgis_population asp
+                            ON sido.sgis_sido = asp.sido_code
+                            AND scm.sgis_sigungu = asp.sigungu_code
+                        WHERE scm.sido_code = %s
+                          AND scm.admin_sigungu = %s
+                          AND asp.gender = 'total'
+                    """, (sido_code, sigungu_code))
+                    sgis_result = cursor.fetchone()
+                    if sgis_result and sgis_result['pop']:
+                        population_current = sgis_result['pop']
+
+                # 2. 시도(level=1)에서 미래인구 조회
+                cursor.execute("""
+                    SELECT
+                        admin_name,
+                        population_2020,
+                        population_2025,
+                        population_2030,
+                        population_2035,
+                        population_2040,
+                        population_2045,
+                        population_2050
+                    FROM location_admin
+                    WHERE level = 1
+                      AND admin_code = %s
+                """, (sido_code,))
+
+                sido_result = cursor.fetchone()
+
+                if not sido_result:
+                    logger.warning(f"No 시도 found for sido_code={sido_code}")
+                    return self._fallback_population(years)
+
+                sido_name = sido_result['admin_name']
+
+                # 연도별 인구 데이터 매핑
+                population_by_year = {
+                    2020: sido_result['population_2020'] or 0,
+                    2025: sido_result['population_2025'] or 0,
+                    2030: sido_result['population_2030'] or 0,
+                    2035: sido_result['population_2035'] or 0,
+                    2040: sido_result['population_2040'] or 0,
+                    2045: sido_result['population_2045'] or 0,
+                    2050: sido_result['population_2050'] or 0,
+                }
+
+                return {
+                    'emd_code': emd_code,
+                    'emd_name': emd_name,
+                    'sido_code': sido_code,
+                    'sido_name': sido_name,
+                    'population_current': population_current,
+                    'population_by_year': population_by_year,
+                    'population_2020': population_by_year.get(2020, 0),
+                    'population_2030': population_by_year.get(2030, 0),
+                    'population_2050': population_by_year.get(2050, 0),
+                    'data_source': 'DB'
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get population data: {e}")
+            return self._fallback_population(years)
+
+    def _interpolate_population(self, population_by_year: Dict[int, int], target_years: list) -> Dict[int, int]:
+        """
+        누락된 연도의 인구 데이터 보간
+
+        Args:
+            population_by_year: 연도별 인구 데이터
+            target_years: 목표 연도 리스트
+
+        Returns:
+            보간된 연도별 인구 데이터
+        """
+        if not population_by_year:
+            return {year: 0 for year in target_years}
+
+        # 있는 데이터 연도 정렬
+        known_years = sorted(population_by_year.keys())
+        result = dict(population_by_year)
+
+        for year in target_years:
+            if year in result:
+                continue
+
+            # 선형 보간
+            lower_year = None
+            upper_year = None
+
+            for ky in known_years:
+                if ky < year:
+                    lower_year = ky
+                elif ky > year and upper_year is None:
+                    upper_year = ky
+                    break
+
+            if lower_year and upper_year:
+                # 두 점 사이 선형 보간
+                lower_pop = population_by_year[lower_year]
+                upper_pop = population_by_year[upper_year]
+                ratio = (year - lower_year) / (upper_year - lower_year)
+                result[year] = int(lower_pop + (upper_pop - lower_pop) * ratio)
+            elif lower_year:
+                # 마지막 연도 이후: 동일값 유지 (또는 추세 외삽)
+                result[year] = population_by_year[lower_year]
+            elif upper_year:
+                # 첫 연도 이전: 동일값 유지
+                result[year] = population_by_year[upper_year]
             else:
-                # 층별개요 API 실패 시 None (vulnerability_calculator에서 법적 기준으로 추정)
-                result['has_water_tank'] = None
-                result['water_tank_method'] = 'api_failed'
-
-            print(f"   ✅ 건축물 정보 조회 완료")
-            print(f"      - 건물 유형: {building_type}")
-            print(f"      - 건축연도: {build_year}년 (노후도: {building_age}년)")
-            print(f"      - 층수: 지상 {building_info['grndFlrCnt']}층 / 지하 {building_info['ugrndFlrCnt']}층")
-        else:
-            # 건축물 API 실패시 통계 기반 기본값 (국토교통부 2023)
-            print(f"   ⚠️  [TCFD 경고] 건축물 정보 없음 - 통계 기반 기본값 사용")
-            print(f"      출처: {DATA_SOURCES['building']['source']} ({DATA_SOURCES['building']['year']})")
-            result = BUILDING_FALLBACK.copy()  # 국토교통부 건축물대장 통계 (2023) 기반
-
-        # 하천 정보 추가
-        # DEM 기반 하천 차수를 우선 사용 (더 투명하고 정확함)
-        if dem_stream_info:
-            stream_order_value = dem_stream_info['stream_order']
-            stream_order_method = dem_stream_info['method']
-        elif river_info:
-            stream_order_value = river_info['stream_order']
-            stream_order_method = 'V-World WFS API'
-        else:
-            # 환경부 수자원 통계 (2022): 1차 하천이 62% (가장 많음)
-            stream_order_value = RIVER_FALLBACK['stream_order']
-            stream_order_method = f'Statistics-based default (환경부 2022)'
-            errors.append(f"[TCFD 경고] 하천 차수 정보 없음 - 통계 기반 기본값 {stream_order_value} 사용 (전국 1차 하천 62%)")
-
-        # 유역 면적 - 재난안전데이터 API 우선 사용
-        if disaster_river_info:
-            watershed_area = disaster_river_info['watershed_area_km2']
-            river_name = disaster_river_info['river_name']
-        elif river_info:
-            # 환경부 수자원 통계 (2022): 1차 하천 평균 유역면적 30km²
-            watershed_area = RIVER_FALLBACK['watershed_area_km2']
-            river_name = river_info.get('river_name', RIVER_FALLBACK['river_name'])
-            errors.append(f"[TCFD 경고] 유역면적 데이터 없음 - 통계 기반 기본값 {watershed_area}km² 사용 (1차 하천 평균)")
-        else:
-            # 환경부 수자원 통계 (2022): 1차 하천 평균 유역면적 30km²
-            watershed_area = RIVER_FALLBACK['watershed_area_km2']
-            river_name = RIVER_FALLBACK['river_name']
-            errors.append(f"[TCFD 경고] 유역면적 데이터 없음 - 통계 기반 기본값 {watershed_area}km² 사용 (1차 하천 평균)")
-
-        if river_info or disaster_river_info:
-            result.update({
-                'distance_to_river_m': river_info.get('distance_m', RIVER_FALLBACK['distance_to_river_m']) if river_info else disaster_river_info.get('distance_m', RIVER_FALLBACK['distance_to_river_m']),
-                'stream_order': stream_order_value,
-                'stream_order_method': stream_order_method,
-                'river_name': river_name,
-                'watershed_area_km2': watershed_area,
-            })
-        else:
-            # 하천 정보 없으면 통계 기반 추정 (국토지리정보원 2021)
-            print(f"   ⚠️  [TCFD 경고] 하천 정보 없음 - 통계 기반 기본값 사용")
-            print(f"      출처: {DATA_SOURCES['river']['source']} ({DATA_SOURCES['river']['year']})")
-            result.update({
-                'distance_to_river_m': RIVER_FALLBACK['distance_to_river_m'],  # 전국 평균 850m
-                'stream_order': stream_order_value,
-                'stream_order_method': stream_order_method,
-                'river_name': river_name,
-                'watershed_area_km2': watershed_area,
-            })
-
-        # 해안 거리
-        result['distance_to_coast_m'] = coast_distance
-
-        # 침수 이력 - 재난안전데이터 API 우선, 실패 시 지역별 통계 사용
-        if self.disaster_fetcher and addr_info:
-            try:
-                # 시도명으로 조회 (예: "서울특별시")
-                region = addr_info.get('sido', '')
-                flood_count = self.disaster_fetcher.get_flood_history(region, years=5)
-                result['flood_history_count'] = flood_count
-            except Exception as e:
-                # API 실패 시 지역별 통계 기반 값 사용 (행안부 2019-2024)
-                region = addr_info.get('sido', '')
-                flood_count = get_flood_history_by_region(region)
-                result['flood_history_count'] = flood_count
-                errors.append(f"[TCFD 경고] 침수 이력 조회 실패 - 지역별 통계 기반 값 사용: {flood_count}건/5년 (행안부 2019-2024)")
-        else:
-            # 지역 정보 있으면 지역별 통계, 없으면 전국 평균 사용
-            if addr_info and addr_info.get('sido'):
-                region = addr_info.get('sido', '')
-                flood_count = get_flood_history_by_region(region)
-                result['flood_history_count'] = flood_count
-                errors.append(f"[TCFD 경고] 침수 이력 데이터 없음 - 지역별 통계 기반 값 사용: {flood_count}건/5년 (행안부 2019-2024)")
-            else:
-                # 전국 평균 사용 (행정안전부 재난연감 2019-2024)
-                result['flood_history_count'] = DISASTER_FALLBACK['flood_history_count']
-                errors.append(f"[TCFD 경고] 침수 이력 데이터 없음 - 전국 평균 사용: {DISASTER_FALLBACK['flood_history_count']}건/5년 (행안부 2019-2024)")
-
-        # 에러 출력
-        if errors:
-            print(f"\n   ⚠️  ========== TCFD 데이터 품질 경고 ==========")
-            for i, error in enumerate(errors, 1):
-                print(f"   {i}. {error}")
-            print(f"   ============================================\n")
+                result[year] = 0
 
         return result
 
-    def _get_default_values(self) -> Dict:
+    def _fallback_population(self, years: list) -> Dict:
+        """인구 데이터 기본값"""
+        return {
+            'emd_code': None,
+            'emd_name': None,
+            'sido_code': None,
+            'sido_name': None,
+            'population_current': 0,
+            'population_by_year': {year: 0 for year in years},
+            'population_2020': 0,
+            'population_2030': 0,
+            'population_2050': 0,
+            'data_source': 'fallback'
+        }
+
+    def fetch_all_building_data(self, lat: float, lon: float) -> Dict:
         """
-        API 조회 실패 시 통계 기반 기본값 반환
+        모든 건물/공간 관련 데이터 통합 조회
 
-        모든 값은 정부 통계에 근거:
-        - 건축물: 국토교통부 건축물대장 통계 (2023)
-        - 하천: 환경부 수자원 통계 (2022)
-        - 해안: 국토지리정보원 GIS 통계 (2021)
-        - 재난: 행정안전부 재난연감 (2019-2024)
+        Args:
+            lat: 위도
+            lon: 경도
+
+        Returns:
+            통합된 건물/공간 데이터 딕셔너리
         """
-        from modelops.config.fallback_constants import get_all_fallback_values
-        return get_all_fallback_values()
+        # 각 데이터 조회
+        geocode = self.get_building_code_from_coords(lat, lon)
+        building = self.get_building_info(lat, lon)
+        river = self.get_river_info(lat, lon)
+        coast_distance = self.get_distance_to_coast(lat, lon)
+        population = self.get_population_data(lat, lon)
+
+        return {
+            # 주소 정보
+            'sigungu_cd': geocode.get('sigungu_cd') if geocode else None,
+            'bjdong_cd': geocode.get('bjdong_cd') if geocode else None,
+            'dong_code': geocode.get('dong_code') if geocode else None,
+            'sido': geocode.get('sido') if geocode else None,
+            'sigungu': geocode.get('sigungu') if geocode else None,
+            'dong': geocode.get('dong') if geocode else None,
+            'full_address': geocode.get('full_address') if geocode else None,
+
+            # 건물 정보
+            'building_age': building.get('building_age', 25),
+            'structure': building.get('structure', 'reinforced_concrete'),
+            'structure_type': building.get('structure', 'reinforced_concrete'),  # alias for vulnerability agents
+            'main_purpose': building.get('main_purpose', 'residential'),
+            'floors_above': building.get('floors_above', 5),
+            'ground_floors': building.get('floors_above', 5),  # alias for exposure agents
+            'floors_below': building.get('floors_below', 1),
+            'total_area': building.get('total_area', 1000.0),
+            'total_area_m2': building.get('total_area', 1000.0),  # alias for vulnerability agents
+            'has_piloti': building.get('has_piloti', False),  # 필로티 여부
+            'has_seismic_design': building.get('has_seismic_design', False),  # 내진설계 여부
+            'elevation_m': building.get('elevation_m', 50.0),  # 해발고도 (DEM 기반)
+            # 저수조 여부 (법적 요건: 6층 이상 또는 연면적 3000m² 이상)
+            'has_water_tank': building.get('has_water_tank',
+                              building.get('floors_above', 5) >= 6 or building.get('total_area', 1000.0) >= 3000),
+
+            # 하천 정보
+            'river_name': river.get('river_name'),
+            'river_grade': river.get('river_grade'),
+            'distance_to_river_m': river.get('distance_to_river_m', 10000.0),
+            'watershed_area_km2': river.get('watershed_area_km2', 100.0),
+            'stream_order': river.get('stream_order', 2),
+            'basin_name': river.get('basin_name'),
+            'flood_capacity': river.get('flood_capacity'),  # 하천 홍수량
+
+            # 해안 정보
+            'distance_to_coast_m': coast_distance,
+
+            # 인구 정보
+            'emd_code': population.get('emd_code'),
+            'emd_name': population.get('emd_name'),
+            'sido_code': population.get('sido_code'),
+            'sido_name': population.get('sido_name'),
+            'population_current': population.get('population_current', 0),
+            'population_2020': population.get('population_2020', 0),
+            'population_2030': population.get('population_2030', 0),
+            'population_2050': population.get('population_2050', 0),
+            'population_by_year': population.get('population_by_year', {}),
+
+            'data_source': 'DB'
+        }
+
+    def get_building_age(self, use_apr_day: str) -> int:
+        """사용승인일로부터 건물 연령 계산"""
+        try:
+            if not use_apr_day:
+                return BUILDING_FALLBACK.get('building_age', 25)
+
+            # YYYYMMDD 형식
+            year = int(use_apr_day[:4])
+            current_year = datetime.now().year
+            return current_year - year
+
+        except Exception:
+            return BUILDING_FALLBACK.get('building_age', 25)
+
+    def classify_building_type(self, main_purpose: str) -> str:
+        """건물 용도 분류"""
+        if not main_purpose:
+            return 'residential'
+
+        purpose_lower = main_purpose.lower()
+
+        if any(kw in purpose_lower for kw in ['주거', '아파트', '주택', '다세대', '연립']):
+            return 'residential'
+        elif any(kw in purpose_lower for kw in ['상업', '사무', '오피스', '업무']):
+            return 'commercial'
+        elif any(kw in purpose_lower for kw in ['공장', '산업', '제조', '창고']):
+            return 'industrial'
+        elif any(kw in purpose_lower for kw in ['공공', '관공서', '교육', '학교']):
+            return 'public'
+        else:
+            return 'mixed'
+
+    # ==================== Fallback 메서드 ====================
+
+    def _fallback_geocode(self) -> Dict:
+        """지오코딩 기본값"""
+        return {
+            'sigungu_cd': None,
+            'bjdong_cd': None,
+            'dong_code': None,
+            'sido': None,
+            'sigungu': None,
+            'dong': None,
+            'full_address': None,
+            'data_source': 'fallback'
+        }
+
+    def _fallback_building(self) -> Dict:
+        """건물 정보 기본값"""
+        return {
+            'building_age': BUILDING_FALLBACK.get('building_age', 25),
+            'structure': BUILDING_FALLBACK.get('structure', 'reinforced_concrete'),
+            'main_purpose': BUILDING_FALLBACK.get('main_purpose', 'residential'),
+            'floors_above': BUILDING_FALLBACK.get('floors_above', 5),
+            'floors_below': BUILDING_FALLBACK.get('floors_below', 1),
+            'total_area': BUILDING_FALLBACK.get('total_area', 1000.0),
+            'data_source': 'fallback'
+        }
+
+    def _fallback_river(self) -> Dict:
+        """하천 정보 기본값"""
+        return {
+            'river_name': None,
+            'river_grade': None,
+            'distance_to_river_m': RIVER_FALLBACK.get('distance_to_river_m', 10000.0),
+            'watershed_area_km2': RIVER_FALLBACK.get('watershed_area_km2', 100.0),
+            'stream_order': RIVER_FALLBACK.get('stream_order', 2),
+            'flood_capacity': None,
+            'basin_name': None,
+            'data_source': 'fallback'
+        }
 
 
-if __name__ == "__main__":
-    # 테스트
-    fetcher = BuildingDataFetcher()
-
-    # 테스트 1: 판교
-    print("\n[테스트 1] 판교")
-    data1 = fetcher.fetch_all_building_data(37.405884769, 127.099877814)
-    print(f"\n결과: {data1}")
-
-    # 테스트 2: 대전
-    print("\n\n[테스트 2] 대전")
-    data2 = fetcher.fetch_all_building_data(36.3741, 127.3838)
-    print(f"\n결과: {data2}")
+# 하위 호환성을 위한 alias
+BuildingFetcher = BuildingDataFetcher

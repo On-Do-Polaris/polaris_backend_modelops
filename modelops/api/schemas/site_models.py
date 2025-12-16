@@ -26,33 +26,27 @@ class AssetInfo(BaseModel):
     insurance_coverage_rate: float = Field(default=0.0, description="보험 보전율 (0-1)")
 
 
-class SiteRiskRequest(BaseModel):
-    """사업장 리스크 계산 요청"""
+class SiteLocation(BaseModel):
+    """사업장 위치 정보"""
     latitude: float = Field(..., ge=33.0, le=39.0, description="위도")
     longitude: float = Field(..., ge=124.5, le=132.0, description="경도")
-    site_id: Optional[str] = Field(None, description="사업장 ID")
+
+
+class SiteRiskRequest(BaseModel):
+    """사업장 리스크 계산 요청 (다중 사업장 지원)"""
+    sites: Dict[str, SiteLocation] = Field(..., description="사업장 ID를 키로, 위치 정보를 값으로 하는 딕셔너리")
     building_info: BuildingInfo = Field(..., description="건물 정보")
     asset_info: Optional[AssetInfo] = Field(None, description="자산 정보")
 
 
-class CalculationResult(BaseModel):
-    """개별 시나리오/연도 계산 결과"""
-    scenario: str = Field(..., description="SSP 시나리오")
-    year: int = Field(..., description="목표 연도")
-    status: str = Field(..., description="계산 상태 (success/failed)")
-    error_message: Optional[str] = Field(None, description="에러 메시지 (실패 시)")
-
-
 class SiteRiskResponse(BaseModel):
-    """사업장 리스크 계산 응답 (전체 시나리오/연도)"""
-    site_id: Optional[str] = Field(None, description="사업장 ID")
-    latitude: float = Field(..., description="위도")
-    longitude: float = Field(..., description="경도")
-    total_calculations: int = Field(..., description="총 계산 개수")
-    successful_calculations: int = Field(..., description="성공한 계산 개수")
-    failed_calculations: int = Field(..., description="실패한 계산 개수")
-    results: List[CalculationResult] = Field(..., description="시나리오/연도별 계산 결과")
-    calculated_at: datetime = Field(..., description="계산 시각")
+    """사업장 리스크 계산 응답 (다중 사업장)"""
+    status: str = Field(..., description="전체 작업 상태 (success/partial/failed)")
+    total_sites: int = Field(..., description="총 사업장 개수")
+    successful_sites: int = Field(..., description="성공한 사업장 개수")
+    failed_sites: int = Field(..., description="실패한 사업장 개수")
+    message: str = Field(..., description="처리 결과 메시지")
+    calculated_at: datetime = Field(..., description="계산 완료 시각")
 
 
 class CandidateGrid(BaseModel):
@@ -69,8 +63,9 @@ class SearchCriteria(BaseModel):
 
 
 class SiteRelocationRequest(BaseModel):
-    """사업장 이전 후보지 추천 요청"""
-    site_id: Optional[str] = Field(None, description="참조 사업장 ID (candidate_sites 테이블 연결용)")
+    """사업장 이전 후보지 추천 요청 (다중 사업장 지원)"""
+    sites: Dict[str, SiteLocation] = Field(..., description="사업장 ID를 키로, 위치 정보를 값으로 하는 딕셔너리")
+    batch_id: Optional[str] = Field(None, description="배치 작업 ID (ModelOps 콜백용)")
     candidate_grids: Optional[List[CandidateGrid]] = Field(None, description="후보 격자 리스트 (제공하지 않으면 고정 10개 위치 사용)")
     building_info: BuildingInfo = Field(..., description="건물 정보")
     asset_info: Optional[AssetInfo] = Field(None, description="자산 정보")
@@ -99,9 +94,6 @@ class LocationCandidate(BaseModel):
 
 
 class SiteRelocationResponse(BaseModel):
-    """사업장 이전 후보지 추천 응답"""
-    candidates: List[LocationCandidate] = Field(..., description="추천 후보지 리스트 (최대 3개)")
-    total_grids_evaluated: int = Field(..., description="평가된 격자 총 개수")
-    total_saved_to_db: int = Field(..., description="DB에 저장된 후보지 개수")
-    search_criteria: SearchCriteria = Field(..., description="검색 조건")
-    calculated_at: datetime = Field(..., description="계산 시각")
+    """사업장 이전 후보지 추천 응답 (간단한 성공/실패)"""
+    status: str = Field(..., description="전체 작업 상태 (success/failed)")
+    message: str = Field(..., description="처리 결과 메시지")

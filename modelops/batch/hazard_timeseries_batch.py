@@ -36,7 +36,7 @@ from ..agents.hazard_calculate.water_stress_hscore_agent import WaterStressHScor
 from ..utils.hazard_data_collector import HazardDataCollector
 from ..database.connection import DatabaseConnection
 from ..database.connection_long import DatabaseConnectionLong
-from ..data_loaders.mappers.long_term_mapper import LongTermDataMapper
+from ..data_loaders.long_term_mapper import LongTermDataMapper
 
 logging.basicConfig(
     level=logging.INFO,

@@ -518,7 +518,7 @@ class DatabaseConnection:
             for result in results:
                 lat, lon = result['latitude'], result['longitude']
                 risk_type = result['risk_type']
-                target_year = result.get('target_year', 2050)
+                target_year = str(result.get('target_year', 2050))
                 score = result.get('exposure_score', 0.0)
 
                 # site_id 조회/생성
@@ -554,7 +554,7 @@ class DatabaseConnection:
             for result in results:
                 lat, lon = result['latitude'], result['longitude']
                 risk_type = result['risk_type']
-                target_year = result.get('target_year', 2050)
+                target_year = str(result.get('target_year', 2050))
                 score = result.get('vulnerability_score', 0.0)
 
                 # site_id 조회/생성
@@ -591,7 +591,7 @@ class DatabaseConnection:
             for result in results:
                 lat, lon = result['latitude'], result['longitude']
                 risk_type = result['risk_type']
-                target_year = result.get('target_year', 2050)
+                target_year = str(result.get('target_year', 2050))
                 scenario = result.get('scenario', 'SSP245').lower()
                 final_aal = result.get('final_aal', 0.0)
                 aal_column = f"{scenario}_final_aal"
@@ -828,7 +828,7 @@ class DatabaseConnection:
 
             if target_year:
                 query += " AND target_year = %s"
-                params.append(target_year)
+                params.append(str(target_year))
 
             query += " ORDER BY risk_type, target_year"
 
@@ -902,7 +902,7 @@ class DatabaseConnection:
 
             if target_year:
                 query += " AND target_year = %s"
-                params.append(target_year)
+                params.append(str(target_year))
 
             query += " ORDER BY risk_type, target_year"
 

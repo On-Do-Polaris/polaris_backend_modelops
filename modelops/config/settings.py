@@ -12,7 +12,9 @@ try:
         database_user: str = "skala"
         database_password: str = "skala1234"
 
-
+        # FastAPI Application (콜백 API)
+        fastapi_url: str = "http://localhost:8000"
+        fastapi_api_key: str = ""
 
         hazard_schedule_month: int = 1
         hazard_schedule_day: int = 1
@@ -41,6 +43,10 @@ except ImportError:
         database_name: str = os.getenv("DATABASE_NAME", "datawarehouse")
         database_user: str = os.getenv("DATABASE_USER", "skala")
         database_password: str = os.getenv("DATABASE_PASSWORD", "skala1234")
+
+        # FastAPI Application (콜백 API)
+        fastapi_url: str = os.getenv("FASTAPI_URL", "http://localhost:8000")
+        fastapi_api_key: str = os.getenv("FASTAPI_API_KEY", "")
 
         probability_schedule_month: int = 1
         probability_schedule_day: int = 1

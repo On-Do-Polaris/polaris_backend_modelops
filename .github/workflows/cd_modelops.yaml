@@ -83,6 +83,8 @@ jobs:
               -e DATABASE_NAME=${{ secrets.DW_NAME }} \
               -e DATABASE_USER=${{ secrets.DW_USER }} \
               -e DATABASE_PASSWORD=${{ secrets.DW_PASSWORD }} \
+              -e FASTAPI_URL=${{ secrets.FASTAPI_URL }} \
+              -e FASTAPI_API_KEY=${{ secrets.FASTAPI_API_KEY }} \
               -e KMA_API_KEY=${{ secrets.KMA_API_KEY }} \
               -e VWORLD_API_KEY=${{ secrets.VWORLD_API_KEY }} \
               -e BUILDING_API_KEY=${{ secrets.BUILDING_API_KEY }} \

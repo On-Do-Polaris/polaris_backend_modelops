@@ -1,6 +1,6 @@
 """API 라우터 모듈"""
 
-from . import risk_assessment
 from . import health
+from . import site_assessment
 
-__all__ = ['risk_assessment', 'health']
+__all__ = ['health', 'site_assessment']

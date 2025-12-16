@@ -992,3 +992,111 @@ class DatabaseConnection:
                 'population_change_2020_2050': 0,
                 'population_change_rate_percent': 0.0
             }
+
+    @staticmethod
+    def save_candidate_site(
+        latitude: float,
+        longitude: float,
+        aal: float = None,
+        aal_by_risk: Dict[str, float] = None,
+        risk_score: int = None,
+        risks: Dict[str, Any] = None,
+        reference_site_id: str = None
+    ) -> str:
+        """
+        후보지 추천 결과 저장 (E, V, AAL 계산 결과 중심)
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            aal: 연평균 손실 평균 (9개 리스크 평균)
+            aal_by_risk: 리스크별 개별 AAL {risk_type: final_aal}
+            risk_score: 종합 리스크 점수 (0-100)
+            risks: 개별 리스크 점수 (JSON)
+            reference_site_id: 참조 사업장 ID (요청에서 전달된 site_id)
+
+        Returns:
+            생성된 후보지 ID (UUID string)
+        """
+        candidate_id = str(uuid.uuid4())
+        # name 필드는 NOT NULL이므로 임시 값을 사용합니다.
+        # 필요하다면 이 로직을 수정하여 실제 이름을 제공해야 합니다.
+        generated_name = f"Candidate Site ({latitude:.4f}, {longitude:.4f})"
+
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO candidate_sites (
+                    id, name, latitude, longitude,
+                    aal, aal_by_risk, risk_score, risks, site_id,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s::jsonb, %s, %s::jsonb, %s,
+                    NOW(), NOW()
+                )
+                RETURNING id
+            """, (
+                candidate_id, generated_name, latitude, longitude,
+                aal, json.dumps(aal_by_risk) if aal_by_risk else None,
+                risk_score, json.dumps(risks) if risks else None,
+                reference_site_id
+            ))
+
+            return candidate_id
+
+    @staticmethod
+    def check_candidate_exists(
+        latitude: float,
+        longitude: float,
+        scenario: str,
+        target_year: int,
+        tolerance: float = 0.0001
+    ) -> bool:
+        """
+        후보지가 이미 평가되었는지 확인
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            scenario: SSP 시나리오
+            target_year: 목표 연도
+            tolerance: 좌표 허용 오차 (기본 0.0001도 ≈ 11m)
+
+        Returns:
+            True if exists with complete data, False otherwise
+        """
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 1. candidate_sites 테이블에서 좌표 매칭
+                cursor.execute("""
+                    SELECT id
+                    FROM candidate_sites
+                    WHERE ABS(latitude - %s) < %s
+                      AND ABS(longitude - %s) < %s
+                """, (latitude, tolerance, longitude, tolerance))
+
+                if not cursor.fetchone():
+                    return False
+
+                # 2. site_id 생성 (deterministic UUID)
+                site_id = DatabaseConnection._get_or_create_site_id(cursor, latitude, longitude)
+
+                # 3. E, V, AAL 데이터 완전성 확인 (9개 리스크 타입 모두 존재해야 함)
+                cursor.execute("""
+                    SELECT
+                        (SELECT COUNT(DISTINCT risk_type) FROM exposure_results
+                         WHERE site_id = %s AND target_year = %s) as e_count,
+                        (SELECT COUNT(DISTINCT risk_type) FROM vulnerability_results
+                         WHERE site_id = %s AND target_year = %s) as v_count,
+                        (SELECT COUNT(DISTINCT risk_type) FROM aal_scaled_results
+                         WHERE site_id = %s AND target_year = %s) as aal_count
+                """, (site_id, target_year, site_id, target_year, site_id, target_year))
+
+                result = cursor.fetchone()
+                return result['e_count'] == 9 and result['v_count'] == 9 and result['aal_count'] == 9
+        except Exception as e:
+            logger.warning(f"중복 체크 실패 ({latitude}, {longitude}): {e}")
+            return False  # 오류 시 중복 아님으로 간주하여 계산 진행

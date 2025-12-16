@@ -656,31 +656,23 @@ Table water_stress_rankings {
 Table site_additional_data {
   id uuid [pk, note: '레코드 ID']
   site_id uuid [not null, note: '사업장 ID (Application DB)']
-  data_category varchar(50) [not null, note: '데이터 카테고리: building/asset/power/insurance/custom']
-  raw_text text [note: '원본 텍스트 (PDF 추출 등)']
+  raw_text text [note: '원본 텍스트 (사용자 입력)']
   structured_data jsonb [note: '정형화된 JSONB 데이터']
-  file_name varchar(255) [note: '업로드 파일명']
-  file_s3_key varchar(500) [note: 'S3 저장 키']
-  file_size bigint [note: '파일 크기 (bytes)']
-  file_mime_type varchar(100) [note: 'MIME 타입']
   metadata jsonb [note: '추가 메타데이터']
   uploaded_by uuid [note: '업로드 사용자 ID']
   uploaded_at timestamp [note: '업로드 시점']
   expires_at timestamp [note: '만료 시점']
 
   Note: '''
-    사용자 추가 데이터 (JSONB 기반)
-    - power: 전력 사용량 데이터
-    - building: 건물 정보
-    - asset: 자산 가치 정보
-    - insurance: 보험 정보
-    - custom: 기타 사용자 데이터
+    사용자 추가 데이터 (JSONB 기반, 자유 형식)
+    - 정해진 양식 없음 (데이터 형태가 사용자마다 다름)
+    - 전력, 건물, 보험 등 다양한 데이터 저장
   '''
 
   indexes {
     site_id
-    data_category
-    (site_id, data_category) [unique]
+    uploaded_at
+    expires_at
   }
 }
 

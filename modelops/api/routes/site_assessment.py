@@ -472,16 +472,11 @@ async def recommend_relocation_locations(request: SiteRelocationRequest):
             except Exception as callback_error:
                 logger.error(f"콜백 호출 실패 (무시하고 계속): {callback_error}")
 
-        # Response 반환
+        # Response 반환 (간단한 성공/실패만)
+        final_status = "success" if failed_sites == 0 else "failed"
         return SiteRelocationResponse(
-            status=status,
-            total_sites=total_sites,
-            successful_sites=successful_sites,
-            failed_sites=failed_sites,
-            total_candidates_saved=total_candidates_saved,
-            message=message,
-            batch_id=request.batch_id,
-            calculated_at=calculation_end_time
+            status=final_status,
+            message=message
         )
 
     except Exception as e:

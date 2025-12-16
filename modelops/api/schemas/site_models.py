@@ -94,12 +94,6 @@ class LocationCandidate(BaseModel):
 
 
 class SiteRelocationResponse(BaseModel):
-    """사업장 이전 후보지 추천 응답 (다중 사업장)"""
-    status: str = Field(..., description="전체 작업 상태 (success/partial/failed)")
-    total_sites: int = Field(..., description="총 사업장 개수")
-    successful_sites: int = Field(..., description="성공한 사업장 개수")
-    failed_sites: int = Field(..., description="실패한 사업장 개수")
-    total_candidates_saved: int = Field(..., description="DB에 저장된 총 후보지 개수")
+    """사업장 이전 후보지 추천 응답 (간단한 성공/실패)"""
+    status: str = Field(..., description="전체 작업 상태 (success/failed)")
     message: str = Field(..., description="처리 결과 메시지")
-    batch_id: Optional[str] = Field(None, description="배치 작업 ID")
-    calculated_at: datetime = Field(..., description="계산 완료 시각")

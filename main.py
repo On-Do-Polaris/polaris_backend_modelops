@@ -8,9 +8,13 @@ FastAPI 메인 앱
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from modelops.api.routes import health, site_assessment
-from modelops.batch.probability_scheduler import ProbabilityScheduler
-from modelops.batch.hazard_scheduler import HazardScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from modelops.batch.probability_timeseries_batch import run_probability_batch
+from modelops.batch.hazard_timeseries_batch import run_hazard_batch
 import logging
+import sys
+from datetime import datetime
 
 # 로깅 설정
 logging.basicConfig(
@@ -20,9 +24,55 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def probability_batch_job():
+    """
+    P(H) 배치 작업 실행 함수
+    """
+    logger.info("=" * 80)
+    logger.info("P(H) BATCH JOB STARTED")
+    logger.info(f"Execution Time: {datetime.now().isoformat()}")
+    logger.info("=" * 80)
+
+    try:
+        run_probability_batch(
+            grid_points=None,  # 전체 격자점
+            scenarios=None,    # 전체 시나리오
+            years=None,        # 2021-2100
+            risk_types=None,   # 전체 리스크
+            batch_size=100,
+            max_workers=4
+        )
+        logger.info("P(H) BATCH JOB COMPLETED SUCCESSFULLY")
+    except Exception as e:
+        logger.error(f"P(H) BATCH JOB FAILED: {e}", exc_info=True)
+
+
+def hazard_batch_job():
+    """
+    H 배치 작업 실행 함수
+    """
+    logger.info("=" * 80)
+    logger.info("HAZARD SCORE BATCH JOB STARTED")
+    logger.info(f"Execution Time: {datetime.now().isoformat()}")
+    logger.info("=" * 80)
+
+    try:
+        run_hazard_batch(
+            grid_points=None,  # 전체 격자점
+            scenarios=None,    # 전체 시나리오
+            years=None,        # 2021-2100
+            risk_types=None,   # 전체 리스크
+            batch_size=100,
+            max_workers=4
+        )
+        logger.info("HAZARD SCORE BATCH JOB COMPLETED SUCCESSFULLY")
+    except Exception as e:
+        logger.error(f"HAZARD SCORE BATCH JOB FAILED: {e}", exc_info=True)
+
+
 # 스케줄러 인스턴스
-probability_scheduler = None
-hazard_scheduler = None
+scheduler = None
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -88,7 +138,7 @@ app.include_router(health.router)
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 실행"""
-    global probability_scheduler, hazard_scheduler
+    global scheduler
 
     logger.info("=" * 60)
     logger.info("ModelOps Site Assessment API 시작")
@@ -97,33 +147,57 @@ async def startup_event():
     logger.info("Health Check: http://localhost:8001/health")
     logger.info("=" * 60)
 
-    # 스케줄러 시작
+    # BackgroundScheduler 시작
     try:
-        probability_scheduler = ProbabilityScheduler()
-        probability_scheduler.start()
-        logger.info("✓ Probability 배치 스케줄러 시작")
+        scheduler = BackgroundScheduler()
 
-        hazard_scheduler = HazardScheduler()
-        hazard_scheduler.start()
-        logger.info("✓ Hazard 배치 스케줄러 시작")
+        # P(H) 배치 스케줄 등록: 매년 1월 1일 02:00
+        scheduler.add_job(
+            probability_batch_job,
+            trigger=CronTrigger(
+                month=1,      # 1월
+                day=1,        # 1일
+                hour=2,       # 02:00
+                minute=0
+            ),
+            id='probability_batch',
+            name='P(H) Timeseries Batch',
+            replace_existing=True
+        )
+
+        # H 배치 스케줄 등록: 매년 1월 1일 04:00
+        scheduler.add_job(
+            hazard_batch_job,
+            trigger=CronTrigger(
+                month=1,      # 1월
+                day=1,        # 1일
+                hour=4,       # 04:00
+                minute=0
+            ),
+            id='hazard_batch',
+            name='Hazard Score Timeseries Batch',
+            replace_existing=True
+        )
+
+        scheduler.start()
+        logger.info("✓ Background 배치 스케줄러 시작 및 작업 등록 완료")
+        logger.info("  - P(H) 배치: 매년 1월 1일 02:00")
+        logger.info("  - H 배치: 매년 1월 1일 04:00")
+
     except Exception as e:
-        logger.error(f"✗ 스케줄러 시작 실패: {e}")
-        logger.warning("스케줄러 없이 API 서버를 계속 실행합니다")
+        logger.error(f"✗ 배치 스케줄러 시작 실패: {e}", exc_info=True)
+        logger.warning("스케줄러 없이 API 서버를 계속 실행합니다.")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """서버 종료 시 실행"""
-    global probability_scheduler, hazard_scheduler
+    global scheduler
 
     # 스케줄러 종료
-    if probability_scheduler:
-        probability_scheduler.stop()
-        logger.info("Probability 배치 스케줄러 종료")
-
-    if hazard_scheduler:
-        hazard_scheduler.stop()
-        logger.info("Hazard 배치 스케줄러 종료")
+    if scheduler:
+        scheduler.shutdown()
+        logger.info("Background 배치 스케줄러 종료")
 
     logger.info("ModelOps Site Assessment API 종료")
 

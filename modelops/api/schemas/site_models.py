@@ -35,7 +35,7 @@ class SiteLocation(BaseModel):
 class SiteRiskRequest(BaseModel):
     """사업장 리스크 계산 요청 (다중 사업장 지원)"""
     sites: Dict[str, SiteLocation] = Field(..., description="사업장 ID를 키로, 위치 정보를 값으로 하는 딕셔너리")
-    building_info: BuildingInfo = Field(..., description="건물 정보")
+    building_info: Optional[BuildingInfo] = Field(None, description="건물 정보")
     asset_info: Optional[AssetInfo] = Field(None, description="자산 정보")
 
 
@@ -67,7 +67,7 @@ class SiteRelocationRequest(BaseModel):
     sites: Dict[str, SiteLocation] = Field(..., description="사업장 ID를 키로, 위치 정보를 값으로 하는 딕셔너리")
     batch_id: Optional[str] = Field(None, description="배치 작업 ID (ModelOps 콜백용)")
     candidate_grids: Optional[List[CandidateGrid]] = Field(None, description="후보 격자 리스트 (제공하지 않으면 고정 10개 위치 사용)")
-    building_info: BuildingInfo = Field(..., description="건물 정보")
+    building_info: Optional[BuildingInfo] = Field(None, description="건물 정보")
     asset_info: Optional[AssetInfo] = Field(None, description="자산 정보")
     search_criteria: Optional[SearchCriteria] = Field(default_factory=SearchCriteria, description="검색 조건")
 

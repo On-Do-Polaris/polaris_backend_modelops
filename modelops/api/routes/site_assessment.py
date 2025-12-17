@@ -362,7 +362,7 @@ def _calculate_single_site_candidates(
         }
     """
     try:
-        from ..database.connection import DatabaseConnection
+        from modelops.database.connection import DatabaseConnection
 
         # 보험 가입률 추출
         insurance_rate = asset_info.get('insurance_coverage_rate', 0.0) if asset_info else 0.0

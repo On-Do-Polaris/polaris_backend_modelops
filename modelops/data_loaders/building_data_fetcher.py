@@ -110,7 +110,7 @@ class BuildingDataFetcher:
 
                 result = cursor.fetchone()
 
-                if result and result['distance_m'] < 5000:  # 5km 이내
+                if result:
                     return {
                         'sigungu_cd': result['sigungu_cd'],
                         'bjdong_cd': result['bjdong_cd'],

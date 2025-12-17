@@ -4,8 +4,11 @@ from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 import uuid
 import json
+import logging
 from datetime import datetime
 from ..config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseConnection:

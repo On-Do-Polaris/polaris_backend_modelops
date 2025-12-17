@@ -122,35 +122,8 @@ class BuildingDataFetcher:
                         'data_source': 'DB'
                     }
 
-                # location_grid에서 시도
-                cursor.execute("""
-                    SELECT
-                        sigungu_cd,
-                        bjdong_cd,
-                        dong_code,
-                        sido,
-                        sigungu,
-                        dong,
-                        full_address
-                    FROM location_grid
-                    ORDER BY SQRT(POWER(longitude - %s, 2) + POWER(latitude - %s, 2))
-                    LIMIT 1
-                """, (lon, lat))
-
-                result = cursor.fetchone()
-
-                if result:
-                    return {
-                        'sigungu_cd': result['sigungu_cd'],
-                        'bjdong_cd': result['bjdong_cd'],
-                        'dong_code': result['dong_code'],
-                        'sido': result['sido'],
-                        'sigungu': result['sigungu'],
-                        'dong': result['dong'],
-                        'full_address': result['full_address'],
-                        'data_source': 'DB'
-                    }
-
+                # api_vworld_geocode에서 찾지 못한 경우 fallback 반환
+                # location_grid는 좌표만 저장하고 행정구역 정보는 없음
                 return self._fallback_geocode()
 
         except Exception as e:

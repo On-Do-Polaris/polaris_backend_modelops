@@ -365,7 +365,7 @@ async def recommend_relocation_locations(request: SiteRelocationRequest):
 
     # 1. candidate_grids 처리: 없으면 고정 위치 사용
     if request.candidate_grids is None or len(request.candidate_grids) == 0:
-        from ..utils.candidate_location import LOCATION_MAP
+        from ...utils.candidate_location import LOCATION_MAP
 
         # LOCATION_MAP: set of {"lat": ..., "lng": ...}
         # Convert to list of {"latitude": ..., "longitude": ...}

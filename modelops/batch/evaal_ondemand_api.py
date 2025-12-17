@@ -46,6 +46,7 @@ from ..agents.site_assessment.relocation_recommender import RelocationRecommende
 # Utils
 from ..database.connection import DatabaseConnection
 from ..utils.hazard_data_collector import HazardDataCollector
+from ..data_loaders.long_term_mapper import LongTermDataMapper
 
 logger = logging.getLogger(__name__)
 
@@ -713,6 +714,12 @@ def calculate_evaal_ondemand(
                 int_year = 2020
 
         # 기본값 설정
+        if risk_types is None:
+            risk_types = [
+                'extreme_heat', 'extreme_cold', 'drought',
+                'river_flood', 'urban_flood', 'sea_level_rise',
+                'typhoon', 'wildfire', 'water_stress'
+            ]
 
         logger.info(
             f"Starting E, V, AAL calculation: "
@@ -740,27 +747,13 @@ def calculate_evaal_ondemand(
             results['probability'][risk_type] = p_result
 
             # --- E, V 계산용 연도 고정 (2050년 초과 시 2050년으로 고정) ---
-            # 인구 데이터 등 E, V 계산의 핵심 기반 데이터가 2050년까지만 제공되므로, 
+            # 인구 데이터 등 E, V 계산의 핵심 기반 데이터가 2050년까지만 제공되므로,
             # 2050년 이후의 연도 요청 시에는 2050년 데이터를 기반으로 계산
             year_for_ev_calculation = min(int_year, 2050)
-            
-            # Decadal인 경우, 수집된 데이터를 매핑하여 E, V 계산에 활용
+
+            # On-Demand 계산에서는 long_term_data를 사용하지 않음
+            # (Decadal 분석은 hazard_timeseries_batch.py에서 처리)
             pre_collected_data = None
-            if time_scope == 'decadal' and long_term_data:
-                try:
-                    base_info = {
-                        'latitude': latitude,
-                        'longitude': longitude,
-                        'scenario': scenario,
-                        'target_year': year_for_ev_calculation, # E, V 계산용 고정 연도 전달
-                        'time_scope': time_scope,
-                        'building_data': fetch_building_info(latitude, longitude)
-                    }
-                    pre_collected_data = LongTermDataMapper.map_data(
-                        risk_type, long_term_data, base_info
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to map decadal data for {risk_type}: {e}")
 
             # Step 2: E 계산
             e_result = calculate_exposure(

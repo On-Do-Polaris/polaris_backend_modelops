@@ -704,6 +704,7 @@ class DatabaseConnection:
 
         Args:
             results: 저장할 결과 리스트
+                - site_id: 사업장 ID (선택, 없으면 좌표 기반 UUID 생성)
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
@@ -718,8 +719,8 @@ class DatabaseConnection:
                 target_year = result.get('target_year', 2050)
                 score = result.get('exposure_score', 0.0)
 
-                # site_id 조회/생성
-                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+                # site_id: 전달받은 값 사용, 없으면 좌표 기반 UUID 생성
+                site_id = result.get('site_id') or DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
 
                 # 기존 데이터 삭제 후 삽입 (site_id, risk_type, target_year 기준)
                 cursor.execute("""
@@ -740,6 +741,7 @@ class DatabaseConnection:
 
         Args:
             results: 저장할 결과 리스트
+                - site_id: 사업장 ID (선택, 없으면 좌표 기반 UUID 생성)
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
@@ -754,8 +756,8 @@ class DatabaseConnection:
                 target_year = result.get('target_year', 2050)
                 score = result.get('vulnerability_score', 0.0)
 
-                # site_id 조회/생성
-                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+                # site_id: 전달받은 값 사용, 없으면 좌표 기반 UUID 생성
+                site_id = result.get('site_id') or DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
 
                 # 기존 데이터 삭제 후 삽입
                 cursor.execute("""
@@ -776,6 +778,7 @@ class DatabaseConnection:
 
         Args:
             results: 저장할 결과 리스트
+                - site_id: 사업장 ID (선택, 없으면 좌표 기반 UUID 생성)
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
@@ -793,8 +796,8 @@ class DatabaseConnection:
                 final_aal = result.get('final_aal', 0.0)
                 aal_column = f"{scenario}_final_aal"
 
-                # site_id 조회/생성
-                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+                # site_id: 전달받은 값 사용, 없으면 좌표 기반 UUID 생성
+                site_id = result.get('site_id') or DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
 
                 # 기존 데이터 삭제 후 삽입
                 cursor.execute("""

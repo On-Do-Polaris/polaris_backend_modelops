@@ -559,8 +559,9 @@ def _save_results_to_db(
     longitude: float,
     risk_types: List[str],
     results: Dict[str, Any],
-    target_year: int = 2050,
-    scenario: str = 'SSP245'
+    target_year: str = '2050',
+    scenario: str = 'SSP245',
+    site_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     계산 결과를 DB에 저장
@@ -570,8 +571,9 @@ def _save_results_to_db(
         longitude: 경도
         risk_types: 리스크 타입 리스트
         results: 계산 결과 딕셔너리
-        target_year: 목표 연도
+        target_year: 목표 연도 (문자열, "2030" 또는 "2020s" 형식)
         scenario: SSP 시나리오
+        site_id: 사업장 ID (선택)
 
     Returns:
         저장 결과 요약
@@ -590,6 +592,7 @@ def _save_results_to_db(
             e_data = results['exposure'].get(risk_type, {})
 
             exposure_records.append({
+                'site_id': site_id,
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
@@ -608,6 +611,7 @@ def _save_results_to_db(
             v_data = results['vulnerability'].get(risk_type, {})
 
             vulnerability_records.append({
+                'site_id': site_id,
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
@@ -626,6 +630,7 @@ def _save_results_to_db(
             aal_data = results['aal'].get(risk_type, {})
 
             aal_records.append({
+                'site_id': site_id,
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
@@ -656,7 +661,8 @@ def calculate_evaal_ondemand(
     risk_types: Optional[List[str]] = None,
     insurance_rate: float = 0.0,
     asset_value: Optional[float] = None,
-    save_to_db: bool = False
+    save_to_db: bool = False,
+    site_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     E, V, AAL On-Demand 계산 (API 호출용 메인 함수)
@@ -735,6 +741,20 @@ def calculate_evaal_ondemand(
             'integrated_risk': {}
         }
 
+        # Decadal 분석 시 10년치 기후 데이터 조회
+        long_term_data = None
+        if time_scope == 'decadal':
+            try:
+                from ..database.connection_long import DatabaseConnectionLong
+                decade = int_year  # 이미 보정된 값 (2020, 2030 등)
+                long_term_data = DatabaseConnectionLong.fetch_climate_data_by_decade(
+                    latitude, longitude, decade, scenario.lower()
+                )
+                logger.info(f"Loaded decadal climate data for {decade}s: {len(long_term_data)} records")
+            except Exception as e:
+                logger.error(f"Failed to fetch decadal climate data for {int_year}: {e}")
+                long_term_data = {}
+
         # 리스크별 계산
         for risk_type in risk_types:
             logger.debug(f"Calculating {risk_type}...")
@@ -751,13 +771,25 @@ def calculate_evaal_ondemand(
             # 2050년 이후의 연도 요청 시에는 2050년 데이터를 기반으로 계산
             year_for_ev_calculation = min(int_year, 2050)
 
-            # On-Demand 계산에서는 long_term_data를 사용하지 않음
-            # (Decadal 분석은 hazard_timeseries_batch.py에서 처리)
+            # Decadal 분석 시 LongTermDataMapper 사용
             pre_collected_data = None
+            if time_scope == 'decadal' and long_term_data:
+                base_info = {
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'scenario': scenario,
+                    'target_year': int_year,
+                    'time_scope': time_scope,
+                    'building_data': None
+                }
+                pre_collected_data = LongTermDataMapper.map_data(
+                    risk_type, long_term_data, base_info
+                )
+                logger.debug(f"Using decadal data for {risk_type} E calculation")
 
             # Step 2: E 계산
             e_result = calculate_exposure(
-                latitude, longitude, scenario, year_for_ev_calculation, risk_type, 
+                latitude, longitude, scenario, year_for_ev_calculation, risk_type,
                 pre_collected_data=pre_collected_data
             )
             results['exposure'][risk_type] = e_result
@@ -786,14 +818,20 @@ def calculate_evaal_ondemand(
         save_summary = None
         if save_to_db:
             logger.info("Saving results to DB...")
+
+            # target_year를 원본 형식으로 변환 (DB는 varchar이므로 "2020s" 형식 지원)
+            # yearly: target_year=2030 → "2030"
+            # decadal: target_year="2020s" → "2020s" (원본 유지)
+            if time_scope == 'decadal':
+                db_target_year = f"{int_year}s"  # 2020 → "2020s"
+            else:
+                db_target_year = str(target_year) if isinstance(target_year, int) else target_year
+
             save_summary = _save_results_to_db(
                 latitude, longitude, risk_types, results,
-                target_year=int_year, # H, P, AAL은 실제 요청 연도 저장
+                target_year=db_target_year,  # "2020s" 또는 "2030" 형식
                 scenario=scenario,
-                # E, V 결과 저장 시에는 2050년 고정 연도 사용 (DB 스키마가 target_year를 받으므로)
-                # 현재 _save_results_to_db 함수가 E, V 결과를 직접 받아 처리하므로
-                # 내부적으로 target_year를 int_year로 사용하나, E,V의 점수 자체가 
-                # year_for_ev_calculation 기준으로 계산된 것이므로 문제가 없음.
+                site_id=site_id
             )
             logger.info(f"DB save completed: {save_summary}")
 
@@ -803,7 +841,7 @@ def calculate_evaal_ondemand(
             'latitude': latitude,
             'longitude': longitude,
             'scenario': scenario,
-            'target_year': int_year,
+            'target_year': target_year,  # 원본 형식 반환 ("2020s" 또는 2030)
             'time_scope': time_scope,
             'calculation_time': (end_time - start_time).total_seconds(),
             'calculated_at': end_time.isoformat(),

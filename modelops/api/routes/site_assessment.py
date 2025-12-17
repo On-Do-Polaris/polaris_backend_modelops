@@ -104,7 +104,8 @@ def _calculate_single_site_scenario_year(
             risk_types=RISK_TYPES,
             insurance_rate=insurance_rate,
             asset_value=asset_value,
-            save_to_db=True  # DB에 결과 저장
+            save_to_db=True,  # DB에 결과 저장
+            site_id=site_id  # 사업장 ID 전달
         )
 
         if result.get('status') == 'error':

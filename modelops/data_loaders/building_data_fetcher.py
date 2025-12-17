@@ -446,7 +446,7 @@ class BuildingDataFetcher:
                         population_2050
                     FROM location_admin
                     WHERE level = 1
-                      AND admin_code = %s
+                      AND sido_code = %s
                 """, (sido_code,))
 
                 sido_result = cursor.fetchone()

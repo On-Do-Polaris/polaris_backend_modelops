@@ -3,20 +3,22 @@ Site Assessment API
 사업장 리스크 계산 및 이전 후보지 추천 API
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from ..schemas.site_models import (
     SiteRiskRequest,
-    SiteRiskResponse,
     SiteRelocationRequest,
     SiteRelocationResponse
 )
 from ...batch.evaal_ondemand_api import calculate_evaal_ondemand
 from ...config.settings import settings
+from ...utils.background_task_manager import task_manager
+from ...utils.log_writer import log_writer
 import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
 import httpx
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +79,8 @@ def _calculate_single_site_scenario_year(
     scenario: str,
     target_year: int,
     insurance_rate: float,
-    asset_value: Optional[float]
+    asset_value: Optional[float],
+    task_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     단일 사업장의 단일 시나리오/연도 조합 계산 (병렬 처리용 헬퍼 함수)
@@ -105,6 +108,17 @@ def _calculate_single_site_scenario_year(
 
         if result.get('status') == 'error':
             error_msg = result.get('error', 'E, V, AAL 계산 중 알 수 없는 오류 발생')
+
+            # 로그 파일 작성 (실패)
+            log_writer.write_year_completed_log(
+                site_id=site_id,
+                year=target_year,
+                scenario=scenario,
+                status='failed',
+                error_message=error_msg,
+                task_type='calculate'
+            )
+
             return {
                 'site_id': site_id,
                 'scenario': scenario,
@@ -112,6 +126,15 @@ def _calculate_single_site_scenario_year(
                 'status': 'failed',
                 'error_message': error_msg
             }
+
+        # 로그 파일 작성 (성공)
+        log_writer.write_year_completed_log(
+            site_id=site_id,
+            year=target_year,
+            scenario=scenario,
+            status='success',
+            task_type='calculate'
+        )
 
         return {
             'site_id': site_id,
@@ -122,62 +145,81 @@ def _calculate_single_site_scenario_year(
         }
 
     except Exception as e:
+        error_msg = str(e)
+
+        # 로그 파일 작성 (예외)
+        log_writer.write_year_completed_log(
+            site_id=site_id,
+            year=target_year,
+            scenario=scenario,
+            status='failed',
+            error_message=error_msg,
+            task_type='calculate'
+        )
+
         return {
             'site_id': site_id,
             'scenario': scenario,
             'year': target_year,
             'status': 'failed',
-            'error_message': str(e)
+            'error_message': error_msg
         }
 
 
-@router.post("/calculate", response_model=SiteRiskResponse)
-async def calculate_site_risk(request: SiteRiskRequest):
+def _background_calculate_site_risk(
+    task_id: str,
+    sites: Dict[str, Any],
+    insurance_rate: float,
+    asset_value: Optional[float]
+):
     """
-    사업장 리스크 계산 API (다중 사업장 병렬 처리)
-    (모든 시나리오 × 모든 연도 조합에 대해 E, V, AAL 계산 및 DB 저장)
+    백그라운드 사업장 리스크 계산 함수
     """
-    total_sites = len(request.sites)
-    logger.info(f"사업장 리스크 계산 요청: {total_sites}개 사업장")
-
-    # asset_info 처리
-    insurance_rate = request.asset_info.insurance_coverage_rate if request.asset_info else 0.0
-    asset_value = request.asset_info.total_value if request.asset_info else None
-
-    calculation_start_time = datetime.now()
-
-    # 전체 계산 개수 (사업장 수 × 시나리오 수 × 연도 수)
+    total_sites = len(sites)
     total_calculations = total_sites * len(SCENARIOS) * len(TARGET_YEARS)
-    logger.info(f"총 {total_calculations}개 조합 계산 시작 "
-                f"({total_sites} sites × {len(SCENARIOS)} scenarios × {len(TARGET_YEARS)} years)")
+
+    logger.info(f"[{task_id}] 백그라운드 계산 시작: {total_sites}개 사업장, {total_calculations}개 조합")
+
+    # 작업 시작
+    task_manager.start_task(task_id)
 
     successful_sites = 0
     failed_sites = 0
     site_errors = {}
 
     try:
+        # 각 사업장별로 시작 로그 작성
+        for site_id in sites.keys():
+            log_writer.write_task_start_log(
+                site_id=site_id,
+                task_type='calculate',
+                total_years=len(TARGET_YEARS),
+                scenarios=SCENARIOS
+            )
+
         # 병렬 처리로 모든 사업장의 모든 시나리오/연도 조합 계산
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             # 모든 작업 제출
             futures = []
-            for site_id, site_location in request.sites.items():
+            for site_id, site_location in sites.items():
                 for scenario in SCENARIOS:
                     for year in TARGET_YEARS:
                         future = executor.submit(
                             _calculate_single_site_scenario_year,
                             site_id,
-                            site_location.latitude,
-                            site_location.longitude,
+                            site_location['latitude'],
+                            site_location['longitude'],
                             scenario,
                             year,
                             insurance_rate,
-                            asset_value
+                            asset_value,
+                            task_id
                         )
                         futures.append(future)
 
             # 결과 수집 및 사업장별 성공/실패 추적
             completed_count = 0
-            site_results = {site_id: {'success': 0, 'failed': 0} for site_id in request.sites.keys()}
+            site_results = {site_id: {'success': 0, 'failed': 0} for site_id in sites.keys()}
 
             for future in as_completed(futures):
                 try:
@@ -186,8 +228,10 @@ async def calculate_site_risk(request: SiteRiskRequest):
 
                     if result['status'] == 'success':
                         site_results[site_id]['success'] += 1
+                        task_manager.update_site_progress(task_id, site_id, completed_years=1)
                     else:
                         site_results[site_id]['failed'] += 1
+                        task_manager.update_site_progress(task_id, site_id, failed_years=1)
                         # 첫 번째 에러만 기록
                         if site_id not in site_errors:
                             site_errors[site_id] = result['error_message']
@@ -197,58 +241,102 @@ async def calculate_site_risk(request: SiteRiskRequest):
                     # 진행 상황 로그 (10% 단위)
                     if completed_count % max(1, total_calculations // 10) == 0:
                         progress = (completed_count / total_calculations) * 100
-                        logger.info(f"진행률: {completed_count}/{total_calculations} ({progress:.1f}%)")
+                        logger.info(f"[{task_id}] 진행률: {completed_count}/{total_calculations} ({progress:.1f}%)")
 
                 except Exception as e:
-                    logger.error(f"결과 수집 중 오류: {e}")
+                    logger.error(f"[{task_id}] 결과 수집 중 오류: {e}")
                     completed_count += 1
 
-            # 사업장별 성공/실패 집계
+            # 사업장별 성공/실패 집계 및 요약 로그 작성
             for site_id, counts in site_results.items():
+                total_years_per_site = len(SCENARIOS) * len(TARGET_YEARS)
+
+                # 요약 로그 작성
+                log_writer.write_site_summary_log(
+                    site_id=site_id,
+                    total_years=total_years_per_site,
+                    completed_years=counts['success'],
+                    failed_years=counts['failed'],
+                    task_type='calculate',
+                    scenarios=SCENARIOS
+                )
+
                 if counts['failed'] == 0:
                     successful_sites += 1
+                    task_manager.complete_site(task_id, site_id, success=True)
                 else:
                     failed_sites += 1
+                    task_manager.complete_site(task_id, site_id, success=False)
 
-        calculation_end_time = datetime.now()
-        elapsed_time = (calculation_end_time - calculation_start_time).total_seconds()
+        logger.info(f"[{task_id}] 사업장 리스크 계산 완료")
+        logger.info(f"[{task_id}] 성공: {successful_sites}/{total_sites} 사업장")
+        logger.info(f"[{task_id}] 실패: {failed_sites}/{total_sites} 사업장")
 
-        logger.info(f"사업장 리스크 계산 완료 (총 {elapsed_time:.1f}초 소요)")
-        logger.info(f"성공: {successful_sites}/{total_sites} 사업장")
-        logger.info(f"실패: {failed_sites}/{total_sites} 사업장")
-
-        # 실패한 사업장 로그
-        if site_errors:
-            logger.warning(f"실패한 사업장 목록:")
-            for site_id, error_msg in list(site_errors.items())[:5]:
-                logger.warning(f"  - {site_id}: {error_msg}")
-            if len(site_errors) > 5:
-                logger.warning(f"  ... 외 {len(site_errors) - 5}개 사업장 실패")
-
-        # 상태 결정
-        if failed_sites == 0:
-            status = "success"
-            message = f"모든 사업장 ({total_sites}개) 계산 성공"
-        elif successful_sites == 0:
-            status = "failed"
-            message = f"모든 사업장 ({total_sites}개) 계산 실패"
-        else:
-            status = "partial"
-            message = f"{successful_sites}/{total_sites} 사업장 계산 성공, {failed_sites}개 실패"
-
-        # Response 반환
-        return SiteRiskResponse(
-            status=status,
-            total_sites=total_sites,
-            successful_sites=successful_sites,
-            failed_sites=failed_sites,
-            message=message,
-            calculated_at=calculation_end_time
-        )
+        # 작업 완료
+        task_manager.complete_task(task_id)
 
     except Exception as e:
-        logger.error(f"사업장 리스크 계산 중 내부 오류: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.error(f"[{task_id}] 백그라운드 계산 중 오류: {e}", exc_info=True)
+        task_manager.complete_task(task_id, error_message=str(e))
+
+
+@router.post("/calculate")
+async def calculate_site_risk(request: SiteRiskRequest, background_tasks: BackgroundTasks):
+    """
+    사업장 리스크 계산 API (백그라운드 처리)
+    (모든 시나리오 × 모든 연도 조합에 대해 E, V, AAL 계산 및 DB 저장)
+
+    Returns:
+        task_id: 백그라운드 작업 ID (작업 상태 조회용)
+    """
+    total_sites = len(request.sites)
+    logger.info(f"사업장 리스크 계산 요청: {total_sites}개 사업장")
+
+    # asset_info 처리
+    insurance_rate = request.asset_info.insurance_coverage_rate if request.asset_info else 0.0
+    asset_value = request.asset_info.total_value if request.asset_info else None
+
+    # 작업 ID 생성
+    task_id = str(uuid.uuid4())
+
+    # 작업 등록
+    task_manager.create_task(
+        task_id=task_id,
+        task_type='calculate',
+        total_sites=total_sites,
+        total_years=len(SCENARIOS) * len(TARGET_YEARS),
+        metadata={
+            'scenarios': SCENARIOS,
+            'target_years': TARGET_YEARS,
+            'insurance_rate': insurance_rate,
+            'asset_value': asset_value
+        }
+    )
+
+    # sites를 직렬화 가능한 형태로 변환
+    sites_dict = {
+        site_id: {'latitude': loc.latitude, 'longitude': loc.longitude}
+        for site_id, loc in request.sites.items()
+    }
+
+    # 백그라운드 작업 추가
+    background_tasks.add_task(
+        _background_calculate_site_risk,
+        task_id,
+        sites_dict,
+        insurance_rate,
+        asset_value
+    )
+
+    logger.info(f"백그라운드 작업 등록 완료: task_id={task_id}")
+
+    return {
+        'task_id': task_id,
+        'status': 'accepted',
+        'message': f'{total_sites}개 사업장 계산 작업이 백그라운드에서 시작되었습니다.',
+        'total_sites': total_sites,
+        'total_calculations': total_sites * len(SCENARIOS) * len(TARGET_YEARS)
+    }
 
 
 def _calculate_single_site_candidates(
@@ -257,7 +345,8 @@ def _calculate_single_site_candidates(
     building_info: Dict[str, Any],
     asset_info: Optional[Dict[str, Any]],
     scenario: str,
-    target_year: int
+    target_year: int,
+    task_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     단일 사업장의 후보지 계산 (병렬 처리용 헬퍼 함수)
@@ -267,7 +356,8 @@ def _calculate_single_site_candidates(
             'site_id': str,
             'status': 'success'|'failed',
             'candidates_saved': int,
-            'error_message': Optional[str]
+            'error_message': Optional[str],
+            'year': int
         }
     """
     try:
@@ -278,6 +368,7 @@ def _calculate_single_site_candidates(
         asset_value = asset_info.get('total_value') if asset_info else None
 
         saved_count = 0
+        failed_count = 0
 
         # 각 후보지에 대해 계산
         for grid in candidate_grids:
@@ -302,6 +393,7 @@ def _calculate_single_site_candidates(
 
             if result.get('status') == 'error':
                 logger.warning(f"[{site_id}] 후보지 ({lat}, {lon}) 계산 실패: {result.get('error')}")
+                failed_count += 1
                 continue
 
             # candidate_sites 테이블에 저장
@@ -337,28 +429,179 @@ def _calculate_single_site_candidates(
 
             saved_count += 1
 
+        # 연도별 로그 작성
+        if failed_count == 0:
+            log_writer.write_year_completed_log(
+                site_id=site_id,
+                year=target_year,
+                scenario=scenario,
+                status='success',
+                task_type='recommend'
+            )
+        else:
+            log_writer.write_year_completed_log(
+                site_id=site_id,
+                year=target_year,
+                scenario=scenario,
+                status='partial',
+                error_message=f'{failed_count}개 후보지 계산 실패',
+                task_type='recommend'
+            )
+
         return {
             'site_id': site_id,
             'status': 'success',
             'candidates_saved': saved_count,
-            'error_message': None
+            'error_message': None,
+            'year': target_year
         }
 
     except Exception as e:
+        error_msg = str(e)
         logger.error(f"[{site_id}] 후보지 계산 실패: {e}", exc_info=True)
+
+        # 로그 작성 (실패)
+        log_writer.write_year_completed_log(
+            site_id=site_id,
+            year=target_year,
+            scenario=scenario,
+            status='failed',
+            error_message=error_msg,
+            task_type='recommend'
+        )
+
         return {
             'site_id': site_id,
             'status': 'failed',
             'candidates_saved': 0,
-            'error_message': str(e)
+            'error_message': error_msg,
+            'year': target_year
         }
 
 
-@router.post("/recommend-locations", response_model=SiteRelocationResponse)
-async def recommend_relocation_locations(request: SiteRelocationRequest):
+def _background_recommend_relocation_locations(
+    task_id: str,
+    sites: Dict[str, Any],
+    candidate_grids: List[Dict[str, float]],
+    building_info: Optional[Dict[str, Any]],
+    asset_info: Optional[Dict[str, Any]],
+    scenario: str,
+    target_year: int,
+    batch_id: Optional[str]
+):
     """
-    사업장 이전 후보지 추천 API (다중 사업장 병렬 처리)
+    백그라운드 후보지 추천 함수
+    """
+    total_sites = len(sites)
+    logger.info(f"[{task_id}] 백그라운드 후보지 추천 시작: {total_sites}개 사업장")
+
+    # 작업 시작
+    task_manager.start_task(task_id)
+
+    successful_sites = 0
+    failed_sites = 0
+    total_candidates_saved = 0
+    site_errors = {}
+
+    try:
+        # 각 사업장별로 시작 로그 작성
+        for site_id in sites.keys():
+            log_writer.write_task_start_log(
+                site_id=site_id,
+                task_type='recommend',
+                total_years=1,  # recommend는 단일 연도만 처리
+                scenarios=[scenario]
+            )
+
+        # 병렬 처리로 모든 사업장의 후보지 계산
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = []
+
+            for site_id in sites.keys():
+                future = executor.submit(
+                    _calculate_single_site_candidates,
+                    site_id,
+                    candidate_grids,
+                    building_info,
+                    asset_info,
+                    scenario,
+                    target_year,
+                    task_id
+                )
+                futures.append(future)
+
+            # 결과 수집
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    site_id = result['site_id']
+
+                    if result['status'] == 'success':
+                        successful_sites += 1
+                        total_candidates_saved += result['candidates_saved']
+                        task_manager.complete_site(task_id, site_id, success=True)
+                        task_manager.update_site_progress(task_id, site_id, completed_years=1)
+                        logger.info(f"[{task_id}][{site_id}] 후보지 {result['candidates_saved']}개 저장 완료")
+
+                        # 요약 로그 작성
+                        log_writer.write_site_summary_log(
+                            site_id=site_id,
+                            total_years=1,
+                            completed_years=1,
+                            failed_years=0,
+                            task_type='recommend',
+                            scenarios=[scenario]
+                        )
+                    else:
+                        failed_sites += 1
+                        site_errors[site_id] = result['error_message']
+                        task_manager.complete_site(task_id, site_id, success=False)
+                        task_manager.update_site_progress(task_id, site_id, failed_years=1)
+                        logger.error(f"[{task_id}][{site_id}] 후보지 계산 실패: {result['error_message']}")
+
+                        # 요약 로그 작성 (실패)
+                        log_writer.write_site_summary_log(
+                            site_id=site_id,
+                            total_years=1,
+                            completed_years=0,
+                            failed_years=1,
+                            task_type='recommend',
+                            scenarios=[scenario]
+                        )
+
+                except Exception as e:
+                    logger.error(f"[{task_id}] 결과 수집 중 오류: {e}")
+                    failed_sites += 1
+
+        logger.info(f"[{task_id}] 후보지 추천 완료")
+        logger.info(f"[{task_id}] 성공: {successful_sites}/{total_sites} 사업장")
+        logger.info(f"[{task_id}] 실패: {failed_sites}/{total_sites} 사업장")
+        logger.info(f"[{task_id}] 총 저장 후보지: {total_candidates_saved}개")
+
+        # 작업 완료
+        task_manager.complete_task(task_id)
+
+        # 콜백 호출 (비동기 함수를 동기 환경에서 실행)
+        if batch_id:
+            try:
+                import asyncio
+                asyncio.run(_notify_recommendation_completed(batch_id))
+            except Exception as callback_error:
+                logger.error(f"[{task_id}] 콜백 호출 실패: {callback_error}")
+
+    except Exception as e:
+        logger.error(f"[{task_id}] 백그라운드 후보지 추천 중 오류: {e}", exc_info=True)
+        task_manager.complete_task(task_id, error_message=str(e))
+
+
+@router.post("/recommend-locations")
+async def recommend_relocation_locations(request: SiteRelocationRequest, background_tasks: BackgroundTasks):
+    """
+    사업장 이전 후보지 추천 API (백그라운드 처리)
     (On-Demand 계산 + candidate_sites DB 저장)
+
+    Returns:
+        task_id: 백그라운드 작업 ID (작업 상태 조회용)
     """
     total_sites = len(request.sites)
     logger.info(f"이전 후보지 추천 요청: {total_sites}개 사업장, batch_id={request.batch_id}")
@@ -395,93 +638,163 @@ async def recommend_relocation_locations(request: SiteRelocationRequest):
     building_info = request.building_info.model_dump() if request.building_info else None
     asset_info = request.asset_info.model_dump() if request.asset_info else None
 
-    calculation_start_time = datetime.now()
+    # 작업 ID 생성
+    task_id = str(uuid.uuid4())
 
-    successful_sites = 0
-    failed_sites = 0
-    total_candidates_saved = 0
-    site_errors = {}
+    # 작업 등록
+    task_manager.create_task(
+        task_id=task_id,
+        task_type='recommend',
+        total_sites=total_sites,
+        total_years=1,  # recommend는 단일 연도만 처리
+        metadata={
+            'scenario': scenario,
+            'target_year': target_year,
+            'total_grids': total_grids,
+            'batch_id': request.batch_id
+        }
+    )
 
-    try:
-        # 병렬 처리로 모든 사업장의 후보지 계산
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = []
+    # sites를 직렬화 가능한 형태로 변환
+    sites_dict = {
+        site_id: {'latitude': loc.latitude, 'longitude': loc.longitude}
+        for site_id, loc in request.sites.items()
+    }
 
-            for site_id in request.sites.keys():
-                future = executor.submit(
-                    _calculate_single_site_candidates,
-                    site_id,
-                    candidate_grids,
-                    building_info,
-                    asset_info,
-                    scenario,
-                    target_year
-                )
-                futures.append(future)
+    # 백그라운드 작업 추가
+    background_tasks.add_task(
+        _background_recommend_relocation_locations,
+        task_id,
+        sites_dict,
+        candidate_grids,
+        building_info,
+        asset_info,
+        scenario,
+        target_year,
+        request.batch_id
+    )
 
-            # 결과 수집
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    site_id = result['site_id']
+    logger.info(f"백그라운드 작업 등록 완료: task_id={task_id}")
 
-                    if result['status'] == 'success':
-                        successful_sites += 1
-                        total_candidates_saved += result['candidates_saved']
-                        logger.info(f"[{site_id}] 후보지 {result['candidates_saved']}개 저장 완료")
-                    else:
-                        failed_sites += 1
-                        site_errors[site_id] = result['error_message']
-                        logger.error(f"[{site_id}] 후보지 계산 실패: {result['error_message']}")
+    return {
+        'task_id': task_id,
+        'status': 'accepted',
+        'message': f'{total_sites}개 사업장 후보지 추천 작업이 백그라운드에서 시작되었습니다.',
+        'total_sites': total_sites,
+        'total_grids': total_grids,
+        'scenario': scenario,
+        'target_year': target_year
+    }
 
-                except Exception as e:
-                    logger.error(f"결과 수집 중 오류: {e}")
-                    failed_sites += 1
 
-        calculation_end_time = datetime.now()
-        elapsed_time = (calculation_end_time - calculation_start_time).total_seconds()
+@router.get("/task-status/{task_id}")
+async def get_task_status(task_id: str):
+    """
+    작업 상태 조회 API
 
-        logger.info(f"후보지 추천 완료 (총 {elapsed_time:.1f}초 소요)")
-        logger.info(f"성공: {successful_sites}/{total_sites} 사업장")
-        logger.info(f"실패: {failed_sites}/{total_sites} 사업장")
-        logger.info(f"총 저장 후보지: {total_candidates_saved}개")
+    Args:
+        task_id: 작업 ID
 
-        # 실패한 사업장 로그
-        if site_errors:
-            logger.warning(f"실패한 사업장 목록:")
-            for site_id, error_msg in list(site_errors.items())[:5]:
-                logger.warning(f"  - {site_id}: {error_msg}")
-            if len(site_errors) > 5:
-                logger.warning(f"  ... 외 {len(site_errors) - 5}개 사업장 실패")
+    Returns:
+        작업 상태 정보
+    """
+    task_info = task_manager.get_task(task_id)
 
-        # 상태 결정
-        if failed_sites == 0:
-            status = "success"
-            message = f"모든 사업장 ({total_sites}개) 후보지 계산 성공, 총 {total_candidates_saved}개 후보지 저장"
-        elif successful_sites == 0:
-            status = "failed"
-            message = f"모든 사업장 ({total_sites}개) 후보지 계산 실패"
-        else:
-            status = "partial"
-            message = f"{successful_sites}/{total_sites} 사업장 성공, {total_candidates_saved}개 후보지 저장"
+    if task_info is None:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
-        # 콜백 호출 (완료 알림)
-        if request.batch_id:
-            try:
-                await _notify_recommendation_completed(request.batch_id)
-            except Exception as callback_error:
-                logger.error(f"콜백 호출 실패 (무시하고 계속): {callback_error}")
+    # datetime 객체를 문자열로 변환
+    response = {
+        'task_id': task_info['task_id'],
+        'task_type': task_info['task_type'],
+        'status': task_info['status'],
+        'total_sites': task_info['total_sites'],
+        'completed_sites': task_info['completed_sites'],
+        'failed_sites': task_info['failed_sites'],
+        'total_years': task_info['total_years'],
+        'created_at': task_info['created_at'].isoformat() if task_info['created_at'] else None,
+        'started_at': task_info['started_at'].isoformat() if task_info['started_at'] else None,
+        'completed_at': task_info['completed_at'].isoformat() if task_info['completed_at'] else None,
+        'error_message': task_info['error_message'],
+        'metadata': task_info['metadata']
+    }
 
-        # Response 반환 (간단한 성공/실패만)
-        final_status = "success" if failed_sites == 0 else "failed"
-        return SiteRelocationResponse(
-            status=final_status,
-            message=message
+    # 진행률 계산
+    if task_info['status'] == 'running':
+        total_progress = sum(
+            prog['completed_years'] + prog['failed_years']
+            for prog in task_info['current_progress'].values()
         )
+        total_expected = task_info['total_sites'] * task_info['total_years']
+        progress_percentage = (total_progress / total_expected * 100) if total_expected > 0 else 0
+        response['progress_percentage'] = round(progress_percentage, 2)
+        response['current_progress'] = task_info['current_progress']
 
-    except Exception as e:
-        logger.error(f"이전 후보지 추천 중 내부 오류: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
+    return response
+
+
+@router.get("/tasks")
+async def get_all_tasks():
+    """
+    모든 작업 상태 조회 API
+
+    Returns:
+        모든 작업의 상태 정보 목록
+    """
+    all_tasks = task_manager.get_all_tasks()
+
+    tasks_list = []
+    for task_id, task_info in all_tasks.items():
+        task_summary = {
+            'task_id': task_info['task_id'],
+            'task_type': task_info['task_type'],
+            'status': task_info['status'],
+            'total_sites': task_info['total_sites'],
+            'completed_sites': task_info['completed_sites'],
+            'failed_sites': task_info['failed_sites'],
+            'created_at': task_info['created_at'].isoformat() if task_info['created_at'] else None,
+            'started_at': task_info['started_at'].isoformat() if task_info['started_at'] else None,
+            'completed_at': task_info['completed_at'].isoformat() if task_info['completed_at'] else None,
+        }
+
+        # 진행률 계산
+        if task_info['status'] == 'running':
+            total_progress = sum(
+                prog['completed_years'] + prog['failed_years']
+                for prog in task_info['current_progress'].values()
+            )
+            total_expected = task_info['total_sites'] * task_info['total_years']
+            progress_percentage = (total_progress / total_expected * 100) if total_expected > 0 else 0
+            task_summary['progress_percentage'] = round(progress_percentage, 2)
+
+        tasks_list.append(task_summary)
+
+    # 최신 순으로 정렬 (created_at 기준)
+    tasks_list.sort(key=lambda x: x['created_at'] if x['created_at'] else '', reverse=True)
+
+    return {
+        'total_tasks': len(tasks_list),
+        'tasks': tasks_list
+    }
+
+
+@router.delete("/task/{task_id}")
+async def delete_task(task_id: str):
+    """
+    작업 삭제 API
+
+    Args:
+        task_id: 삭제할 작업 ID
+
+    Returns:
+        삭제 결과
+    """
+    success = task_manager.delete_task(task_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    return {
+        'status': 'success',
+        'message': f'Task {task_id} deleted successfully'
+    }

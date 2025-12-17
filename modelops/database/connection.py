@@ -461,6 +461,83 @@ class DatabaseConnection:
             return dict(result) if result else {}
 
     @staticmethod
+    def fetch_building_data_for_vulnerability(latitude: float, longitude: float) -> Optional[Dict[str, Any]]:
+        """
+        Vulnerability 계산용 건물 데이터 조회 (api_buildings 테이블 사용)
+
+        Args:
+            latitude: 위도 (WGS84)
+            longitude: 경도 (WGS84)
+
+        Returns:
+            {
+                'building_age': int,
+                'ground_floors': int,
+                'floors_below': int,
+                'has_piloti': bool,
+                'structure_type': str,
+                'total_area_m2': float,
+                'main_purpose': str,
+                'has_seismic_design': bool,
+                'elevation_m': float,
+                'flood_capacity': float,
+                'data_source': str
+            } 또는 None
+        """
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 가장 가까운 건물 정보 조회
+                cursor.execute("""
+                    SELECT
+                        EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM use_apr_day) as building_age,
+                        strct_nm as structure_type,
+                        main_purp_cd_nm as main_purpose,
+                        ugrnd_flr_cnt as floors_below,
+                        grnd_flr_cnt as ground_floors,
+                        tot_area as total_area_m2,
+                        arch_area
+                    FROM api_buildings
+                    WHERE location IS NOT NULL
+                    ORDER BY ST_Distance(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                    )
+                    LIMIT 1
+                """, (longitude, latitude))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    return None
+
+                # 필로티 여부 추정 (1층이 있고 지하층이 없는 경우)
+                has_piloti = result.get('ground_floors', 0) >= 1 and result.get('floors_below', 0) == 0
+
+                # 내진설계 여부 추정 (2005년 이후 건축물은 내진설계 의무화)
+                building_age = result.get('building_age', 30)
+                has_seismic_design = building_age <= 20
+
+                return {
+                    'building_age': int(building_age) if building_age else 30,
+                    'ground_floors': int(result.get('ground_floors', 3)) if result.get('ground_floors') else 3,
+                    'floors_below': int(result.get('floors_below', 0)) if result.get('floors_below') else 0,
+                    'has_piloti': has_piloti,
+                    'structure_type': result.get('structure_type', 'RC'),
+                    'total_area_m2': float(result.get('total_area_m2', 500.0)) if result.get('total_area_m2') else 500.0,
+                    'main_purpose': result.get('main_purpose', 'residential'),
+                    'has_seismic_design': has_seismic_design,
+                    'elevation_m': 50.0,  # TODO: DEM 데이터에서 조회
+                    'flood_capacity': 0.0,  # TODO: 별도 계산 필요
+                    'data_source': 'database'
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to fetch building data for vulnerability: {e}")
+            return None
+
+    @staticmethod
     def fetch_base_aals(latitude: float, longitude: float) -> Dict[str, float]:
         """
         base_aal 조회 (probability_results.aal)

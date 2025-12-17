@@ -389,29 +389,63 @@ class SpatialDataLoader:
                 cursor = conn.cursor()
 
                 # raw_drought 테이블에서 토양수분 조회
-                cursor.execute("""
-                    SELECT soil_moisture, moisture_level
-                    FROM raw_drought
-                    WHERE ST_DWithin(
-                        geom::geography,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                        10000
-                    )
-                    ORDER BY ST_Distance(
-                        geom::geography,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                    )
-                    LIMIT 1
-                """, (lon, lat, lon, lat))
+                # NOTE: DB 컬럼명 오타 대응 (soil_moisture 또는 soil_mositure)
+                try:
+                    cursor.execute("""
+                        SELECT soil_moisture, moisture_level
+                        FROM raw_drought
+                        WHERE ST_DWithin(
+                            geom::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                            10000
+                        )
+                        ORDER BY ST_Distance(
+                            geom::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                        )
+                        LIMIT 1
+                    """, (lon, lat, lon, lat))
 
-                result = cursor.fetchone()
+                    result = cursor.fetchone()
 
-                if result:
-                    return {
-                        'soil_moisture': float(result['soil_moisture']) if result['soil_moisture'] else 0.5,
-                        'moisture_level': result['moisture_level'] or 'moderate',
-                        'data_source': 'DB'
-                    }
+                    if result:
+                        return {
+                            'soil_moisture': float(result['soil_moisture']) if result['soil_moisture'] else 0.5,
+                            'moisture_level': result['moisture_level'] or 'moderate',
+                            'data_source': 'DB'
+                        }
+                except Exception as e:
+                    # 컬럼명이 soil_mositure로 오타가 있는 경우 재시도
+                    if 'soil_mositure' in str(e) or 'does not exist' in str(e):
+                        logger.warning(f"Column 'soil_moisture' not found, trying 'soil_mositure': {e}")
+                        try:
+                            cursor.execute("""
+                                SELECT soil_mositure as soil_moisture, moisture_level
+                                FROM raw_drought
+                                WHERE ST_DWithin(
+                                    geom::geography,
+                                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                                    10000
+                                )
+                                ORDER BY ST_Distance(
+                                    geom::geography,
+                                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                                )
+                                LIMIT 1
+                            """, (lon, lat, lon, lat))
+
+                            result = cursor.fetchone()
+
+                            if result:
+                                return {
+                                    'soil_moisture': float(result['soil_moisture']) if result['soil_moisture'] else 0.5,
+                                    'moisture_level': result['moisture_level'] or 'moderate',
+                                    'data_source': 'DB'
+                                }
+                        except Exception as e2:
+                            logger.error(f"Failed to get soil moisture with alternate column name: {e2}")
+                    else:
+                        raise
 
                 return self._fallback_soil_moisture()
 

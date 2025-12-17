@@ -7,7 +7,7 @@ FastAPI 메인 앱
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from modelops.api.routes import health, site_assessment
+from modelops.api.routes import health, site_assessment, batch_trigger
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from modelops.batch.probability_timeseries_batch import run_probability_batch
@@ -133,6 +133,7 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(site_assessment.router)
 app.include_router(health.router)
+app.include_router(batch_trigger.router)
 
 
 @app.on_event("startup")

@@ -78,6 +78,9 @@ class DroughtHScoreAgent(BaseHazardHScoreAgent):
             # 2. SPEI-12 값 결정 (실제 데이터 vs Fallback 추정)
             if spei12 is not None:
                 # KMA SPEI-12 데이터 사용
+                # spei12가 리스트인 경우 평균값 사용
+                if isinstance(spei12, (list, tuple)):
+                    spei12 = sum(spei12) / len(spei12) if len(spei12) > 0 else 0.0
                 final_spei = float(spei12)
                 final_spei = max(-3.0, min(3.0, final_spei))
             else:

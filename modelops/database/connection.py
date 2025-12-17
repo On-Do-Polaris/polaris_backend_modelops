@@ -39,9 +39,21 @@ class DatabaseConnection:
                         user=settings.database_user,
                         password=settings.database_password
                     )
-                    logger.info("Database connection pool initialized (minconn=2, maxconn=20)")
+
+                    # Connection Pool 연결 검증 (초기화 후 바로 연결 테스트)
+                    test_conn = cls._connection_pool.getconn()
+                    try:
+                        with test_conn.cursor() as cursor:
+                            cursor.execute("SELECT 1")
+                        cls._connection_pool.putconn(test_conn)
+                        logger.info("Database connection pool initialized and verified (minconn=2, maxconn=20)")
+                    except Exception as e:
+                        cls._connection_pool.putconn(test_conn)
+                        raise Exception(f"Connection pool verification failed: {e}")
+
                 except Exception as e:
                     logger.error(f"Failed to initialize connection pool: {e}")
+                    cls._connection_pool = None  # 실패 시 None으로 재설정
                     raise
 
     @staticmethod

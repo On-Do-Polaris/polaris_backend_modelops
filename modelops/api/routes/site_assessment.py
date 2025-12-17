@@ -7,7 +7,8 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from ..schemas.site_models import (
     SiteRiskRequest,
     SiteRelocationRequest,
-    SiteRelocationResponse
+    SiteRelocationResponse,
+    SearchCriteria
 )
 from ...batch.evaal_ondemand_api import calculate_evaal_ondemand
 from ...config.settings import settings
@@ -630,9 +631,9 @@ async def recommend_relocation_locations(request: SiteRelocationRequest, backgro
         logger.warning(f"candidate_grids가 {total_grids}개로 많습니다. 처리 시간이 오래 걸릴 수 있습니다.")
 
     # 검색 기준 처리
-    search_criteria = request.search_criteria or {}
-    scenario = search_criteria.get('ssp_scenario', 'SSP245')
-    target_year = search_criteria.get('target_year', 2040)
+    search_criteria = request.search_criteria or SearchCriteria()
+    scenario = search_criteria.ssp_scenario or 'SSP245'
+    target_year = search_criteria.target_year or 2040
 
     # building_info, asset_info 변환
     building_info = request.building_info.model_dump() if request.building_info else None

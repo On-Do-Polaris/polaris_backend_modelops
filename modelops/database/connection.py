@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
@@ -14,6 +15,35 @@ logger = logging.getLogger(__name__)
 class DatabaseConnection:
     """PostgreSQL 데이터베이스 연결 관리"""
 
+    # Connection Pool (스레드 안전)
+    _connection_pool = None
+    _pool_lock = None
+
+    @classmethod
+    def _init_pool(cls):
+        """Connection Pool 초기화 (Lazy Initialization)"""
+        import threading
+
+        if cls._pool_lock is None:
+            cls._pool_lock = threading.Lock()
+
+        with cls._pool_lock:
+            if cls._connection_pool is None:
+                try:
+                    cls._connection_pool = pool.ThreadedConnectionPool(
+                        minconn=2,  # 최소 연결 수
+                        maxconn=20,  # 최대 연결 수 (MAX_WORKERS=8 * 2 여유)
+                        host=settings.database_host,
+                        port=settings.database_port,
+                        dbname=settings.database_name,
+                        user=settings.database_user,
+                        password=settings.database_password
+                    )
+                    logger.info("Database connection pool initialized (minconn=2, maxconn=20)")
+                except Exception as e:
+                    logger.error(f"Failed to initialize connection pool: {e}")
+                    raise
+
     @staticmethod
     def get_connection_string() -> str:
         """데이터베이스 연결 문자열 생성"""
@@ -25,22 +55,29 @@ class DatabaseConnection:
             f"password={settings.database_password}"
         )
 
-    @staticmethod
+    @classmethod
     @contextmanager
-    def get_connection():
-        """데이터베이스 연결 컨텍스트 매니저"""
-        conn = psycopg2.connect(
-            DatabaseConnection.get_connection_string(),
-            cursor_factory=RealDictCursor
-        )
+    def get_connection(cls):
+        """데이터베이스 연결 컨텍스트 매니저 (Connection Pool 사용)"""
+        # Pool 초기화 (처음 호출 시에만)
+        if cls._connection_pool is None:
+            cls._init_pool()
+
+        conn = None
         try:
+            # Pool에서 연결 가져오기
+            conn = cls._connection_pool.getconn()
+            conn.cursor_factory = RealDictCursor
             yield conn
             conn.commit()
         except Exception as e:
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise e
         finally:
-            conn.close()
+            # Pool에 연결 반환
+            if conn:
+                cls._connection_pool.putconn(conn)
 
     @staticmethod
     def fetch_grid_coordinates() -> List[Dict[str, float]]:

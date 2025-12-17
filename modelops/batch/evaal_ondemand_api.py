@@ -290,7 +290,8 @@ def calculate_exposure(
     longitude: float,
     scenario: str,
     target_year: int,
-    risk_type: str
+    risk_type: str,
+    pre_collected_data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     E (Exposure) 계산
@@ -301,6 +302,7 @@ def calculate_exposure(
         scenario: SSP 시나리오
         target_year: 분석 연도
         risk_type: 리스크 타입
+        pre_collected_data: 사전 수집된 데이터 (선택적)
 
     Returns:
         {
@@ -318,13 +320,17 @@ def calculate_exposure(
                 'error': f'Unknown risk_type: {risk_type}'
             }
 
-        # HazardDataCollector로 데이터 수집
-        collector = HazardDataCollector(scenario=scenario, target_year=target_year)
-        collected_data = collector.collect_data(
-            lat=latitude,
-            lon=longitude,
-            risk_type=risk_type
-        )
+        # pre_collected_data가 있으면 사용, 없으면 새로 수집
+        if pre_collected_data:
+            collected_data = pre_collected_data
+        else:
+            # HazardDataCollector로 데이터 수집
+            collector = HazardDataCollector(scenario=scenario, target_year=target_year)
+            collected_data = collector.collect_data(
+                lat=latitude,
+                lon=longitude,
+                risk_type=risk_type
+            )
 
         # 필요한 데이터 추출
         building_data = collected_data.get('building_data', {})

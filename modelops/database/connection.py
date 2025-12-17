@@ -527,14 +527,14 @@ class DatabaseConnection:
                 # 기존 데이터 삭제 후 삽입 (site_id, risk_type, target_year 기준)
                 cursor.execute("""
                     DELETE FROM exposure_results
-                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
-                """, (site_id, risk_type, target_year))
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s::text
+                """, (site_id, risk_type, str(target_year)))
 
                 cursor.execute("""
                     INSERT INTO exposure_results
                     (site_id, latitude, longitude, risk_type, target_year, exposure_score)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (site_id, lat, lon, risk_type, target_year, score))
+                    VALUES (%s, %s, %s, %s, %s::text, %s)
+                """, (site_id, lat, lon, risk_type, str(target_year), score))
 
     @staticmethod
     def save_vulnerability_results(results: List[Dict[str, Any]]) -> None:
@@ -563,14 +563,14 @@ class DatabaseConnection:
                 # 기존 데이터 삭제 후 삽입
                 cursor.execute("""
                     DELETE FROM vulnerability_results
-                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
-                """, (site_id, risk_type, target_year))
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s::text
+                """, (site_id, risk_type, str(target_year)))
 
                 cursor.execute("""
                     INSERT INTO vulnerability_results
                     (site_id, latitude, longitude, risk_type, target_year, vulnerability_score)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (site_id, lat, lon, risk_type, target_year, score))
+                    VALUES (%s, %s, %s, %s, %s::text, %s)
+                """, (site_id, lat, lon, risk_type, str(target_year), score))
 
     @staticmethod
     def save_aal_scaled_results(results: List[Dict[str, Any]]) -> None:
@@ -602,14 +602,14 @@ class DatabaseConnection:
                 # 기존 데이터 삭제 후 삽입
                 cursor.execute("""
                     DELETE FROM aal_scaled_results
-                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
-                """, (site_id, risk_type, target_year))
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s::text
+                """, (site_id, risk_type, str(target_year)))
 
                 cursor.execute(f"""
                     INSERT INTO aal_scaled_results
                     (site_id, latitude, longitude, risk_type, target_year, {aal_column})
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (site_id, lat, lon, risk_type, target_year, final_aal))
+                    VALUES (%s, %s, %s, %s, %s::text, %s)
+                """, (site_id, lat, lon, risk_type, str(target_year), final_aal))
 
     # ==================== Batch Jobs 관리 메서드 ====================
 
@@ -827,8 +827,8 @@ class DatabaseConnection:
                 params.append(risk_types)
 
             if target_year:
-                query += " AND target_year = %s"
-                params.append(target_year)
+                query += " AND target_year = %s::text"
+                params.append(str(target_year))
 
             query += " ORDER BY risk_type, target_year"
 
@@ -901,8 +901,8 @@ class DatabaseConnection:
                 params.append(risk_types)
 
             if target_year:
-                query += " AND target_year = %s"
-                params.append(target_year)
+                query += " AND target_year = %s::text"
+                params.append(str(target_year))
 
             query += " ORDER BY risk_type, target_year"
 
@@ -1088,12 +1088,12 @@ class DatabaseConnection:
                 cursor.execute("""
                     SELECT
                         (SELECT COUNT(DISTINCT risk_type) FROM exposure_results
-                         WHERE site_id = %s AND target_year = %s) as e_count,
+                         WHERE site_id = %s AND target_year = %s::text) as e_count,
                         (SELECT COUNT(DISTINCT risk_type) FROM vulnerability_results
-                         WHERE site_id = %s AND target_year = %s) as v_count,
+                         WHERE site_id = %s AND target_year = %s::text) as v_count,
                         (SELECT COUNT(DISTINCT risk_type) FROM aal_scaled_results
-                         WHERE site_id = %s AND target_year = %s) as aal_count
-                """, (site_id, target_year, site_id, target_year, site_id, target_year))
+                         WHERE site_id = %s AND target_year = %s::text) as aal_count
+                """, (site_id, str(target_year), site_id, str(target_year), site_id, str(target_year)))
 
                 result = cursor.fetchone()
                 return result['e_count'] == 9 and result['v_count'] == 9 and result['aal_count'] == 9

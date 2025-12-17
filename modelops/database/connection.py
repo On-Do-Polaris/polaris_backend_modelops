@@ -429,7 +429,7 @@ class DatabaseConnection:
     @staticmethod
     def fetch_building_info(latitude: float, longitude: float) -> Dict[str, Any]:
         """
-        건물 정보 조회 (격자 좌표에서 가장 가까운 건물 찾기)
+        건물 정보 조회 (building_aggregate_cache 테이블 사용)
 
         Args:
             latitude: 격자 위도
@@ -438,35 +438,77 @@ class DatabaseConnection:
         Returns:
             건물 정보 딕셔너리 (없으면 빈 딕셔너리)
         """
-        with DatabaseConnection.get_connection() as conn:
-            cursor = conn.cursor()
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
 
-            # 격자 좌표 기준으로 가장 가까운 건물 찾기
-            cursor.execute("""
-                SELECT
-                    EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM use_apr_day) as building_age,
-                    strct_nm as structure,
-                    main_purp_cd_nm as main_purpose,
-                    ugrnd_flr_cnt as floors_below,
-                    grnd_flr_cnt as floors_above,
-                    tot_area as total_area,
-                    arch_area
-                FROM api_buildings
-                WHERE location IS NOT NULL
-                ORDER BY ST_Distance(
-                    location::geography,
-                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                )
-                LIMIT 1
-            """, (longitude, latitude))
+                # VWorld 역지오코딩으로 좌표 → 법정동코드 변환
+                cursor.execute("""
+                    SELECT sigungu_cd, bjdong_cd, bun, ji
+                    FROM api_vworld_geocode
+                    WHERE ST_DWithin(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                        1000
+                    )
+                    ORDER BY ST_Distance(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                    )
+                    LIMIT 1
+                """, (longitude, latitude, longitude, latitude))
 
-            result = cursor.fetchone()
-            return dict(result) if result else {}
+                geocode_result = cursor.fetchone()
+
+                if not geocode_result:
+                    return {}
+
+                sigungu_cd = geocode_result['sigungu_cd']
+                bjdong_cd = geocode_result['bjdong_cd']
+                bun = geocode_result['bun']
+                ji = geocode_result['ji']
+
+                # building_aggregate_cache에서 건물 집계 정보 조회
+                cursor.execute("""
+                    SELECT
+                        oldest_building_age_years as building_age,
+                        structure_types,
+                        purpose_types,
+                        max_underground_floors as floors_below,
+                        max_ground_floors as floors_above,
+                        total_floor_area_sqm as total_area,
+                        total_building_area_sqm as arch_area
+                    FROM building_aggregate_cache
+                    WHERE sigungu_cd = %s AND bjdong_cd = %s AND bun = %s AND ji = %s
+                    LIMIT 1
+                """, (sigungu_cd, bjdong_cd, bun, ji))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    return {}
+
+                # JSONB 배열에서 첫 번째 요소 추출
+                structure_types = result.get('structure_types', [])
+                purpose_types = result.get('purpose_types', [])
+
+                return {
+                    'building_age': result.get('building_age'),
+                    'structure': structure_types[0] if structure_types else None,
+                    'main_purpose': purpose_types[0] if purpose_types else None,
+                    'floors_below': result.get('floors_below'),
+                    'floors_above': result.get('floors_above'),
+                    'total_area': result.get('total_area'),
+                    'arch_area': result.get('arch_area')
+                }
+        except Exception as e:
+            logger.error(f"Failed to fetch building info: {e}")
+            return {}
 
     @staticmethod
     def fetch_building_data_for_vulnerability(latitude: float, longitude: float) -> Optional[Dict[str, Any]]:
         """
-        Vulnerability 계산용 건물 데이터 조회 (api_buildings 테이블 사용)
+        Vulnerability 계산용 건물 데이터 조회 (building_aggregate_cache 테이블 사용)
 
         Args:
             latitude: 위도 (WGS84)
@@ -491,49 +533,87 @@ class DatabaseConnection:
             with DatabaseConnection.get_connection() as conn:
                 cursor = conn.cursor()
 
-                # 가장 가까운 건물 정보 조회
+                # VWorld 역지오코딩으로 좌표 → 법정동코드 변환
                 cursor.execute("""
-                    SELECT
-                        EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM use_apr_day) as building_age,
-                        strct_nm as structure_type,
-                        main_purp_cd_nm as main_purpose,
-                        ugrnd_flr_cnt as floors_below,
-                        grnd_flr_cnt as ground_floors,
-                        tot_area as total_area_m2,
-                        arch_area
-                    FROM api_buildings
-                    WHERE location IS NOT NULL
+                    SELECT sigungu_cd, bjdong_cd, bun, ji
+                    FROM api_vworld_geocode
+                    WHERE ST_DWithin(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                        1000
+                    )
                     ORDER BY ST_Distance(
                         location::geography,
                         ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
                     )
                     LIMIT 1
-                """, (longitude, latitude))
+                """, (longitude, latitude, longitude, latitude))
+
+                geocode_result = cursor.fetchone()
+
+                if not geocode_result:
+                    logger.warning(f"No geocode found for ({latitude}, {longitude})")
+                    return None
+
+                sigungu_cd = geocode_result['sigungu_cd']
+                bjdong_cd = geocode_result['bjdong_cd']
+                bun = geocode_result['bun']
+                ji = geocode_result['ji']
+
+                # building_aggregate_cache에서 건물 집계 정보 조회
+                cursor.execute("""
+                    SELECT
+                        oldest_building_age_years as building_age,
+                        max_ground_floors as ground_floors,
+                        max_underground_floors as floors_below,
+                        structure_types,
+                        purpose_types,
+                        total_floor_area_sqm as total_area_m2,
+                        buildings_with_seismic,
+                        buildings_without_seismic,
+                        building_count
+                    FROM building_aggregate_cache
+                    WHERE sigungu_cd = %s AND bjdong_cd = %s AND bun = %s AND ji = %s
+                    LIMIT 1
+                """, (sigungu_cd, bjdong_cd, bun, ji))
 
                 result = cursor.fetchone()
 
                 if not result:
+                    logger.warning(f"No building data for ({sigungu_cd}, {bjdong_cd}, {bun}, {ji})")
                     return None
 
-                # 필로티 여부 추정 (1층이 있고 지하층이 없는 경우)
-                has_piloti = result.get('ground_floors', 0) >= 1 and result.get('floors_below', 0) == 0
+                # JSONB 배열에서 첫 번째 요소 추출
+                structure_types = result.get('structure_types', [])
+                purpose_types = result.get('purpose_types', [])
+                structure_type = structure_types[0] if structure_types else 'RC'
+                main_purpose = purpose_types[0] if purpose_types else 'residential'
 
-                # 내진설계 여부 추정 (2005년 이후 건축물은 내진설계 의무화)
+                # 필로티 여부 추정 (1층이 있고 지하층이 없는 경우)
+                ground_floors = result.get('ground_floors', 3)
+                floors_below = result.get('floors_below', 0)
+                has_piloti = ground_floors >= 1 and floors_below == 0
+
+                # 내진설계 여부 추정 (건물 수 기반)
+                with_seismic = result.get('buildings_with_seismic', 0)
+                without_seismic = result.get('buildings_without_seismic', 0)
+                total_buildings = with_seismic + without_seismic
+                has_seismic_design = with_seismic > without_seismic if total_buildings > 0 else False
+
                 building_age = result.get('building_age', 30)
-                has_seismic_design = building_age <= 20
 
                 return {
                     'building_age': int(building_age) if building_age else 30,
-                    'ground_floors': int(result.get('ground_floors', 3)) if result.get('ground_floors') else 3,
-                    'floors_below': int(result.get('floors_below', 0)) if result.get('floors_below') else 0,
+                    'ground_floors': int(ground_floors) if ground_floors else 3,
+                    'floors_below': int(floors_below) if floors_below else 0,
                     'has_piloti': has_piloti,
-                    'structure_type': result.get('structure_type', 'RC'),
+                    'structure_type': structure_type,
                     'total_area_m2': float(result.get('total_area_m2', 500.0)) if result.get('total_area_m2') else 500.0,
-                    'main_purpose': result.get('main_purpose', 'residential'),
+                    'main_purpose': main_purpose,
                     'has_seismic_design': has_seismic_design,
                     'elevation_m': 50.0,  # TODO: DEM 데이터에서 조회
                     'flood_capacity': 0.0,  # TODO: 별도 계산 필요
-                    'data_source': 'database'
+                    'data_source': 'building_aggregate_cache'
                 }
 
         except Exception as e:

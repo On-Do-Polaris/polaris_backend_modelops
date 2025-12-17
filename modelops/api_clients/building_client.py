@@ -1,7 +1,9 @@
 """
 건물 정보 API 클라이언트
 
-건물 정보 테이블(api_buildings)에서 건물 데이터를 조회합니다.
+⚠️ DEPRECATED: 이 파일은 현재 사용되지 않습니다.
+- 과거: api_buildings 테이블 사용
+- 현재: building_aggregate_cache 테이블 사용 (connection.py 참조)
 
 기능:
 1. 격자별 건물 정보 조회

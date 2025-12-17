@@ -553,6 +553,28 @@ def calculate_integrated_risk(
     }
 
 
+def _classify_score(score: float) -> str:
+    """
+    점수를 등급으로 분류 (0-100)
+
+    Args:
+        score: 점수 (0-100)
+
+    Returns:
+        등급 (Very High / High / Medium / Low / Very Low)
+    """
+    if score >= 80:
+        return 'Very High'
+    elif score >= 60:
+        return 'High'
+    elif score >= 40:
+        return 'Medium'
+    elif score >= 20:
+        return 'Low'
+    else:
+        return 'Very Low'
+
+
 # ========== DB 저장 함수 ==========
 def _save_results_to_db(
     latitude: float,
@@ -766,37 +788,76 @@ def calculate_evaal_ondemand(
             results['hazard'][risk_type] = h_result
             results['probability'][risk_type] = p_result
 
-            # --- E, V 계산용 연도 고정 (2050년 초과 시 2050년으로 고정) ---
-            # 인구 데이터 등 E, V 계산의 핵심 기반 데이터가 2050년까지만 제공되므로,
-            # 2050년 이후의 연도 요청 시에는 2050년 데이터를 기반으로 계산
-            year_for_ev_calculation = min(int_year, 2050)
+            # Step 2: E, V 계산
+            if time_scope == 'decadal':
+                # Decadal 분석: 10년치 E, V 계산 후 평균
+                # 2020s → 2021~2029년 (9년)
+                # 2030s → 2030~2039년 (10년)
+                start_year = int_year + (1 if int_year == 2020 else 0)
+                end_year = int_year + 9
 
-            # Decadal 분석 시 LongTermDataMapper 사용
-            pre_collected_data = None
-            if time_scope == 'decadal' and long_term_data:
-                base_info = {
-                    'latitude': latitude,
-                    'longitude': longitude,
-                    'scenario': scenario,
-                    'target_year': int_year,
-                    'time_scope': time_scope,
-                    'building_data': None
+                # 2050년 초과 시 범위 조정
+                end_year = min(end_year, 2050)
+
+                logger.info(f"Decadal E, V calculation for {risk_type}: {start_year}-{end_year}")
+
+                e_scores = []
+                v_scores = []
+
+                for year in range(start_year, end_year + 1):
+                    # 각 연도별 E 계산 (long_term_data 사용)
+                    if long_term_data:
+                        base_info = {
+                            'latitude': latitude,
+                            'longitude': longitude,
+                            'scenario': scenario,
+                            'target_year': year,
+                            'time_scope': 'yearly',  # 연도별 계산
+                            'building_data': None
+                        }
+                        pre_collected_data = LongTermDataMapper.map_data(
+                            risk_type, long_term_data, base_info
+                        )
+                    else:
+                        pre_collected_data = None
+
+                    e_result_yearly = calculate_exposure(
+                        latitude, longitude, scenario, year, risk_type,
+                        pre_collected_data=pre_collected_data
+                    )
+                    e_scores.append(e_result_yearly.get('exposure_score', 0.0))
+
+                    # 각 연도별 V 계산
+                    v_result_yearly = calculate_vulnerability(latitude, longitude, risk_type, e_result_yearly)
+                    v_scores.append(v_result_yearly.get('vulnerability_score', 50.0))
+
+                # 평균 계산
+                avg_e_score = sum(e_scores) / len(e_scores) if e_scores else 0.0
+                avg_v_score = sum(v_scores) / len(v_scores) if v_scores else 50.0
+
+                e_result = {
+                    'exposure_score': avg_e_score,
+                    'exposure_level': _classify_score(avg_e_score)
                 }
-                pre_collected_data = LongTermDataMapper.map_data(
-                    risk_type, long_term_data, base_info
+                v_result = {
+                    'vulnerability_score': avg_v_score,
+                    'vulnerability_level': _classify_score(avg_v_score)
+                }
+
+                logger.info(f"{risk_type} decadal avg: E={avg_e_score:.2f}, V={avg_v_score:.2f}")
+
+            else:
+                # Yearly 분석: 단년도 계산
+                year_for_ev_calculation = min(int_year, 2050)
+
+                # LongTermDataMapper는 yearly에서는 사용하지 않음
+                e_result = calculate_exposure(
+                    latitude, longitude, scenario, year_for_ev_calculation, risk_type,
+                    pre_collected_data=None
                 )
-                logger.debug(f"Using decadal data for {risk_type} E calculation")
+                v_result = calculate_vulnerability(latitude, longitude, risk_type, e_result)
 
-            # Step 2: E 계산
-            e_result = calculate_exposure(
-                latitude, longitude, scenario, year_for_ev_calculation, risk_type,
-                pre_collected_data=pre_collected_data
-            )
             results['exposure'][risk_type] = e_result
-
-            # Step 3: V 계산
-            # Vulnerability는 Exposure의 결과 데이터를 활용하므로, 이미 연도 고정 로직이 적용됨
-            v_result = calculate_vulnerability(latitude, longitude, risk_type, e_result)
             results['vulnerability'][risk_type] = v_result
 
             # Step 4: AAL 계산

@@ -1,0 +1,97 @@
+극심한 고온
+근거 및 참고 문헌
+•	WMO (2009). Guidelines on Analysis of Extremes in a Changing Climate in Support of Adaptation.
+•	IPCC AR6 Working Group I (2021). Chapter 11: Weather and Climate Extreme Events in a Changing Climate.
+•	Met Éireann (2022). Warm Spell Duration Index (WSDI) Key Message
+•	S&P Global Physical Risk Methodology (2023)
+•	Burke M, Hsiang SM, Miguel E. (2015). Global non-linear effect of temperature on economic production. Nature.
+•	Gasparrini A, et al. (2015). Mortality risk attributable to high and low ambient temperature: a multicountry observational study. The Lancet.
+
+극심한 한파
+근거 및 참고 문헌
+•	WMO ETCCDI (2009). Guidelines on Analysis of Extremes in a Changing Climate.
+•	IPCC AR6 Working Group I (2021). Chapter 11: Weather and Climate Extreme Events in a Changing Climate.
+•	S&P Global Physical Risk Methodology (2023)
+•	Sailor, D. J., & Muñoz, J. R. (1997). Sensitivity of electricity and natural gas consumption to climate: U.S. methodology and results. Energy and Buildings.
+•	Makkonen, L., & Tikanmäki, M. (2019). Modeling the friction of ice. Cold Regions Science and Technology.
+•	IEA (2021). Cold Weather Report: Impact on Energy Systems.
+
+산불
+근거 및 참고 문헌
+•	WMO ETCCDI (2009). Guidelines on Analysis of Extremes in a Changing Climate.
+•	IPCC AR6 Working Group I (2021). Chapter 11: Weather and Climate Extreme Events in a Changing Climate.
+•	S&P Global Physical Risk Methodology (2023)
+•	Van Wagner, C. E. (1987). Development and structure of the Canadian Forest Fire Weather Index System. 
+•	San-Miguel-Ayanz, J., et al. (2013). European Forest Fire Information System (EFFIS). In: Wildfire Hazards, Risks, and Disasters.
+•	Kwon, C., et al. (2019). Spatiotemporal Analysis of Forest Fire Danger in South Korea Using the Canadian Fire Weather Index. Forests
+•	Abatzoglou, J. T., et al. (2019). Global emergence of anthropogenic climate change in fire weather indices. Geophysical Research Letters
+•	Copernicus EFFIS (2007). Fire Danger Forecast Technical Background.
+•	Natural Resources Canada (2025). Canada's Fire Weather Index Syste3.
+
+가뭄
+근거 및 참고 문헌
+•	WMO (2016). Handbook of Drought Indicators and Indices.
+•	IPCC AR6 Working Group I (2021). Chapter 11: Weather and Climate Extreme Events in a Changing Climate.
+•	S&P Global Physical Risk Methodology (2023).
+•	McKee, T. B., Doesken, N. J., & Kleist, J. (1993). The relationship of drought frequency and duration to time scales. Proceedings of the 8th Conference on Applied Climatology.
+•	Lobell, D. B., Schlenker, W., & Costa-Roberts, J. (2011). Climate trends and global crop production since 1980. Science.
+•	Naumann, G., et al. (2021). Global drought trends and future projections. Philosophical Transactions of the Royal Society.
+•	Stagge, J. H., et al. (2015). Candidate distributions for climatological drought indices (SPI and SPEI). International Journal of Climatology.
+•	Sheffield, J., Wood, E. F., & Roderick, M. L. (2012). Little change in global drought over the past 60 years. Nature.
+
+물부족
+근거 및 참고 문헌
+•	S&P Global Physical Risk Methodolog(2023)
+•	WRI (2023). Aqueduct 4.0: Updated Decision-Relevant Global Water Risk Indicators.
+•	Schewe, J., et al. (2014). Multimodel assessment of water scarcity under climate change. PNAS.
+•	Kummu, M., et al. (2016). The world's road to water scarcity: shortage and stress in the 20th century and pathways towards the 21st. Scientific Reports.
+•	Wada, Y., et al. (2011). Global monthly water stress: 1. Water balance and water availability. Water Resources Research.
+•	Nature, 2010 (Minimum service cost impact).
+•	Pastor, A. V., et al. (2014). Accounting for environmental flow requirements in global water assessments. Hydrology and Earth System Sciences.
+•	FAO (1998). Crop evapotranspiration, Guidelines for computing crop water requirements.
+
+해수면 상승
+WMO ETCCDI (2009)
+IPCC (2019). Special Report on the Ocean and Cryosphere in a Changing Climate (SROCC). Chapter 4: Sea Level Rise and Implications
+S&P Global Physical Risk Methodology (2023)
+Hinkel, J., et al. (2014). Coastal flood damage and adaptation costs under 21st century sea-level rise. PNAS.
+Vousdoukas, M. I., et al. (2018). Global probabilistic projections of extreme sea levels. Nature Communications.
+Tiggeloven et al., 2020, Nature Communications
+
+하천홍수
+근거 및 참고 문헌
+WMO ETCCDI (2009)
+IPCC AR6 Working Group I (2021). Chapter 11.
+S&P Global Physical Risk Methodology (2023)
+Westra, S., et al. (2013). Global increasing trends in annual maximum daily precipitation. Journal of Climate.
+Winsemius, H. C., et al. (2016). Global drivers of future river flood risk. Nature Climate Change. 
+Ward, P. J., et al. (2013). Seasonal flood risk monitoring and forecasting. Climatic Change.
+Dottori, F., et al. (2018). Increased human and economic losses from river flooding with anthropogenic warming. Nature Climate Change.
+
+도시홍수
+근거 및 참고 문헌
+WMO ETCCDI (2009)
+IPCC AR6 Working Group I (2021). Chapter 11.
+S&P Global Physical Risk Methodology (2023)
+Yin, J., et al. (2016). Assessment of flood hazard and risk in the rapidly urbanizing Yangtze River Delta. Natural Hazards.
+Huizinga, J., et al. (2017). Global flood depth-damage functions. EU JRC.
+Kellens, W., et al. (2013). Coastal flood risk management: a review of methods. Journal of Flood Risk Management.
+Hammond, M. J., et al. (2015). Urban flood impact assessment: A state-of-the-art review. Urban Water Journal.
+MLIT 도시 침수 피해율 실측 (2012, 일본 국토교통성) 
+
+태풍
+근거 및 참고 문헌
+WMO ETCCDI (2009)
+IPCC AR6 Working Group I (2021). Chapter 11.
+S&P Global Physical Risk Methodology (2023)
+Emanuel, K. (2011). Global warming effects on U.S. hurricane damage. Weather, Climate, and Society
+Klotzbach, P. J., et al. (2020). Surface Pressure a More Skillful Predictor of Normalized Hurricane Damage. BAMS.
+Knutson, T., et al. (2020). Tropical Cyclones and Climate Change Assessment. BAMS.
+Mendelsohn, R., et al. (2012). The impact of climate change on global tropical cyclone damage. Nature Climate Change
+
+
+
+
+
+
+

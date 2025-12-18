@@ -481,6 +481,50 @@ def _calculate_single_site_candidates(
         }
 
 
+def _check_candidates_in_db(
+    candidate_grids: List[Dict[str, float]],
+    tolerance: float = 0.0001
+) -> int:
+    """
+    candidate_sites 테이블에 이미 있는 후보지 개수 확인
+
+    Args:
+        candidate_grids: 확인할 후보지 목록
+        tolerance: 좌표 허용 오차 (기본 0.0001도 ≈ 11m)
+
+    Returns:
+        DB에 이미 존재하는 후보지 개수
+    """
+    from modelops.database.connection import DatabaseConnection
+
+    existing_count = 0
+
+    try:
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+
+            for grid in candidate_grids:
+                lat = grid['latitude']
+                lon = grid['longitude']
+
+                # candidate_sites 테이블에서 좌표 매칭
+                cursor.execute("""
+                    SELECT COUNT(*) as cnt
+                    FROM candidate_sites
+                    WHERE ABS(latitude - %s) < %s
+                      AND ABS(longitude - %s) < %s
+                """, (lat, tolerance, lon, tolerance))
+
+                result = cursor.fetchone()
+                if result and result['cnt'] > 0:
+                    existing_count += 1
+
+    except Exception as e:
+        logger.warning(f"DB 데이터 확인 중 오류: {e}")
+
+    return existing_count
+
+
 def _background_recommend_relocation_locations(
     task_id: str,
     sites: Dict[str, Any],
@@ -499,6 +543,32 @@ def _background_recommend_relocation_locations(
 
     # 작업 시작
     task_manager.start_task(task_id)
+
+    # DB에 기존 데이터가 충분히 있는지 확인 (Early Callback)
+    early_callback_triggered = False
+    if batch_id and len(candidate_grids) > 0:
+        try:
+            total_candidates = len(candidate_grids)
+            existing_count = _check_candidates_in_db(candidate_grids)
+
+            existing_ratio = existing_count / total_candidates
+            logger.info(f"[{task_id}] 기존 데이터: {existing_count}/{total_candidates} ({existing_ratio*100:.1f}%)")
+
+            # 90% 이상 데이터가 있으면 즉시 콜백 호출
+            if existing_ratio >= 0.9:
+                logger.info(f"[{task_id}] 충분한 데이터 존재 ({existing_ratio*100:.1f}%) - 즉시 콜백 호출")
+                try:
+                    import asyncio
+                    asyncio.run(_notify_recommendation_completed(batch_id))
+                    early_callback_triggered = True
+                    logger.info(f"[{task_id}] Early callback 성공")
+                except Exception as callback_error:
+                    logger.error(f"[{task_id}] Early callback 실패: {callback_error}")
+            else:
+                logger.info(f"[{task_id}] 데이터 부족 ({existing_ratio*100:.1f}%) - 계산 후 콜백 호출")
+
+        except Exception as e:
+            logger.warning(f"[{task_id}] DB 데이터 확인 실패: {e} - 계산 진행")
 
     successful_sites = 0
     failed_sites = 0
@@ -583,13 +653,16 @@ def _background_recommend_relocation_locations(
         # 작업 완료
         task_manager.complete_task(task_id)
 
-        # 콜백 호출 (비동기 함수를 동기 환경에서 실행)
-        if batch_id:
+        # 콜백 호출 (Early callback이 이미 호출되지 않은 경우에만)
+        if batch_id and not early_callback_triggered:
             try:
                 import asyncio
                 asyncio.run(_notify_recommendation_completed(batch_id))
+                logger.info(f"[{task_id}] 계산 완료 후 콜백 호출 성공")
             except Exception as callback_error:
                 logger.error(f"[{task_id}] 콜백 호출 실패: {callback_error}")
+        elif batch_id and early_callback_triggered:
+            logger.info(f"[{task_id}] Early callback 이미 호출됨 - 중복 콜백 방지")
 
     except Exception as e:
         logger.error(f"[{task_id}] 백그라운드 후보지 추천 중 오류: {e}", exc_info=True)

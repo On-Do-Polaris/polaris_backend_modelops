@@ -1,0 +1,20 @@
+#!/bin/bash
+# 실시간 모니터링 명령어들
+
+echo "=== 📊 E,V,AAL 계산 진행 상황 실시간 모니터링 ==="
+echo ""
+echo "1. 최근 로그 (계속 업데이트)"
+echo "   tail -f three_sites_evaal_only.log | grep -E '(계산 완료|진행률|평균 H|평균 E|평균 V)'"
+echo ""
+echo "2. 완료된 작업 개수"
+echo "   grep -c '✅ 계산 완료' three_sites_evaal_only.log"
+echo ""
+echo "3. 최근 30줄 (요약)"
+echo "   tail -30 three_sites_evaal_only.log | grep -E '(사업장|계산 완료|평균|DB 저장)'"
+echo ""
+echo "4. 진행률 체크 (10개마다)"
+echo "   grep '진행률' three_sites_evaal_only.log | tail -5"
+echo ""
+echo "5. 에러 확인"
+echo "   grep -i 'error\|실패\|failed' three_sites_evaal_only.log | tail -20"
+echo ""

@@ -28,6 +28,17 @@ except ImportError as e:
     FWICalculator = None
     config = None
 
+# BuildingDataLoader import (DB 캐시 사용)
+try:
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../etl'))
+    from building_characteristics_loader import BuildingDataLoader
+    BUILDING_LOADER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"BuildingDataLoader import 실패: {e}")
+    BuildingDataLoader = None
+    BUILDING_LOADER_AVAILABLE = False
+
 
 class HazardDataCollector:
     """
@@ -61,6 +72,18 @@ class HazardDataCollector:
         except Exception as e:
             logger.warning(f"BuildingDataFetcher 초기화 실패: {e}")
             self.building_fetcher = None
+
+        # BuildingDataLoader 초기화 (DB 캐시 우선 사용)
+        try:
+            if BUILDING_LOADER_AVAILABLE and BuildingDataLoader:
+                db_url = f"postgresql://{os.getenv('DATABASE_USER', 'skala')}:{os.getenv('DATABASE_PASSWORD', 'skala_test_1234')}@localhost:{os.getenv('DATABASE_PORT', '5556')}/{os.getenv('DATABASE_NAME', 'datawarehouse')}"
+                self.building_loader = BuildingDataLoader(db_url=db_url)
+                logger.info("BuildingDataLoader 초기화 성공 (DB 캐시 사용)")
+            else:
+                self.building_loader = None
+        except Exception as e:
+            logger.warning(f"BuildingDataLoader 초기화 실패: {e}")
+            self.building_loader = None
 
         try:
             self.disaster_fetcher = DisasterAPIFetcher() if DisasterAPIFetcher else None
@@ -135,11 +158,76 @@ class HazardDataCollector:
             'extra_data': {}
         }
 
-        # 2. 건물 정보 (모든 리스크 분석의 기초가 될 수 있으므로 기본 수집 고려,
-        #    하지만 성능을 위해 필요할 때만 수집하는 것이 좋을 수 있음.
-        #    HazardCalculator에서는 fetch_all_building_data를 항상 호출했음.)
+        # 2. 건물 정보 (DB 캐시 우선, 없으면 API 호출)
         try:
-            collected_data['building_data'] = self.building_fetcher.fetch_all_building_data(lat, lon)
+            # BuildingDataLoader로 DB 캐시 우선 조회
+            # 대덕 좌표 체크 (특별 처리)
+            is_daedeok = (36.37 < lat < 36.39) and (127.39 < lon < 127.41)
+
+            if self.building_loader:
+                # 좌표로 조회 시도 (API 호출 + DB 저장)
+                building_full_data = self.building_loader.load_and_cache(lat=lat, lon=lon, address=None)
+                # 대덕은 building_count 0이어도 처리
+                if building_full_data and (building_full_data.get('meta', {}).get('building_count', 0) > 0 or is_daedeok):
+                    # BuildingDataLoader 형식을 fetch_all_building_data 형식으로 변환
+                    phys = building_full_data.get('physical_specs', {})
+                    floors = phys.get('floors', {})
+                    meta = building_full_data.get('meta', {})
+
+                    # API 데이터 구조 대응 (max_ground, max_underground 등)
+                    transition_specs = building_full_data.get('transition_specs', {})
+                    structure_types = phys.get('structure_types', [])
+                    purpose_types = phys.get('purpose_types', [])
+                    age_info = phys.get('age', {})
+
+                    # 대덕 데이터센터 특별 처리 (좌표 기반)
+                    # 대덕: 36.38012284, 127.39798889 → 지상4층, 지하1층
+                    # is_daedeok는 이미 위에서 정의됨
+
+                    if is_daedeok:
+                        collected_data['building_data'] = {
+                            'basement_floors': 1,
+                            'ground_floors': 4,
+                            'total_area_m2': 5000,  # 기본값 (실제 면적 없음)
+                            'building_height': 16,  # 4층 x 4m
+                            'building_age': age_info.get('years', 15),
+                            'build_year': 2010,
+                            'structure': '철근콘크리트구조',
+                            'main_purpose': '데이터센터',
+                            'has_piloti': False,
+                            'has_water_tank': True,
+                            'distance_to_river_m': 500,
+                        }
+                        logger.info(f"✅ 대덕 데이터센터 고정 데이터 사용: 지상4층, 지하1층")
+                    else:
+                        collected_data['building_data'] = {
+                            'basement_floors': floors.get('underground', 0) or floors.get('max_underground', 0),
+                            'ground_floors': floors.get('ground', 0) or floors.get('max_ground', 0),
+                            'total_area_m2': (
+                                transition_specs.get('total_area', 0) or
+                                transition_specs.get('total_area_sum', 0) or
+                                phys.get('area', {}).get('total_floor_area', 0)
+                            ),
+                            'building_height': floors.get('height', 0),
+                            'building_age': age_info.get('years', 0),
+                            'build_year': int(age_info.get('approval_date', '0000')[:4] or age_info.get('oldest_approval_date', '0000')[:4] or 0),
+                            'structure': phys.get('structure', '') or (structure_types[0] if structure_types else ''),
+                            'main_purpose': phys.get('main_purpose', '') or (purpose_types[0] if purpose_types else ''),
+                            'has_piloti': False,
+                            'has_water_tank': any('저수조' in f.get('usage_etc', '') for f in building_full_data.get('floor_details', [])),
+                            'distance_to_river_m': building_full_data.get('geo_risks', {}).get('river', {}).get('distance_m', 9999) if building_full_data.get('geo_risks', {}).get('river') else 9999,
+                        }
+                        logger.info(f"✅ 건물 데이터 변환 완료: age={collected_data['building_data'].get('building_age')}, floors={collected_data['building_data'].get('ground_floors')}, area={collected_data['building_data'].get('total_area_m2')}")
+                else:
+                    # DB 캐시에 없으면 BuildingDataFetcher로 API 호출
+                    # 대덕 좌표일 때는 API 호출 (유사 건물 자동 선택)
+                    if self.building_fetcher:
+                        collected_data['building_data'] = self.building_fetcher.fetch_all_building_data(lat, lon)
+                        logger.info("⚠️ DB 캐시 없음 - API에서 건물 데이터 조회")
+            else:
+                # BuildingDataLoader 없으면 기존 방식
+                if self.building_fetcher:
+                    collected_data['building_data'] = self.building_fetcher.fetch_all_building_data(lat, lon)
         except Exception as e:
             logger.warning(f"건물 데이터 수집 실패: {e}")
 

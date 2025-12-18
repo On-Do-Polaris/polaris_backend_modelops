@@ -105,10 +105,14 @@ def fetch_hazard_from_db(
         }
     """
     try:
+        # DB 스키마 numeric(9,6)에 맞게 좌표 반올림
+        rounded_lat = round(latitude, 6)
+        rounded_lon = round(longitude, 6)
+
         # fetch_hazard_results (복수형) 사용 - risk_type별 결과 반환
         h_results = DatabaseConnection.fetch_hazard_results(
-            latitude=latitude,
-            longitude=longitude,
+            latitude=rounded_lat,
+            longitude=rounded_lon,
             risk_types=[risk_type],
             target_year=target_year,
             scenario=scenario
@@ -129,6 +133,57 @@ def fetch_hazard_from_db(
         h_data = h_results[risk_type]
         scenario_col = f"{scenario.lower()}_score_100"
         score_100 = h_data.get('hazard_score_100') or h_data.get(scenario_col, 0.0) or 0.0
+
+        # Drought 트렌드 보정 (2050년 이후)
+        if risk_type == 'drought' and target_year >= 2050:
+            try:
+                # 2030년대 평균 (2030-2039)
+                h_2030s = DatabaseConnection.fetch_hazard_results(
+                    latitude=rounded_lat,
+                    longitude=rounded_lon,
+                    risk_types=[risk_type],
+                    target_year=None,  # 전체 조회
+                    scenario=scenario
+                )
+
+                # 2030년대와 2040년대 데이터 필터링
+                scores_2030s = []
+                scores_2040s = []
+
+                for key, data in h_2030s.items():
+                    if key.startswith('drought_'):
+                        year_str = data.get('target_year', '')
+                        try:
+                            year_int = int(year_str)
+                            h_val = data.get(scenario_col, 0.0) or 0.0
+
+                            if 2030 <= year_int < 2040:
+                                scores_2030s.append(h_val)
+                            elif 2040 <= year_int < 2050:
+                                scores_2040s.append(h_val)
+                        except (ValueError, TypeError):
+                            continue
+
+                # 평균 계산
+                if scores_2030s and scores_2040s:
+                    avg_2030s = sum(scores_2030s) / len(scores_2030s)
+                    avg_2040s = sum(scores_2040s) / len(scores_2040s)
+
+                    # 증가율 계산
+                    if avg_2030s > 0:
+                        growth_rate = (avg_2040s - avg_2030s) / avg_2030s
+                        # 2040년대 기준으로 동일 비율 증가
+                        years_from_2040 = target_year - 2040
+                        corrected_score = avg_2040s * (1 + growth_rate * (years_from_2040 / 10.0))
+
+                        logger.info(
+                            f"Drought trend correction: {score_100:.1f} → {corrected_score:.1f} "
+                            f"(2030s avg: {avg_2030s:.1f}, 2040s avg: {avg_2040s:.1f}, "
+                            f"growth: {growth_rate*100:.1f}%)"
+                        )
+                        score_100 = corrected_score  # 감소/증가 모두 적용
+            except Exception as e:
+                logger.debug(f"Failed to apply drought trend correction: {e}")
 
         # 등급 분류
         if score_100 >= 80:
@@ -182,10 +237,14 @@ def fetch_probability_from_db(
         }
     """
     try:
+        # DB 스키마 numeric(9,6)에 맞게 좌표 반올림
+        rounded_lat = round(latitude, 6)
+        rounded_lon = round(longitude, 6)
+
         # fetch_probability_results (복수형) 사용 - risk_type별 결과 반환
         p_results = DatabaseConnection.fetch_probability_results(
-            latitude=latitude,
-            longitude=longitude,
+            latitude=rounded_lat,
+            longitude=rounded_lon,
             risk_types=[risk_type],
             target_year=target_year,
             scenario=scenario

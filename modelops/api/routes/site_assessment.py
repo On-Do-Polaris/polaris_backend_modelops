@@ -282,7 +282,13 @@ def _background_calculate_site_risk(
         task_manager.complete_task(task_id, error_message=str(e))
 
 
-@router.post("/calculate")
+@router.post(
+    "/calculate",
+    responses={
+        200: {"description": "작업이 백그라운드에서 시작됨"},
+        422: {"description": "요청 데이터 유효성 검증 실패"}
+    }
+)
 async def calculate_site_risk(request: SiteRiskRequest, background_tasks: BackgroundTasks):
     """
     사업장 리스크 계산 API (백그라운드 처리)
@@ -669,7 +675,13 @@ def _background_recommend_relocation_locations(
         task_manager.complete_task(task_id, error_message=str(e))
 
 
-@router.post("/recommend-locations")
+@router.post(
+    "/recommend-locations",
+    responses={
+        200: {"description": "작업이 백그라운드에서 시작됨"},
+        422: {"description": "요청 데이터 유효성 검증 실패"}
+    }
+)
 async def recommend_relocation_locations(request: SiteRelocationRequest, background_tasks: BackgroundTasks):
     """
     사업장 이전 후보지 추천 API (백그라운드 처리)
@@ -762,7 +774,20 @@ async def recommend_relocation_locations(request: SiteRelocationRequest, backgro
     }
 
 
-@router.get("/task-status/{task_id}")
+@router.get(
+    "/task-status/{task_id}",
+    responses={
+        200: {"description": "작업 상태 조회 성공"},
+        404: {
+            "description": "작업 ID를 찾을 수 없음",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Task not found: abc-123"}
+                }
+            }
+        }
+    }
+)
 async def get_task_status(task_id: str):
     """
     작업 상태 조회 API
@@ -808,7 +833,12 @@ async def get_task_status(task_id: str):
     return response
 
 
-@router.get("/tasks")
+@router.get(
+    "/tasks",
+    responses={
+        200: {"description": "모든 작업 상태 조회 성공"}
+    }
+)
 async def get_all_tasks():
     """
     모든 작업 상태 조회 API
@@ -853,7 +883,20 @@ async def get_all_tasks():
     }
 
 
-@router.delete("/task/{task_id}")
+@router.delete(
+    "/task/{task_id}",
+    responses={
+        200: {"description": "작업 삭제 성공"},
+        404: {
+            "description": "작업 ID를 찾을 수 없음",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Task not found: abc-123"}
+                }
+            }
+        }
+    }
+)
 async def delete_task(task_id: str):
     """
     작업 삭제 API

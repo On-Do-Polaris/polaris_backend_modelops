@@ -109,8 +109,19 @@ app = FastAPI(
 
     ## API Endpoints
     ### Site Assessment (사업장 리스크 평가)
-    - POST `/api/v1/site-assessment/calculate`: 사업장 리스크 계산
-    - POST `/api/v1/site-assessment/recommend-locations`: 이전 후보지 추천
+    - POST `/api/site-assessment/calculate`: 사업장 리스크 계산
+    - POST `/api/site-assessment/recommend-locations`: 이전 후보지 추천
+    - GET `/api/site-assessment/task-status/{task_id}`: 작업 상태 조회
+    - GET `/api/site-assessment/tasks`: 모든 작업 조회
+    - DELETE `/api/site-assessment/task/{task_id}`: 작업 삭제
+
+    ### Batch Trigger (배치 작업 관리)
+    - POST `/api/batch-trigger/trigger-custom-schedule`: 커스텀 시간 배치 예약
+    - POST `/api/batch-trigger/run-probability-batch`: P(H) 배치 즉시 실행
+    - POST `/api/batch-trigger/run-hazard-batch`: H 배치 즉시 실행
+    - POST `/api/batch-trigger/run-candidate-locations-batch`: 13개 후보지 배치 계산
+    - POST `/api/batch-trigger/run-regional-locations-batch`: 250개 시군구 배치 계산
+    - GET `/api/batch-trigger/scheduled-jobs`: 스케줄된 작업 조회
 
     ### Health Check
     - GET `/health`: 서버 상태 확인
@@ -226,10 +237,25 @@ async def root():
             "5_aal": "base_aal × F_vuln × (1 - insurance_rate)"
         },
         "endpoints": {
-            "calculate_site_risk": "POST /api/v1/site-assessment/calculate",
-            "recommend_locations": "POST /api/v1/site-assessment/recommend-locations",
-            "health": "GET /health",
-            "health_db": "GET /health/db"
+            "site_assessment": {
+                "calculate": "POST /api/site-assessment/calculate",
+                "recommend_locations": "POST /api/site-assessment/recommend-locations",
+                "task_status": "GET /api/site-assessment/task-status/{task_id}",
+                "tasks": "GET /api/site-assessment/tasks",
+                "delete_task": "DELETE /api/site-assessment/task/{task_id}"
+            },
+            "batch_trigger": {
+                "custom_schedule": "POST /api/batch-trigger/trigger-custom-schedule",
+                "run_probability": "POST /api/batch-trigger/run-probability-batch",
+                "run_hazard": "POST /api/batch-trigger/run-hazard-batch",
+                "run_candidate_locations": "POST /api/batch-trigger/run-candidate-locations-batch",
+                "run_regional_locations": "POST /api/batch-trigger/run-regional-locations-batch",
+                "scheduled_jobs": "GET /api/batch-trigger/scheduled-jobs"
+            },
+            "health": {
+                "check": "GET /health",
+                "database": "GET /health/db"
+            }
         }
     }
 

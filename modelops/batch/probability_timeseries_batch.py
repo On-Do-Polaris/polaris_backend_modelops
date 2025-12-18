@@ -268,7 +268,7 @@ def run_probability_batch(
             for future in as_completed(futures):
                 task = futures[future]
                 try:
-                    result = future.result()
+                    result = future.result(timeout=300)  # 개별 태스크 5분 timeout
 
                     if result['status'] == 'success':
                         # 결과 배치에 추가

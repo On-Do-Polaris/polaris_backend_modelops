@@ -712,27 +712,32 @@ class ClimateDataLoader:
                 cursor = conn.cursor()
 
                 # 1. 해안선 거리 조회 (sea_level_grid에서)
-                cursor.execute("""
-                    SELECT ST_Distance(
-                        geom::geography,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                    ) AS distance_m
-                    FROM sea_level_grid
-                    WHERE geom IS NOT NULL
-                    ORDER BY geom::geography <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                    LIMIT 1
-                """, (lon, lat, lon, lat))
-                dist_result = cursor.fetchone()
-                if dist_result:
-                    result['distance_to_coast_m'] = float(dist_result['distance_m'])
+                try:
+                    cursor.execute("""
+                        SELECT ST_Distance(
+                            geom::geography,
+                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                        ) AS distance_m
+                        FROM sea_level_grid
+                        WHERE geom IS NOT NULL
+                        ORDER BY geom::geography <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                        LIMIT 1
+                    """, (lon, lat, lon, lat))
+                    dist_result = cursor.fetchone()
+                    if dist_result:
+                        result['distance_to_coast_m'] = float(dist_result['distance_m'])
+                except Exception as e:
+                    logger.debug(f"Failed to get distance to coast: {e}")
+                    # 트랜잭션 에러 시 롤백
+                    conn.rollback()
 
                 # 2. 태풍 이력 조회 - api_typhoon_track 우선, 없으면 besttrack fallback
-                # 거리 제한 없이 최근접 태풍 데이터 조회
+                # 미래 예측 데이터가 없으므로 과거 전체 데이터 통계 사용
                 cursor.execute("""
                     SELECT COUNT(DISTINCT year || '_' || typ_seq) as typhoon_count,
                            MAX(wind_speed_ms) as max_wind
                     FROM api_typhoon_track
-                """, (lon, lat))
+                """)
                 typhoon_result = cursor.fetchone()
 
                 # api_typhoon_track에 데이터가 없으면 besttrack에서 조회
@@ -741,7 +746,7 @@ class ClimateDataLoader:
                         SELECT COUNT(DISTINCT year || '-' || tcid) as typhoon_count,
                                MAX(max_wind_speed) as max_wind
                         FROM api_typhoon_besttrack
-                    """, (lon, lat))
+                    """)
                     typhoon_result = cursor.fetchone()
 
                 if typhoon_result:

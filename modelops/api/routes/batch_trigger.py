@@ -525,25 +525,25 @@ async def run_candidate_locations_probability_batch():
 
 
 @router.post(
-    "/run-regional-locations-batch",
+    "/run-regional-locations-batch-group1",
     responses={
-        200: {"description": "250개 시군구 배치 작업 시작 성공"},
+        200: {"description": "250개 시군구 배치 작업 (그룹1) 시작 성공"},
         500: {
             "description": "배치 작업 실패",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Failed to run regional locations batch: Internal error"}
+                    "example": {"detail": "Failed to run regional locations batch group1: Internal error"}
                 }
             }
         }
     }
 )
-async def run_regional_locations_batch():
+async def run_regional_locations_batch_group1():
     """
-    250개 시군구 위치에 대한 H(Hazard) 배치 계산 (P(H)는 제외)
+    250개 시군구 위치에 대한 H(Hazard) 배치 계산 - 그룹1 (P(H)는 제외)
 
     - **위치**: 250개 시군구 (REGION_COORD_MAP)
-    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s, 2060s, 2070s, 2080s, 2090s)
+    - **연도**: 2025, 2030, 2035, 2040 (그룹1 - 4개 연도)
     - **시나리오**: SSP126, SSP245, SSP370, SSP585
     - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
 
@@ -564,10 +564,8 @@ async def run_regional_locations_batch():
 
         logger.info(f"총 {len(regional_locations)}개 시군구 좌표 로드 완료")
 
-        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2090s)
-        yearly_years = [str(year) for year in range(2021, 2101)]  # "2021"-"2100"
-        decadal_years = ["2020s", "2030s", "2040s", "2050s", "2060s", "2070s", "2080s", "2090s"]
-        all_years = yearly_years + decadal_years  # 문자열 연도 리스트
+        # 연도 설정: 그룹1 (2025-2040)
+        all_years = ["2025", "2030", "2035", "2040"]
 
         # 시나리오
         scenarios = ["SSP126", "SSP245", "SSP370", "SSP585"]
@@ -576,9 +574,9 @@ async def run_regional_locations_batch():
         def run_batches():
             try:
                 logger.info("=" * 80)
-                logger.info("250개 시군구 Hazard 배치 계산 시작")
+                logger.info("250개 시군구 Hazard 배치 계산 시작 (그룹1: 2025-2040)")
                 logger.info(f"위치 개수: {len(regional_locations)}")
-                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 10년 단위)")
+                logger.info(f"연도: {all_years}")
                 logger.info(f"시나리오: {scenarios}")
                 logger.info("=" * 80)
 
@@ -595,11 +593,11 @@ async def run_regional_locations_batch():
                 logger.info("Hazard 배치 완료!")
 
                 logger.info("=" * 80)
-                logger.info("250개 시군구 Hazard 배치 계산 완료!")
+                logger.info("250개 시군구 Hazard 배치 계산 완료! (그룹1)")
                 logger.info("=" * 80)
 
             except Exception as e:
-                logger.error(f"시군구 배치 실행 중 오류 발생: {e}", exc_info=True)
+                logger.error(f"시군구 배치 실행 중 오류 발생 (그룹1): {e}", exc_info=True)
 
         # 백그라운드에서 실행
         executor = ThreadPoolExecutor(max_workers=1)
@@ -607,22 +605,319 @@ async def run_regional_locations_batch():
 
         return {
             'status': 'started',
-            'message': '250개 시군구 Hazard 배치 계산이 백그라운드에서 시작되었습니다.',
+            'message': '250개 시군구 Hazard 배치 계산이 백그라운드에서 시작되었습니다 (그룹1: 2025-2040).',
+            'group': 1,
             'locations_count': len(regional_locations),
             'years_count': len(all_years),
-            'years_range': f"2021-2100 + {decadal_years}",
+            'years': all_years,
             'scenarios': scenarios,
-            'total_calculations': len(regional_locations) * len(all_years) * len(scenarios) * 9,  # 9 risk types
-            'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다 (P(H)는 계산하지 않음).',
-            'estimated_time': '대량 계산으로 인해 수 시간이 소요될 수 있습니다.'
+            'total_calculations': len(regional_locations) * len(all_years) * len(scenarios) * 9,  # 250 * 4 * 4 * 9 = 36,000
+            'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다 (P(H)는 계산하지 않음).'
         }
 
     except ImportError as e:
         logger.error(f"배치 모듈 import 실패: {e}")
         raise HTTPException(status_code=500, detail=f"Batch module import failed: {str(e)}")
     except Exception as e:
-        logger.error(f"시군구 배치 실행 실패: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to run regional locations batch: {str(e)}")
+        logger.error(f"시군구 배치 실행 실패 (그룹1): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to run regional locations batch group1: {str(e)}")
+
+
+@router.post(
+    "/run-regional-locations-batch-group2",
+    responses={
+        200: {"description": "250개 시군구 배치 작업 (그룹2) 시작 성공"},
+        500: {
+            "description": "배치 작업 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to run regional locations batch group2: Internal error"}
+                }
+            }
+        }
+    }
+)
+async def run_regional_locations_batch_group2():
+    """
+    250개 시군구 위치에 대한 H(Hazard) 배치 계산 - 그룹2 (P(H)는 제외)
+
+    - **위치**: 250개 시군구 (REGION_COORD_MAP)
+    - **연도**: 2045, 2050, 2055, 2060 (그룹2 - 4개 연도)
+    - **시나리오**: SSP126, SSP245, SSP370, SSP585
+    - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
+
+    백그라운드에서 실행되며, 결과는 hazard_results 테이블에 저장됩니다.
+    """
+    try:
+        from ...utils.region_mapper import REGION_COORD_MAP
+        from ...batch.hazard_timeseries_batch import run_hazard_batch
+        from concurrent.futures import ThreadPoolExecutor
+
+        # 250개 시군구 좌표 준비
+        regional_locations = []
+        for code, coords in REGION_COORD_MAP.items():
+            lat = coords.get('lat')
+            lng = coords.get('lng')
+            if lat and lng and lat != 0.0 and lng != 0.0:  # 기본값 제외
+                regional_locations.append((float(lat), float(lng)))
+
+        logger.info(f"총 {len(regional_locations)}개 시군구 좌표 로드 완료")
+
+        # 연도 설정: 그룹2 (2045-2060)
+        all_years = ["2045", "2050", "2055", "2060"]
+
+        # 시나리오
+        scenarios = ["SSP126", "SSP245", "SSP370", "SSP585"]
+
+        # 백그라운드 실행 함수
+        def run_batches():
+            try:
+                logger.info("=" * 80)
+                logger.info("250개 시군구 Hazard 배치 계산 시작 (그룹2: 2045-2060)")
+                logger.info(f"위치 개수: {len(regional_locations)}")
+                logger.info(f"연도: {all_years}")
+                logger.info(f"시나리오: {scenarios}")
+                logger.info("=" * 80)
+
+                # Hazard 배치 실행 (P(H)는 제외)
+                logger.info("Hazard Score 배치 계산 시작...")
+                run_hazard_batch(
+                    grid_points=regional_locations,
+                    scenarios=scenarios,
+                    years=all_years,
+                    risk_types=None,  # 전체 9개 리스크
+                    batch_size=100,
+                    max_workers=6  # 250개 위치이므로 워커 수 증가
+                )
+                logger.info("Hazard 배치 완료!")
+
+                logger.info("=" * 80)
+                logger.info("250개 시군구 Hazard 배치 계산 완료! (그룹2)")
+                logger.info("=" * 80)
+
+            except Exception as e:
+                logger.error(f"시군구 배치 실행 중 오류 발생 (그룹2): {e}", exc_info=True)
+
+        # 백그라운드에서 실행
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(run_batches)
+
+        return {
+            'status': 'started',
+            'message': '250개 시군구 Hazard 배치 계산이 백그라운드에서 시작되었습니다 (그룹2: 2045-2060).',
+            'group': 2,
+            'locations_count': len(regional_locations),
+            'years_count': len(all_years),
+            'years': all_years,
+            'scenarios': scenarios,
+            'total_calculations': len(regional_locations) * len(all_years) * len(scenarios) * 9,  # 250 * 4 * 4 * 9 = 36,000
+            'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다 (P(H)는 계산하지 않음).'
+        }
+
+    except ImportError as e:
+        logger.error(f"배치 모듈 import 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch module import failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"시군구 배치 실행 실패 (그룹2): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to run regional locations batch group2: {str(e)}")
+
+
+@router.post(
+    "/run-regional-locations-batch-group3",
+    responses={
+        200: {"description": "250개 시군구 배치 작업 (그룹3) 시작 성공"},
+        500: {
+            "description": "배치 작업 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to run regional locations batch group3: Internal error"}
+                }
+            }
+        }
+    }
+)
+async def run_regional_locations_batch_group3():
+    """
+    250개 시군구 위치에 대한 H(Hazard) 배치 계산 - 그룹3 (P(H)는 제외)
+
+    - **위치**: 250개 시군구 (REGION_COORD_MAP)
+    - **연도**: 2065, 2070, 2075, 2080 (그룹3 - 4개 연도)
+    - **시나리오**: SSP126, SSP245, SSP370, SSP585
+    - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
+
+    백그라운드에서 실행되며, 결과는 hazard_results 테이블에 저장됩니다.
+    """
+    try:
+        from ...utils.region_mapper import REGION_COORD_MAP
+        from ...batch.hazard_timeseries_batch import run_hazard_batch
+        from concurrent.futures import ThreadPoolExecutor
+
+        # 250개 시군구 좌표 준비
+        regional_locations = []
+        for code, coords in REGION_COORD_MAP.items():
+            lat = coords.get('lat')
+            lng = coords.get('lng')
+            if lat and lng and lat != 0.0 and lng != 0.0:  # 기본값 제외
+                regional_locations.append((float(lat), float(lng)))
+
+        logger.info(f"총 {len(regional_locations)}개 시군구 좌표 로드 완료")
+
+        # 연도 설정: 그룹3 (2065-2080)
+        all_years = ["2065", "2070", "2075", "2080"]
+
+        # 시나리오
+        scenarios = ["SSP126", "SSP245", "SSP370", "SSP585"]
+
+        # 백그라운드 실행 함수
+        def run_batches():
+            try:
+                logger.info("=" * 80)
+                logger.info("250개 시군구 Hazard 배치 계산 시작 (그룹3: 2065-2080)")
+                logger.info(f"위치 개수: {len(regional_locations)}")
+                logger.info(f"연도: {all_years}")
+                logger.info(f"시나리오: {scenarios}")
+                logger.info("=" * 80)
+
+                # Hazard 배치 실행 (P(H)는 제외)
+                logger.info("Hazard Score 배치 계산 시작...")
+                run_hazard_batch(
+                    grid_points=regional_locations,
+                    scenarios=scenarios,
+                    years=all_years,
+                    risk_types=None,  # 전체 9개 리스크
+                    batch_size=100,
+                    max_workers=6  # 250개 위치이므로 워커 수 증가
+                )
+                logger.info("Hazard 배치 완료!")
+
+                logger.info("=" * 80)
+                logger.info("250개 시군구 Hazard 배치 계산 완료! (그룹3)")
+                logger.info("=" * 80)
+
+            except Exception as e:
+                logger.error(f"시군구 배치 실행 중 오류 발생 (그룹3): {e}", exc_info=True)
+
+        # 백그라운드에서 실행
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(run_batches)
+
+        return {
+            'status': 'started',
+            'message': '250개 시군구 Hazard 배치 계산이 백그라운드에서 시작되었습니다 (그룹3: 2065-2080).',
+            'group': 3,
+            'locations_count': len(regional_locations),
+            'years_count': len(all_years),
+            'years': all_years,
+            'scenarios': scenarios,
+            'total_calculations': len(regional_locations) * len(all_years) * len(scenarios) * 9,  # 250 * 4 * 4 * 9 = 36,000
+            'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다 (P(H)는 계산하지 않음).'
+        }
+
+    except ImportError as e:
+        logger.error(f"배치 모듈 import 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch module import failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"시군구 배치 실행 실패 (그룹3): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to run regional locations batch group3: {str(e)}")
+
+
+@router.post(
+    "/run-regional-locations-batch-group4",
+    responses={
+        200: {"description": "250개 시군구 배치 작업 (그룹4) 시작 성공"},
+        500: {
+            "description": "배치 작업 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to run regional locations batch group4: Internal error"}
+                }
+            }
+        }
+    }
+)
+async def run_regional_locations_batch_group4():
+    """
+    250개 시군구 위치에 대한 H(Hazard) 배치 계산 - 그룹4 (P(H)는 제외)
+
+    - **위치**: 250개 시군구 (REGION_COORD_MAP)
+    - **연도**: 2085, 2090, 2095, 2100 (그룹4 - 4개 연도)
+    - **시나리오**: SSP126, SSP245, SSP370, SSP585
+    - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
+
+    백그라운드에서 실행되며, 결과는 hazard_results 테이블에 저장됩니다.
+    """
+    try:
+        from ...utils.region_mapper import REGION_COORD_MAP
+        from ...batch.hazard_timeseries_batch import run_hazard_batch
+        from concurrent.futures import ThreadPoolExecutor
+
+        # 250개 시군구 좌표 준비
+        regional_locations = []
+        for code, coords in REGION_COORD_MAP.items():
+            lat = coords.get('lat')
+            lng = coords.get('lng')
+            if lat and lng and lat != 0.0 and lng != 0.0:  # 기본값 제외
+                regional_locations.append((float(lat), float(lng)))
+
+        logger.info(f"총 {len(regional_locations)}개 시군구 좌표 로드 완료")
+
+        # 연도 설정: 그룹4 (2085-2100)
+        all_years = ["2085", "2090", "2095", "2100"]
+
+        # 시나리오
+        scenarios = ["SSP126", "SSP245", "SSP370", "SSP585"]
+
+        # 백그라운드 실행 함수
+        def run_batches():
+            try:
+                logger.info("=" * 80)
+                logger.info("250개 시군구 Hazard 배치 계산 시작 (그룹4: 2085-2100)")
+                logger.info(f"위치 개수: {len(regional_locations)}")
+                logger.info(f"연도: {all_years}")
+                logger.info(f"시나리오: {scenarios}")
+                logger.info("=" * 80)
+
+                # Hazard 배치 실행 (P(H)는 제외)
+                logger.info("Hazard Score 배치 계산 시작...")
+                run_hazard_batch(
+                    grid_points=regional_locations,
+                    scenarios=scenarios,
+                    years=all_years,
+                    risk_types=None,  # 전체 9개 리스크
+                    batch_size=100,
+                    max_workers=6  # 250개 위치이므로 워커 수 증가
+                )
+                logger.info("Hazard 배치 완료!")
+
+                logger.info("=" * 80)
+                logger.info("250개 시군구 Hazard 배치 계산 완료! (그룹4)")
+                logger.info("=" * 80)
+
+            except Exception as e:
+                logger.error(f"시군구 배치 실행 중 오류 발생 (그룹4): {e}", exc_info=True)
+
+        # 백그라운드에서 실행
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(run_batches)
+
+        return {
+            'status': 'started',
+            'message': '250개 시군구 Hazard 배치 계산이 백그라운드에서 시작되었습니다 (그룹4: 2085-2100).',
+            'group': 4,
+            'locations_count': len(regional_locations),
+            'years_count': len(all_years),
+            'years': all_years,
+            'scenarios': scenarios,
+            'total_calculations': len(regional_locations) * len(all_years) * len(scenarios) * 9,  # 250 * 4 * 4 * 9 = 36,000
+            'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다 (P(H)는 계산하지 않음).'
+        }
+
+    except ImportError as e:
+        logger.error(f"배치 모듈 import 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch module import failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"시군구 배치 실행 실패 (그룹4): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to run regional locations batch group4: {str(e)}")
 
 
 @router.post(

@@ -133,6 +133,39 @@ class ClimateDataLoader:
             logger.error(f"Failed to get grid_id: {e}")
             return None
 
+    def _parse_year(self, year) -> tuple:
+        """
+        year를 파싱하여 정수 연도와 decadal 여부 반환
+
+        Args:
+            year: 연도 (2030 또는 "2030s")
+
+        Returns:
+            (int_year, is_decadal): (정수 연도, decadal 여부)
+            예: 2030 → (2030, False)
+                "2030s" → (2030, True)
+                "2050s" → (2050, True)
+        """
+        if isinstance(year, str):
+            if year.endswith('s'):
+                # Decadal year: "2030s" → (2030, True)
+                try:
+                    int_year = int(year.replace('s', ''))
+                    return (int_year, True)
+                except ValueError:
+                    logger.warning(f"Invalid decadal year format: {year}, using 2030")
+                    return (2030, False)
+            else:
+                # 문자열 숫자: "2030" → (2030, False)
+                try:
+                    return (int(year), False)
+                except ValueError:
+                    logger.warning(f"Invalid year format: {year}, using 2030")
+                    return (2030, False)
+        else:
+            # 정수: 2030 → (2030, False)
+            return (int(year), False)
+
     def _extract_value(self, variable: str, lat: float, lon: float, year: int) -> Optional[float]:
         """
         DB에서 특정 위치/연도의 값 추출
@@ -164,20 +197,41 @@ class ClimateDataLoader:
 
     def _extract_yearly_value(self, variable: str, lat: float, lon: float,
                               year: int, table_name: str) -> Optional[float]:
-        """year 컬럼 기반 테이블에서 값 추출"""
+        """
+        year 컬럼 기반 테이블에서 값 추출
+
+        Decadal year (예: "2030s") 지원:
+        - "2030s" → 2030-2039년의 평균값 반환
+        """
         grid_id = self._get_grid_id(lat, lon)
         if grid_id is None:
             return None
 
         try:
+            # year 파싱 (decadal 여부 확인)
+            int_year, is_decadal = self._parse_year(year)
+
             with DatabaseConnection.get_connection() as conn:
                 cursor = conn.cursor()
-                query = f"""
-                    SELECT {self.ssp_column} as value
-                    FROM {table_name}
-                    WHERE grid_id = %s AND year = %s
-                """
-                cursor.execute(query, (grid_id, year))
+
+                if is_decadal:
+                    # Decadal year: 10년 평균 계산 (예: "2030s" → 2030-2039)
+                    start_year = int_year
+                    end_year = int_year + 9
+                    query = f"""
+                        SELECT AVG({self.ssp_column}) as value
+                        FROM {table_name}
+                        WHERE grid_id = %s AND year >= %s AND year <= %s
+                    """
+                    cursor.execute(query, (grid_id, start_year, end_year))
+                else:
+                    # 개별 연도
+                    query = f"""
+                        SELECT {self.ssp_column} as value
+                        FROM {table_name}
+                        WHERE grid_id = %s AND year = %s
+                    """
+                    cursor.execute(query, (grid_id, int_year))
 
                 result = cursor.fetchone()
                 if result and result['value'] is not None:
@@ -201,36 +255,71 @@ class ClimateDataLoader:
         - ID0: 결빙일수 (최고기온 < 0도 COUNT)
         - RHM, WS, SI, TA: 연평균 (AVG)
         - RN: 연강수량 (SUM)
+
+        Decadal year (예: "2030s") 지원:
+        - "2030s" → 2030-2039년의 평균값 반환
         """
         grid_id = self._get_grid_id(lat, lon)
         if grid_id is None:
             return None
 
+        # year 파싱 (decadal 여부 확인)
+        int_year, is_decadal = self._parse_year(year)
+
         # 변수별 집계 쿼리 매핑
-        agg_queries = {
-            'TXx': f"SELECT MAX({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'TNn': f"SELECT MIN({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'SU25': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} > 25",
-            'TR25': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} > 25",
-            'FD0': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} < 0",
-            'ID0': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} < 0",
-            'RN': f"SELECT SUM({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'RHM': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'WS': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'SI': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'TA': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-            'SPEI12': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
-        }
+        if is_decadal:
+            # Decadal year: 10년 범위 (예: 2030-2039)
+            start_year = int_year
+            end_year = int_year + 9
+            agg_queries = {
+                'TXx': f"SELECT MAX({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+                'TNn': f"SELECT MIN({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+                'SU25': f"SELECT AVG(cnt) as value FROM (SELECT EXTRACT(YEAR FROM observation_date) as yr, COUNT(*) as cnt FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s AND {self.ssp_column} > 25 GROUP BY yr) sub",
+                'TR25': f"SELECT AVG(cnt) as value FROM (SELECT EXTRACT(YEAR FROM observation_date) as yr, COUNT(*) as cnt FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s AND {self.ssp_column} > 25 GROUP BY yr) sub",
+                'FD0': f"SELECT AVG(cnt) as value FROM (SELECT EXTRACT(YEAR FROM observation_date) as yr, COUNT(*) as cnt FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s AND {self.ssp_column} < 0 GROUP BY yr) sub",
+                'ID0': f"SELECT AVG(cnt) as value FROM (SELECT EXTRACT(YEAR FROM observation_date) as yr, COUNT(*) as cnt FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s AND {self.ssp_column} < 0 GROUP BY yr) sub",
+                'RN': f"SELECT AVG(sm) as value FROM (SELECT EXTRACT(YEAR FROM observation_date) as yr, SUM({self.ssp_column}) as sm FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s GROUP BY yr) sub",
+                'RHM': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+                'WS': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+                'SI': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+                'TA': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+                'SPEI12': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s",
+            }
+            params = (grid_id, start_year, end_year)
+        else:
+            # 개별 연도
+            agg_queries = {
+                'TXx': f"SELECT MAX({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'TNn': f"SELECT MIN({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'SU25': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} > 25",
+                'TR25': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} > 25",
+                'FD0': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} < 0",
+                'ID0': f"SELECT COUNT(*) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s AND {self.ssp_column} < 0",
+                'RN': f"SELECT SUM({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'RHM': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'WS': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'SI': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'TA': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+                'SPEI12': f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s",
+            }
+            params = (grid_id, int_year)
 
         query = agg_queries.get(variable)
         if not query:
             # 기본값: 평균
-            query = f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s"
+            if is_decadal:
+                start_year = int_year
+                end_year = int_year + 9
+                query = f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) >= %s AND EXTRACT(YEAR FROM observation_date) <= %s"
+                params = (grid_id, start_year, end_year)
+            else:
+                query = f"SELECT AVG({self.ssp_column}) as value FROM {table_name} WHERE grid_id = %s AND EXTRACT(YEAR FROM observation_date) = %s"
+                params = (grid_id, int_year)
 
         try:
             with DatabaseConnection.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(query, (grid_id, year))
+                cursor.execute(query, params)
 
                 result = cursor.fetchone()
                 if result and result['value'] is not None:

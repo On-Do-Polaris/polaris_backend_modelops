@@ -939,7 +939,7 @@ async def run_real_map_hazard_batch():
     REAL_MAP 3개 위치에 대한 H(Hazard) 배치 계산
 
     - **위치**: 3개 실제 위치 (REAL_MAP)
-    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s, 2060s, 2070s, 2080s, 2090s)
+    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s)
     - **시나리오**: SSP126, SSP245, SSP370, SSP585
     - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
 
@@ -964,9 +964,9 @@ async def run_real_map_hazard_batch():
                 detail=f"Expected 3 locations, but got {len(real_locations)}"
             )
 
-        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2090s)
+        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2050s)
         yearly_years = [str(year) for year in range(2021, 2101)]  # "2021"-"2100"
-        decadal_years = ["2020s", "2030s", "2040s", "2050s", "2060s", "2070s", "2080s", "2090s"]
+        decadal_years = ["2020s", "2030s", "2040s", "2050s"]
         all_years = yearly_years + decadal_years  # 문자열 연도 리스트
 
         # 시나리오
@@ -978,7 +978,7 @@ async def run_real_map_hazard_batch():
                 logger.info("=" * 80)
                 logger.info("REAL_MAP Hazard 배치 계산 시작")
                 logger.info(f"위치 개수: {len(real_locations)}")
-                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 10년 단위)")
+                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 2020s~2050s)")
                 logger.info(f"시나리오: {scenarios}")
                 logger.info("=" * 80)
 
@@ -1007,7 +1007,9 @@ async def run_real_map_hazard_batch():
             'message': 'REAL_MAP Hazard 배치 계산이 백그라운드에서 시작되었습니다.',
             'locations_count': len(real_locations),
             'years_count': len(all_years),
-            'years_range': f"2021-2100 + {decadal_years}",
+            'years_range': f"2021-2100 + 2020s~2050s",
+            'yearly_years_count': len(yearly_years),
+            'decadal_years': decadal_years,
             'scenarios': scenarios,
             'total_calculations': len(real_locations) * len(all_years) * len(scenarios) * 9,
             'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다.'
@@ -1040,7 +1042,7 @@ async def run_real_map_probability_batch():
     REAL_MAP 3개 위치에 대한 P(H)(Probability) 배치 계산
 
     - **위치**: 3개 실제 위치 (REAL_MAP)
-    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s, 2060s, 2070s, 2080s, 2090s)
+    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s)
     - **시나리오**: SSP126, SSP245, SSP370, SSP585
     - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
 
@@ -1065,9 +1067,9 @@ async def run_real_map_probability_batch():
                 detail=f"Expected 3 locations, but got {len(real_locations)}"
             )
 
-        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2090s)
+        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2050s)
         yearly_years = [str(year) for year in range(2021, 2101)]  # "2021"-"2100"
-        decadal_years = ["2020s", "2030s", "2040s", "2050s", "2060s", "2070s", "2080s", "2090s"]
+        decadal_years = ["2020s", "2030s", "2040s", "2050s"]
         all_years = yearly_years + decadal_years  # 문자열 연도 리스트
 
         # 시나리오
@@ -1079,7 +1081,7 @@ async def run_real_map_probability_batch():
                 logger.info("=" * 80)
                 logger.info("REAL_MAP Probability 배치 계산 시작")
                 logger.info(f"위치 개수: {len(real_locations)}")
-                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 10년 단위)")
+                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 2020s~2050s)")
                 logger.info(f"시나리오: {scenarios}")
                 logger.info("=" * 80)
 
@@ -1108,7 +1110,9 @@ async def run_real_map_probability_batch():
             'message': 'REAL_MAP Probability 배치 계산이 백그라운드에서 시작되었습니다.',
             'locations_count': len(real_locations),
             'years_count': len(all_years),
-            'years_range': f"2021-2100 + {decadal_years}",
+            'years_range': f"2021-2100 + 2020s~2050s",
+            'yearly_years_count': len(yearly_years),
+            'decadal_years': decadal_years,
             'scenarios': scenarios,
             'total_calculations': len(real_locations) * len(all_years) * len(scenarios) * 9,
             'note': 'Probability 결과는 probability_results 테이블에 저장됩니다.'

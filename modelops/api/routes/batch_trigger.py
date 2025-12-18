@@ -345,8 +345,8 @@ async def run_candidate_locations_hazard_batch():
     10개 후보지 위치에 대한 H(Hazard) 배치 계산
 
     - **위치**: 10개 후보지 (LOCATION_MAP)
-    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s, 2060s, 2070s, 2080s, 2090s)
-    - **시나리오**: SSP126, SSP245, SSP370, SSP585
+    - **연도**: 2040년만
+    - **시나리오**: SSP245만
     - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
 
     백그라운드에서 실행되며, 결과는 hazard_results 테이블에 저장됩니다.
@@ -370,21 +370,19 @@ async def run_candidate_locations_hazard_batch():
                 detail=f"Expected 10 locations, but got {len(candidate_locations)}"
             )
 
-        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2090s)
-        yearly_years = [str(year) for year in range(2021, 2101)]  # "2021"-"2100"
-        decadal_years = ["2020s", "2030s", "2040s", "2050s", "2060s", "2070s", "2080s", "2090s"]
-        all_years = yearly_years + decadal_years  # 문자열 연도 리스트
+        # 연도 설정: 2040년만
+        all_years = ["2040"]
 
-        # 시나리오
-        scenarios = ["SSP126", "SSP245", "SSP370", "SSP585"]
+        # 시나리오: SSP245만
+        scenarios = ["SSP245"]
 
         # 백그라운드 실행 함수
         def run_batch():
             try:
                 logger.info("=" * 80)
-                logger.info("후보지 Hazard 배치 계산 시작")
+                logger.info("후보지 Hazard 배치 계산 시작 (SSP245, 2040년)")
                 logger.info(f"위치 개수: {len(candidate_locations)}")
-                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 10년 단위)")
+                logger.info(f"연도: {all_years}")
                 logger.info(f"시나리오: {scenarios}")
                 logger.info("=" * 80)
 
@@ -394,7 +392,7 @@ async def run_candidate_locations_hazard_batch():
                     years=all_years,
                     risk_types=None,  # 전체 9개 리스크
                     batch_size=100,
-                    max_workers=4
+                    max_workers=2
                 )
 
                 logger.info("=" * 80)
@@ -410,12 +408,12 @@ async def run_candidate_locations_hazard_batch():
 
         return {
             'status': 'started',
-            'message': '후보지 Hazard 배치 계산이 백그라운드에서 시작되었습니다.',
+            'message': '후보지 Hazard 배치 계산이 백그라운드에서 시작되었습니다 (SSP245, 2040년).',
             'locations_count': len(candidate_locations),
             'years_count': len(all_years),
-            'years_range': f"2021-2100 + {decadal_years}",
+            'year': '2040',
             'scenarios': scenarios,
-            'total_calculations': len(candidate_locations) * len(all_years) * len(scenarios) * 9,
+            'total_calculations': len(candidate_locations) * len(all_years) * len(scenarios) * 9,  # 10 * 1 * 1 * 9 = 90
             'note': 'Hazard 결과는 hazard_results 테이블에 저장됩니다.'
         }
 
@@ -446,8 +444,8 @@ async def run_candidate_locations_probability_batch():
     10개 후보지 위치에 대한 P(H)(Probability) 배치 계산
 
     - **위치**: 10개 후보지 (LOCATION_MAP)
-    - **연도**: 2021-2100 (80년) + 10년 단위 (2020s, 2030s, 2040s, 2050s, 2060s, 2070s, 2080s, 2090s)
-    - **시나리오**: SSP126, SSP245, SSP370, SSP585
+    - **연도**: 2040년만
+    - **시나리오**: SSP245만
     - **리스크 타입**: 9가지 (extreme_heat, extreme_cold, wildfire, drought, water_stress, sea_level_rise, river_flood, urban_flood, typhoon)
 
     백그라운드에서 실행되며, 결과는 probability_results 테이블에 저장됩니다.
@@ -471,13 +469,11 @@ async def run_candidate_locations_probability_batch():
                 detail=f"Expected 10 locations, but got {len(candidate_locations)}"
             )
 
-        # 연도 설정: 2021-2100 (80년) + 10년 단위 (2020s~2090s)
-        yearly_years = [str(year) for year in range(2021, 2101)]  # "2021"-"2100"
-        decadal_years = ["2020s", "2030s", "2040s", "2050s", "2060s", "2070s", "2080s", "2090s"]
-        all_years = yearly_years + decadal_years  # 문자열 연도 리스트
+        # 연도 설정: 2040년만
+        all_years = ["2040"]
 
-        # 시나리오
-        scenarios = ["SSP126", "SSP245", "SSP370", "SSP585"]
+        # 시나리오: SSP245만
+        scenarios = ["SSP245"]
 
         # 백그라운드 실행 함수
         def run_batch():
@@ -485,7 +481,7 @@ async def run_candidate_locations_probability_batch():
                 logger.info("=" * 80)
                 logger.info("후보지 Probability 배치 계산 시작")
                 logger.info(f"위치 개수: {len(candidate_locations)}")
-                logger.info(f"연도 개수: {len(all_years)} (2021-2100 + 10년 단위)")
+                logger.info(f"연도: {all_years}")
                 logger.info(f"시나리오: {scenarios}")
                 logger.info("=" * 80)
 
@@ -514,7 +510,7 @@ async def run_candidate_locations_probability_batch():
             'message': '후보지 Probability 배치 계산이 백그라운드에서 시작되었습니다.',
             'locations_count': len(candidate_locations),
             'years_count': len(all_years),
-            'years_range': f"2021-2100 + {decadal_years}",
+            'years': all_years,
             'scenarios': scenarios,
             'total_calculations': len(candidate_locations) * len(all_years) * len(scenarios) * 9,
             'note': 'Probability 결과는 probability_results 테이블에 저장됩니다.'

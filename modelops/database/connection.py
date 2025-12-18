@@ -1076,7 +1076,7 @@ class DatabaseConnection:
                                  target_year: int = None,
                                  scenario: str = None) -> Dict[str, Dict[str, Any]]:
         """
-        P(H) 조회
+        P(H) 조회 (최근접 격자 기반)
 
         테이블 스키마:
             - latitude, longitude, risk_type, target_year (PK)
@@ -1099,13 +1099,16 @@ class DatabaseConnection:
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 기본 쿼리 - 시나리오별 컬럼 조회
+            # 최근접 격자 조회 쿼리 (거리 제한 없음)
+            # DISTINCT ON을 사용하여 risk_type, target_year 조합당 가장 가까운 격자 1개만 선택
             query = """
-                SELECT risk_type, target_year,
+                SELECT DISTINCT ON (risk_type, target_year)
+                       risk_type, target_year,
                        ssp126_aal, ssp245_aal, ssp370_aal, ssp585_aal,
-                       ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs
+                       ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs,
+                       SQRT(POWER(latitude - %s, 2) + POWER(longitude - %s, 2)) AS distance
                 FROM probability_results
-                WHERE latitude = %s AND longitude = %s
+                WHERE 1=1
             """
             params = [latitude, longitude]
 
@@ -1117,7 +1120,8 @@ class DatabaseConnection:
                 query += " AND target_year = %s::text"
                 params.append(str(target_year))
 
-            query += " ORDER BY risk_type, target_year"
+            # risk_type, target_year별로 거리순 정렬하여 가장 가까운 것 선택
+            query += " ORDER BY risk_type, target_year, distance"
 
             cursor.execute(query, params)
 

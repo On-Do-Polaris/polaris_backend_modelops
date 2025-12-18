@@ -117,12 +117,12 @@ def fetch_hazard_from_db(
         if not h_results or risk_type not in h_results:
             logger.warning(
                 f"Hazard not found for {risk_type} at ({latitude}, {longitude}), "
-                f"{scenario}, {target_year} - using default"
+                f"{scenario}, {target_year} - using default value 1.0"
             )
             return {
-                'hazard_score': 0.0,
-                'hazard_score_100': 0.0,
-                'hazard_level': 'Very Low'
+                'hazard_score': 0.1,
+                'hazard_score_100': 10.0,
+                'hazard_level': 'Very High'
             }
 
         # 결과 추출 및 변환
@@ -194,12 +194,12 @@ def fetch_probability_from_db(
         if not p_results or risk_type not in p_results:
             logger.warning(
                 f"Probability not found for {risk_type} at ({latitude}, {longitude}), "
-                f"{scenario}, {target_year} - using default"
+                f"{scenario}, {target_year} - using default value 1.0"
             )
             return {
-                'aal': 0.0,
-                'return_period_years': 0.0,
-                'probability_level': 'Very Low'
+                'aal': 0.001,
+                'return_period_years': 1000.0,
+                'probability_level': 'Very High'
             }
 
         # 결과 추출 및 변환

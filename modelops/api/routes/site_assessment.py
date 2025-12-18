@@ -412,14 +412,23 @@ def _calculate_single_site_candidates(
             total_aal = 0.0
             risk_scores = []
 
+            # risks JSONB 구성 (9개 리스크의 점수만 저장: H × E × V / 10000)
+            risks = {}
+
             for risk_type in RISK_TYPES:
+                # AAL 및 aal_by_risk 구성
                 aal_data = results_data.get('aal', {}).get(risk_type, {})
                 final_aal = aal_data.get('final_aal', 0.0)
                 aal_by_risk[risk_type] = final_aal
                 total_aal += final_aal
 
+                # 통합 리스크 점수 (H × E × V / 10000)
                 integrated_risk_data = results_data.get('integrated_risk', {}).get(risk_type, {})
-                risk_scores.append(integrated_risk_data.get('integrated_risk_score', 0.0))
+                integrated_risk_score = integrated_risk_data.get('integrated_risk_score', 0.0)
+                risk_scores.append(integrated_risk_score)
+
+                # risks JSONB: 9개 리스크별 점수만 저장
+                risks[risk_type] = integrated_risk_score
 
             average_integrated_risk = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
             risk_score = int(round(average_integrated_risk))  # 0-100 정수
@@ -431,7 +440,7 @@ def _calculate_single_site_candidates(
                 aal=total_aal,
                 aal_by_risk=aal_by_risk,
                 risk_score=risk_score,
-                risks=None,  # 또는 results_data 전체
+                risks=risks,  # 9개 리스크별 점수 (H × E × V / 10000)
                 reference_site_id=site_id
             )
 

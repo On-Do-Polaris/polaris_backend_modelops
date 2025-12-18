@@ -727,15 +727,11 @@ class ClimateDataLoader:
                     result['distance_to_coast_m'] = float(dist_result['distance_m'])
 
                 # 2. 태풍 이력 조회 - api_typhoon_track 우선, 없으면 besttrack fallback
+                # 거리 제한 없이 최근접 태풍 데이터 조회
                 cursor.execute("""
                     SELECT COUNT(DISTINCT year || '_' || typ_seq) as typhoon_count,
                            MAX(wind_speed_ms) as max_wind
                     FROM api_typhoon_track
-                    WHERE ST_DWithin(
-                        location::geography,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                        500000
-                    )
                 """, (lon, lat))
                 typhoon_result = cursor.fetchone()
 
@@ -745,11 +741,6 @@ class ClimateDataLoader:
                         SELECT COUNT(DISTINCT year || '-' || tcid) as typhoon_count,
                                MAX(max_wind_speed) as max_wind
                         FROM api_typhoon_besttrack
-                        WHERE ST_DWithin(
-                            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
-                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                            500000
-                        )
                     """, (lon, lat))
                     typhoon_result = cursor.fetchone()
 
@@ -758,6 +749,7 @@ class ClimateDataLoader:
                     result['max_wind_speed_ms'] = float(typhoon_result['max_wind'] or 30.0)
 
                 # 2-2. 태풍 상세 레코드 조회 - api_typhoon_track 우선 (반경 데이터 있음)
+                # 거리순으로 정렬하여 최근접 태풍 데이터 조회
                 cursor.execute("""
                     SELECT CONCAT(year, '_', typ_seq) as tcid, year,
                            EXTRACT(MONTH FROM typ_tm)::int as month,
@@ -769,12 +761,8 @@ class ClimateDataLoader:
                            rad25_km as storm_long, rad25_km as storm_short, direction as storm_dir,
                            CONCAT('TYP_', typ_seq) as typhoon_name
                     FROM api_typhoon_track
-                    WHERE ST_DWithin(
-                        location::geography,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                        500000
-                    )
-                    ORDER BY year DESC, typ_tm DESC
+                    ORDER BY location::geography <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                             year DESC, typ_tm DESC
                     LIMIT 100
                 """, (lon, lat))
                 typhoon_records = cursor.fetchall()
@@ -789,12 +777,8 @@ class ClimateDataLoader:
                                storm_long, storm_short, storm_dir,
                                typhoon_name
                         FROM api_typhoon_besttrack
-                        WHERE ST_DWithin(
-                            ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography,
-                            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                            500000
-                        )
-                        ORDER BY year DESC, month DESC, day DESC
+                        ORDER BY ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                                 year DESC, month DESC, day DESC
                         LIMIT 100
                     """, (lon, lat))
                     typhoon_records = cursor.fetchall()

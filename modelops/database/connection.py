@@ -93,7 +93,7 @@ class DatabaseConnection:
 
     @staticmethod
     def fetch_grid_coordinates() -> List[Dict[str, float]]:
-        """모든 격자 좌표 조회"""
+        """모든 격자 좌표 조회 (Decimal -> float 변환)"""
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -101,14 +101,15 @@ class DatabaseConnection:
                 FROM climate_data
                 ORDER BY latitude, longitude
             """)
-            return [dict(row) for row in cursor.fetchall()]
+            return [{'latitude': float(row['latitude']), 'longitude': float(row['longitude'])}
+                    for row in cursor.fetchall()]
 
     def fetch_all_grid_points(self) -> List[tuple]:
         """
         모든 격자점 좌표 조회 (배치 처리용)
 
         Returns:
-            [(latitude, longitude), ...] 튜플 리스트
+            [(latitude, longitude), ...] 튜플 리스트 (float 타입)
         """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
@@ -120,7 +121,7 @@ class DatabaseConnection:
             """)
             rows = cursor.fetchall()
             if rows:
-                return [(row['latitude'], row['longitude']) for row in rows]
+                return [(float(row['latitude']), float(row['longitude'])) for row in rows]
 
             # location_grid가 비어있으면 기후 데이터 테이블에서 조회
             cursor.execute("""
@@ -130,7 +131,7 @@ class DatabaseConnection:
                 LIMIT 100
             """)
             rows = cursor.fetchall()
-            return [(row['latitude'], row['longitude']) for row in rows]
+            return [(float(row['latitude']), float(row['longitude'])) for row in rows]
 
     @staticmethod
     def fetch_climate_data(latitude: float, longitude: float, risk_type: str = None,

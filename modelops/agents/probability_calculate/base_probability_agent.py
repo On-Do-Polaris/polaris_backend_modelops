@@ -118,6 +118,10 @@ class BaseProbabilityAgent(ABC):
 		Returns:
 			확률 계산 결과 딕셔너리
 		"""
+		# Decimal 타입을 float로 변환 (DB에서 Decimal로 반환될 수 있음)
+		lat = float(lat)
+		lon = float(lon)
+
 		self.logger.info(
 			f"{self.risk_type} 확률 계산 시작 "
 			f"(lat={lat}, lon={lon}, ssp={ssp_scenario})"

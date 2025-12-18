@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnetcdf-dev \
     gcc \
     g++ \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for faster dependency installation
@@ -59,6 +61,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libhdf5-103-1 \
     libnetcdf19 \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -70,6 +73,13 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY main.py .
 COPY modelops/ ./modelops/
 
+# ESG Trends Agent 추가
+COPY src ./src
+COPY scripts ./scripts
+
+# Create logs directory for ESG agent
+RUN mkdir -p /app/logs
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser && \
     chown -R appuser:appuser /app
@@ -78,6 +88,9 @@ USER appuser
 
 # Expose port for FastAPI
 EXPOSE 8001
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
 
 # Health check for FastAPI
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

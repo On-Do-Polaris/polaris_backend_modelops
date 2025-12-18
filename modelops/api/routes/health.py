@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    responses={
+        200: {"description": "서버 정상 작동 중"},
+    }
+)
 async def health_check():
     """서버 상태 확인"""
     return HealthResponse(
@@ -24,7 +30,27 @@ async def health_check():
     )
 
 
-@router.get("/health/db", response_model=HealthResponse)
+@router.get(
+    "/health/db",
+    response_model=HealthResponse,
+    responses={
+        200: {"description": "데이터베이스 연결 정상"},
+        500: {
+            "description": "데이터베이스 연결 실패",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "status": "unhealthy",
+                            "database": "disconnected",
+                            "error": "Connection failed"
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
 async def database_health():
     """데이터베이스 연결 확인"""
     try:

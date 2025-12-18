@@ -40,9 +40,13 @@ from ..agents.vulnerability_calculate.water_stress_vulnerability_agent import Wa
 # AAL Agent
 from ..agents.risk_assessment.aal_scaling_agent import AALScalingAgent
 
+# Site Assessment
+from ..agents.site_assessment.relocation_recommender import RelocationRecommender
+
 # Utils
 from ..database.connection import DatabaseConnection
 from ..utils.hazard_data_collector import HazardDataCollector
+from ..data_loaders.long_term_mapper import LongTermDataMapper
 
 logger = logging.getLogger(__name__)
 
@@ -113,12 +117,12 @@ def fetch_hazard_from_db(
         if not h_results or risk_type not in h_results:
             logger.warning(
                 f"Hazard not found for {risk_type} at ({latitude}, {longitude}), "
-                f"{scenario}, {target_year} - using default"
+                f"{scenario}, {target_year} - using default value 1.0"
             )
             return {
-                'hazard_score': 0.0,
-                'hazard_score_100': 0.0,
-                'hazard_level': 'Very Low'
+                'hazard_score': 0.1,
+                'hazard_score_100': 10.0,
+                'hazard_level': 'Very High'
             }
 
         # 결과 추출 및 변환
@@ -190,12 +194,12 @@ def fetch_probability_from_db(
         if not p_results or risk_type not in p_results:
             logger.warning(
                 f"Probability not found for {risk_type} at ({latitude}, {longitude}), "
-                f"{scenario}, {target_year} - using default"
+                f"{scenario}, {target_year} - using default value 1.0"
             )
             return {
-                'aal': 0.0,
-                'return_period_years': 0.0,
-                'probability_level': 'Very Low'
+                'aal': 0.001,
+                'return_period_years': 1000.0,
+                'probability_level': 'Very High'
             }
 
         # 결과 추출 및 변환
@@ -287,7 +291,8 @@ def calculate_exposure(
     longitude: float,
     scenario: str,
     target_year: int,
-    risk_type: str
+    risk_type: str,
+    pre_collected_data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     E (Exposure) 계산
@@ -298,6 +303,7 @@ def calculate_exposure(
         scenario: SSP 시나리오
         target_year: 분석 연도
         risk_type: 리스크 타입
+        pre_collected_data: 사전 수집된 데이터 (선택적)
 
     Returns:
         {
@@ -315,13 +321,17 @@ def calculate_exposure(
                 'error': f'Unknown risk_type: {risk_type}'
             }
 
-        # HazardDataCollector로 데이터 수집
-        collector = HazardDataCollector(scenario=scenario, target_year=target_year)
-        collected_data = collector.collect_data(
-            lat=latitude,
-            lon=longitude,
-            risk_type=risk_type
-        )
+        # pre_collected_data가 있으면 사용, 없으면 새로 수집
+        if pre_collected_data:
+            collected_data = pre_collected_data
+        else:
+            # HazardDataCollector로 데이터 수집
+            collector = HazardDataCollector(scenario=scenario, target_year=target_year)
+            collected_data = collector.collect_data(
+                lat=latitude,
+                lon=longitude,
+                risk_type=risk_type
+            )
 
         # 필요한 데이터 추출
         building_data = collected_data.get('building_data', {})
@@ -543,14 +553,37 @@ def calculate_integrated_risk(
     }
 
 
+def _classify_score(score: float) -> str:
+    """
+    점수를 등급으로 분류 (0-100)
+
+    Args:
+        score: 점수 (0-100)
+
+    Returns:
+        등급 (Very High / High / Medium / Low / Very Low)
+    """
+    if score >= 80:
+        return 'Very High'
+    elif score >= 60:
+        return 'High'
+    elif score >= 40:
+        return 'Medium'
+    elif score >= 20:
+        return 'Low'
+    else:
+        return 'Very Low'
+
+
 # ========== DB 저장 함수 ==========
 def _save_results_to_db(
     latitude: float,
     longitude: float,
     risk_types: List[str],
     results: Dict[str, Any],
-    target_year: int = 2050,
-    scenario: str = 'SSP245'
+    target_year: str = '2050',
+    scenario: str = 'SSP245',
+    site_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     계산 결과를 DB에 저장
@@ -560,8 +593,9 @@ def _save_results_to_db(
         longitude: 경도
         risk_types: 리스크 타입 리스트
         results: 계산 결과 딕셔너리
-        target_year: 목표 연도
+        target_year: 목표 연도 (문자열, "2030" 또는 "2020s" 형식)
         scenario: SSP 시나리오
+        site_id: 사업장 ID (선택)
 
     Returns:
         저장 결과 요약
@@ -580,6 +614,7 @@ def _save_results_to_db(
             e_data = results['exposure'].get(risk_type, {})
 
             exposure_records.append({
+                'site_id': site_id,
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
@@ -598,6 +633,7 @@ def _save_results_to_db(
             v_data = results['vulnerability'].get(risk_type, {})
 
             vulnerability_records.append({
+                'site_id': site_id,
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
@@ -616,6 +652,7 @@ def _save_results_to_db(
             aal_data = results['aal'].get(risk_type, {})
 
             aal_records.append({
+                'site_id': site_id,
                 'latitude': latitude,
                 'longitude': longitude,
                 'risk_type': risk_type,
@@ -646,7 +683,8 @@ def calculate_evaal_ondemand(
     risk_types: Optional[List[str]] = None,
     insurance_rate: float = 0.0,
     asset_value: Optional[float] = None,
-    save_to_db: bool = False
+    save_to_db: bool = False,
+    site_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     E, V, AAL On-Demand 계산 (API 호출용 메인 함수)
@@ -683,12 +721,32 @@ def calculate_evaal_ondemand(
     start_time = datetime.now()
 
     try:
+        # Time Scope 및 Year 파싱
+        time_scope = 'yearly'
+        int_year = 2030
+
+        if isinstance(target_year, str) and target_year.endswith('s'):
+            try:
+                int_year = int(target_year.replace('s', ''))
+                time_scope = 'decadal'
+            except ValueError:
+                logger.warning(f"Invalid target_year string: {target_year}. Defaulting to 2030 yearly.")
+                int_year = 2030
+        else:
+            int_year = int(target_year)
+
+        # Decadal 분석 시 연도 보정 (예: 2025 -> 2020)
+        if time_scope == 'decadal':
+            int_year = (int_year // 10) * 10
+            if int_year < 2020:
+                int_year = 2020
+
         # 기본값 설정
         if risk_types is None:
             risk_types = [
-                'extreme_heat', 'extreme_cold', 'wildfire', 'drought',
-                'water_stress', 'sea_level_rise', 'river_flood',
-                'urban_flood', 'typhoon'
+                'extreme_heat', 'extreme_cold', 'drought',
+                'river_flood', 'urban_flood', 'sea_level_rise',
+                'typhoon', 'wildfire', 'water_stress'
             ]
 
         logger.info(
@@ -705,6 +763,20 @@ def calculate_evaal_ondemand(
             'integrated_risk': {}
         }
 
+        # Decadal 분석 시 10년치 기후 데이터 조회
+        long_term_data = None
+        if time_scope == 'decadal':
+            try:
+                from ..database.connection_long import DatabaseConnectionLong
+                decade = int_year  # 이미 보정된 값 (2020, 2030 등)
+                long_term_data = DatabaseConnectionLong.fetch_climate_data_by_decade(
+                    latitude, longitude, decade, scenario.lower()
+                )
+                logger.info(f"Loaded decadal climate data for {decade}s: {len(long_term_data)} records")
+            except Exception as e:
+                logger.error(f"Failed to fetch decadal climate data for {int_year}: {e}")
+                long_term_data = {}
+
         # 리스크별 계산
         for risk_type in risk_types:
             logger.debug(f"Calculating {risk_type}...")
@@ -716,12 +788,76 @@ def calculate_evaal_ondemand(
             results['hazard'][risk_type] = h_result
             results['probability'][risk_type] = p_result
 
-            # Step 2: E 계산
-            e_result = calculate_exposure(latitude, longitude, scenario, target_year, risk_type)
-            results['exposure'][risk_type] = e_result
+            # Step 2: E, V 계산
+            if time_scope == 'decadal':
+                # Decadal 분석: 10년치 E, V 계산 후 평균
+                # 2020s → 2021~2029년 (9년)
+                # 2030s → 2030~2039년 (10년)
+                start_year = int_year + (1 if int_year == 2020 else 0)
+                end_year = int_year + 9
 
-            # Step 3: V 계산
-            v_result = calculate_vulnerability(latitude, longitude, risk_type, e_result)
+                # 2050년 초과 시 범위 조정
+                end_year = min(end_year, 2050)
+
+                logger.info(f"Decadal E, V calculation for {risk_type}: {start_year}-{end_year}")
+
+                e_scores = []
+                v_scores = []
+
+                for year in range(start_year, end_year + 1):
+                    # 각 연도별 E 계산 (long_term_data 사용)
+                    if long_term_data:
+                        base_info = {
+                            'latitude': latitude,
+                            'longitude': longitude,
+                            'scenario': scenario,
+                            'target_year': year,
+                            'time_scope': 'yearly',  # 연도별 계산
+                            'building_data': None
+                        }
+                        pre_collected_data = LongTermDataMapper.map_data(
+                            risk_type, long_term_data, base_info
+                        )
+                    else:
+                        pre_collected_data = None
+
+                    e_result_yearly = calculate_exposure(
+                        latitude, longitude, scenario, year, risk_type,
+                        pre_collected_data=pre_collected_data
+                    )
+                    e_scores.append(e_result_yearly.get('exposure_score', 0.0))
+
+                    # 각 연도별 V 계산
+                    v_result_yearly = calculate_vulnerability(latitude, longitude, risk_type, e_result_yearly)
+                    v_scores.append(v_result_yearly.get('vulnerability_score', 50.0))
+
+                # 평균 계산
+                avg_e_score = sum(e_scores) / len(e_scores) if e_scores else 0.0
+                avg_v_score = sum(v_scores) / len(v_scores) if v_scores else 50.0
+
+                e_result = {
+                    'exposure_score': avg_e_score,
+                    'exposure_level': _classify_score(avg_e_score)
+                }
+                v_result = {
+                    'vulnerability_score': avg_v_score,
+                    'vulnerability_level': _classify_score(avg_v_score)
+                }
+
+                logger.info(f"{risk_type} decadal avg: E={avg_e_score:.2f}, V={avg_v_score:.2f}")
+
+            else:
+                # Yearly 분석: 단년도 계산
+                year_for_ev_calculation = min(int_year, 2050)
+
+                # LongTermDataMapper는 yearly에서는 사용하지 않음
+                e_result = calculate_exposure(
+                    latitude, longitude, scenario, year_for_ev_calculation, risk_type,
+                    pre_collected_data=None
+                )
+                v_result = calculate_vulnerability(latitude, longitude, risk_type, e_result)
+
+            results['exposure'][risk_type] = e_result
             results['vulnerability'][risk_type] = v_result
 
             # Step 4: AAL 계산
@@ -743,9 +879,20 @@ def calculate_evaal_ondemand(
         save_summary = None
         if save_to_db:
             logger.info("Saving results to DB...")
+
+            # target_year를 원본 형식으로 변환 (DB는 varchar이므로 "2020s" 형식 지원)
+            # yearly: target_year=2030 → "2030"
+            # decadal: target_year="2020s" → "2020s" (원본 유지)
+            if time_scope == 'decadal':
+                db_target_year = f"{int_year}s"  # 2020 → "2020s"
+            else:
+                db_target_year = str(target_year) if isinstance(target_year, int) else target_year
+
             save_summary = _save_results_to_db(
                 latitude, longitude, risk_types, results,
-                target_year=target_year, scenario=scenario
+                target_year=db_target_year,  # "2020s" 또는 "2030" 형식
+                scenario=scenario,
+                site_id=site_id
             )
             logger.info(f"DB save completed: {save_summary}")
 
@@ -755,7 +902,8 @@ def calculate_evaal_ondemand(
             'latitude': latitude,
             'longitude': longitude,
             'scenario': scenario,
-            'target_year': target_year,
+            'target_year': target_year,  # 원본 형식 반환 ("2020s" 또는 2030)
+            'time_scope': time_scope,
             'calculation_time': (end_time - start_time).total_seconds(),
             'calculated_at': end_time.isoformat(),
             'total_risks_processed': len(risk_types),
@@ -790,6 +938,112 @@ def calculate_evaal_ondemand(
             'error': str(e),
             'latitude': latitude,
             'longitude': longitude,
+            'scenario': scenario,
+            'target_year': target_year
+        }
+
+
+# ========== 후보지 추천 (Relocation) ==========
+def recommend_locations_ondemand(
+    candidate_grids: List[Dict[str, float]],
+    building_info: Optional[Dict[str, Any]] = None,
+    asset_info: Optional[Dict[str, Any]] = None,
+    scenario: str = 'SSP245',
+    target_year: int = 2040,
+    max_candidates: int = 3
+) -> Dict[str, Any]:
+    """
+    사업장 이전 후보지 추천 (On-Demand)
+
+    Args:
+        candidate_grids: 후보 격자 리스트 [{'latitude': ..., 'longitude': ...}, ...]
+        building_info: 건물 정보 (None이면 기본값 사용)
+        asset_info: 자산 정보 (선택)
+        scenario: SSP 시나리오
+        target_year: 목표 연도
+        max_candidates: 추천 개수
+
+    Returns:
+        추천 결과 딕셔너리
+    """
+    try:
+        # 건물 정보가 없으면 기본값 사용
+        if not building_info:
+             building_info = _get_default_building_info()
+
+        recommender = RelocationRecommender(scenario=scenario, target_year=target_year)
+        
+        result = recommender.recommend_locations(
+            candidate_grids=candidate_grids,
+            building_info=building_info,
+            asset_info=asset_info,
+            max_candidates=max_candidates
+        )
+        
+        return {
+            'status': 'success',
+            'scenario': scenario,
+            'target_year': target_year,
+            'recommendation_result': result
+        }
+        
+    except Exception as e:
+        logger.error(f"Location recommendation failed: {e}", exc_info=True)
+        return {
+            'status': 'error',
+            'error': str(e),
+            'scenario': scenario,
+            'target_year': target_year
+        }
+
+
+def compare_current_and_candidates_ondemand(
+    current_site: Dict[str, float], # {'latitude': ..., 'longitude': ...}
+    recommended_candidates_result: Dict[str, Any], # The 'recommendation_result' from recommend_locations_ondemand
+    building_info: Optional[Dict[str, Any]] = None,
+    asset_info: Optional[Dict[str, Any]] = None,
+    scenario: str = 'SSP245',
+    target_year: int = 2040
+) -> Dict[str, Any]:
+    """
+    현재 사업장과 추천 후보지들 간의 리스크를 비교 (On-Demand)
+
+    Args:
+        current_site: 현재 사업장 정보 {'latitude': ..., 'longitude': ...}
+        recommended_candidates_result: recommend_locations_ondemand의 'recommendation_result' 필드 값
+        building_info: 건물 정보 (None이면 기본값 사용)
+        asset_info: 자산 정보 (선택)
+        scenario: SSP 시나리오
+        target_year: 목표 연도
+
+    Returns:
+        비교 결과 딕셔너리
+    """
+    try:
+        if not building_info:
+             building_info = _get_default_building_info()
+
+        recommender = RelocationRecommender(scenario=scenario, target_year=target_year)
+        
+        comparison_result = recommender.compare_current_and_candidates(
+            current_site=current_site,
+            candidate_result=recommended_candidates_result,
+            building_info=building_info,
+            asset_info=asset_info
+        )
+        
+        return {
+            'status': 'success',
+            'scenario': scenario,
+            'target_year': target_year,
+            'comparison_result': comparison_result
+        }
+        
+    except Exception as e:
+        logger.error(f"Comparison between current site and candidates failed: {e}", exc_info=True)
+        return {
+            'status': 'error',
+            'error': str(e),
             'scenario': scenario,
             'target_year': target_year
         }

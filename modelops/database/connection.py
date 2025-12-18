@@ -1,15 +1,60 @@
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 import uuid
 import json
+import logging
 from datetime import datetime
 from ..config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseConnection:
     """PostgreSQL 데이터베이스 연결 관리"""
+
+    # Connection Pool (스레드 안전)
+    _connection_pool = None
+    _pool_lock = None
+
+    @classmethod
+    def _init_pool(cls):
+        """Connection Pool 초기화 (Lazy Initialization)"""
+        import threading
+
+        if cls._pool_lock is None:
+            cls._pool_lock = threading.Lock()
+
+        with cls._pool_lock:
+            if cls._connection_pool is None:
+                try:
+                    cls._connection_pool = pool.ThreadedConnectionPool(
+                        minconn=2,  # 최소 연결 수
+                        maxconn=20,  # 최대 연결 수 (MAX_WORKERS=8 * 2 여유)
+                        host=settings.database_host,
+                        port=settings.database_port,
+                        dbname=settings.database_name,
+                        user=settings.database_user,
+                        password=settings.database_password
+                    )
+
+                    # Connection Pool 연결 검증 (초기화 후 바로 연결 테스트)
+                    test_conn = cls._connection_pool.getconn()
+                    try:
+                        with test_conn.cursor() as cursor:
+                            cursor.execute("SELECT 1")
+                        cls._connection_pool.putconn(test_conn)
+                        logger.info("Database connection pool initialized and verified (minconn=2, maxconn=20)")
+                    except Exception as e:
+                        cls._connection_pool.putconn(test_conn)
+                        raise Exception(f"Connection pool verification failed: {e}")
+
+                except Exception as e:
+                    logger.error(f"Failed to initialize connection pool: {e}")
+                    cls._connection_pool = None  # 실패 시 None으로 재설정
+                    raise
 
     @staticmethod
     def get_connection_string() -> str:
@@ -22,26 +67,33 @@ class DatabaseConnection:
             f"password={settings.database_password}"
         )
 
-    @staticmethod
+    @classmethod
     @contextmanager
-    def get_connection():
-        """데이터베이스 연결 컨텍스트 매니저"""
-        conn = psycopg2.connect(
-            DatabaseConnection.get_connection_string(),
-            cursor_factory=RealDictCursor
-        )
+    def get_connection(cls):
+        """데이터베이스 연결 컨텍스트 매니저 (Connection Pool 사용)"""
+        # Pool 초기화 (처음 호출 시에만)
+        if cls._connection_pool is None:
+            cls._init_pool()
+
+        conn = None
         try:
+            # Pool에서 연결 가져오기
+            conn = cls._connection_pool.getconn()
+            conn.cursor_factory = RealDictCursor
             yield conn
             conn.commit()
         except Exception as e:
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise e
         finally:
-            conn.close()
+            # Pool에 연결 반환
+            if conn:
+                cls._connection_pool.putconn(conn)
 
     @staticmethod
     def fetch_grid_coordinates() -> List[Dict[str, float]]:
-        """모든 격자 좌표 조회"""
+        """모든 격자 좌표 조회 (Decimal -> float 변환)"""
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -49,14 +101,15 @@ class DatabaseConnection:
                 FROM climate_data
                 ORDER BY latitude, longitude
             """)
-            return [dict(row) for row in cursor.fetchall()]
+            return [{'latitude': float(row['latitude']), 'longitude': float(row['longitude'])}
+                    for row in cursor.fetchall()]
 
     def fetch_all_grid_points(self) -> List[tuple]:
         """
         모든 격자점 좌표 조회 (배치 처리용)
 
         Returns:
-            [(latitude, longitude), ...] 튜플 리스트
+            [(latitude, longitude), ...] 튜플 리스트 (float 타입)
         """
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
@@ -68,7 +121,7 @@ class DatabaseConnection:
             """)
             rows = cursor.fetchall()
             if rows:
-                return [(row['latitude'], row['longitude']) for row in rows]
+                return [(float(row['latitude']), float(row['longitude'])) for row in rows]
 
             # location_grid가 비어있으면 기후 데이터 테이블에서 조회
             cursor.execute("""
@@ -78,7 +131,7 @@ class DatabaseConnection:
                 LIMIT 100
             """)
             rows = cursor.fetchall()
-            return [(row['latitude'], row['longitude']) for row in rows]
+            return [(float(row['latitude']), float(row['longitude'])) for row in rows]
 
     @staticmethod
     def fetch_climate_data(latitude: float, longitude: float, risk_type: str = None,
@@ -426,7 +479,7 @@ class DatabaseConnection:
     @staticmethod
     def fetch_building_info(latitude: float, longitude: float) -> Dict[str, Any]:
         """
-        건물 정보 조회 (격자 좌표에서 가장 가까운 건물 찾기)
+        건물 정보 조회 (building_aggregate_cache 테이블 사용)
 
         Args:
             latitude: 격자 위도
@@ -435,30 +488,187 @@ class DatabaseConnection:
         Returns:
             건물 정보 딕셔너리 (없으면 빈 딕셔너리)
         """
-        with DatabaseConnection.get_connection() as conn:
-            cursor = conn.cursor()
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
 
-            # 격자 좌표 기준으로 가장 가까운 건물 찾기
-            cursor.execute("""
-                SELECT
-                    EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM use_apr_day) as building_age,
-                    strct_nm as structure,
-                    main_purp_cd_nm as main_purpose,
-                    ugrnd_flr_cnt as floors_below,
-                    grnd_flr_cnt as floors_above,
-                    tot_area as total_area,
-                    arch_area
-                FROM api_buildings
-                WHERE location IS NOT NULL
-                ORDER BY ST_Distance(
-                    location::geography,
-                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                )
-                LIMIT 1
-            """, (longitude, latitude))
+                # VWorld 역지오코딩으로 좌표 → 법정동코드 변환
+                cursor.execute("""
+                    SELECT sigungu_cd, bjdong_cd, bun, ji
+                    FROM api_vworld_geocode
+                    WHERE ST_DWithin(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                        1000
+                    )
+                    ORDER BY ST_Distance(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                    )
+                    LIMIT 1
+                """, (longitude, latitude, longitude, latitude))
 
-            result = cursor.fetchone()
-            return dict(result) if result else {}
+                geocode_result = cursor.fetchone()
+
+                if not geocode_result:
+                    return {}
+
+                sigungu_cd = geocode_result['sigungu_cd']
+                bjdong_cd = geocode_result['bjdong_cd']
+                bun = geocode_result['bun']
+                ji = geocode_result['ji']
+
+                # building_aggregate_cache에서 건물 집계 정보 조회
+                cursor.execute("""
+                    SELECT
+                        oldest_building_age_years as building_age,
+                        structure_types,
+                        purpose_types,
+                        max_underground_floors as floors_below,
+                        max_ground_floors as floors_above,
+                        total_floor_area_sqm as total_area,
+                        total_building_area_sqm as arch_area
+                    FROM building_aggregate_cache
+                    WHERE sigungu_cd = %s AND bjdong_cd = %s AND bun = %s AND ji = %s
+                    LIMIT 1
+                """, (sigungu_cd, bjdong_cd, bun, ji))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    return {}
+
+                # JSONB 배열에서 첫 번째 요소 추출
+                structure_types = result.get('structure_types', [])
+                purpose_types = result.get('purpose_types', [])
+
+                return {
+                    'building_age': result.get('building_age'),
+                    'structure': structure_types[0] if structure_types else None,
+                    'main_purpose': purpose_types[0] if purpose_types else None,
+                    'floors_below': result.get('floors_below'),
+                    'floors_above': result.get('floors_above'),
+                    'total_area': result.get('total_area'),
+                    'arch_area': result.get('arch_area')
+                }
+        except Exception as e:
+            logger.error(f"Failed to fetch building info: {e}")
+            return {}
+
+    @staticmethod
+    def fetch_building_data_for_vulnerability(latitude: float, longitude: float) -> Optional[Dict[str, Any]]:
+        """
+        Vulnerability 계산용 건물 데이터 조회 (building_aggregate_cache 테이블 사용)
+
+        Args:
+            latitude: 위도 (WGS84)
+            longitude: 경도 (WGS84)
+
+        Returns:
+            {
+                'building_age': int,
+                'ground_floors': int,
+                'floors_below': int,
+                'has_piloti': bool,
+                'structure_type': str,
+                'total_area_m2': float,
+                'main_purpose': str,
+                'has_seismic_design': bool,
+                'elevation_m': float,
+                'flood_capacity': float,
+                'data_source': str
+            } 또는 None
+        """
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # VWorld 역지오코딩으로 좌표 → 법정동코드 변환
+                cursor.execute("""
+                    SELECT sigungu_cd, bjdong_cd, bun, ji
+                    FROM api_vworld_geocode
+                    WHERE ST_DWithin(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                        1000
+                    )
+                    ORDER BY ST_Distance(
+                        location::geography,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                    )
+                    LIMIT 1
+                """, (longitude, latitude, longitude, latitude))
+
+                geocode_result = cursor.fetchone()
+
+                if not geocode_result:
+                    logger.warning(f"No geocode found for ({latitude}, {longitude})")
+                    return None
+
+                sigungu_cd = geocode_result['sigungu_cd']
+                bjdong_cd = geocode_result['bjdong_cd']
+                bun = geocode_result['bun']
+                ji = geocode_result['ji']
+
+                # building_aggregate_cache에서 건물 집계 정보 조회
+                cursor.execute("""
+                    SELECT
+                        oldest_building_age_years as building_age,
+                        max_ground_floors as ground_floors,
+                        max_underground_floors as floors_below,
+                        structure_types,
+                        purpose_types,
+                        total_floor_area_sqm as total_area_m2,
+                        buildings_with_seismic,
+                        buildings_without_seismic,
+                        building_count
+                    FROM building_aggregate_cache
+                    WHERE sigungu_cd = %s AND bjdong_cd = %s AND bun = %s AND ji = %s
+                    LIMIT 1
+                """, (sigungu_cd, bjdong_cd, bun, ji))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    logger.warning(f"No building data for ({sigungu_cd}, {bjdong_cd}, {bun}, {ji})")
+                    return None
+
+                # JSONB 배열에서 첫 번째 요소 추출
+                structure_types = result.get('structure_types', [])
+                purpose_types = result.get('purpose_types', [])
+                structure_type = structure_types[0] if structure_types else 'RC'
+                main_purpose = purpose_types[0] if purpose_types else 'residential'
+
+                # 필로티 여부 추정 (1층이 있고 지하층이 없는 경우)
+                ground_floors = result.get('ground_floors', 3)
+                floors_below = result.get('floors_below', 0)
+                has_piloti = ground_floors >= 1 and floors_below == 0
+
+                # 내진설계 여부 추정 (건물 수 기반)
+                with_seismic = result.get('buildings_with_seismic', 0)
+                without_seismic = result.get('buildings_without_seismic', 0)
+                total_buildings = with_seismic + without_seismic
+                has_seismic_design = with_seismic > without_seismic if total_buildings > 0 else False
+
+                building_age = result.get('building_age', 30)
+
+                return {
+                    'building_age': int(building_age) if building_age else 30,
+                    'ground_floors': int(ground_floors) if ground_floors else 3,
+                    'floors_below': int(floors_below) if floors_below else 0,
+                    'has_piloti': has_piloti,
+                    'structure_type': structure_type,
+                    'total_area_m2': float(result.get('total_area_m2', 500.0)) if result.get('total_area_m2') else 500.0,
+                    'main_purpose': main_purpose,
+                    'has_seismic_design': has_seismic_design,
+                    'elevation_m': 50.0,  # TODO: DEM 데이터에서 조회
+                    'flood_capacity': 0.0,  # TODO: 별도 계산 필요
+                    'data_source': 'building_aggregate_cache'
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to fetch building data for vulnerability: {e}")
+            return None
 
     @staticmethod
     def fetch_base_aals(latitude: float, longitude: float) -> Dict[str, float]:
@@ -507,6 +717,7 @@ class DatabaseConnection:
 
         Args:
             results: 저장할 결과 리스트
+                - site_id: 사업장 ID (선택, 없으면 좌표 기반 UUID 생성)
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
@@ -521,20 +732,20 @@ class DatabaseConnection:
                 target_year = str(result.get('target_year', 2050))
                 score = result.get('exposure_score', 0.0)
 
-                # site_id 조회/생성
-                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+                # site_id: 전달받은 값 사용, 없으면 좌표 기반 UUID 생성
+                site_id = result.get('site_id') or DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
 
                 # 기존 데이터 삭제 후 삽입 (site_id, risk_type, target_year 기준)
                 cursor.execute("""
                     DELETE FROM exposure_results
-                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
-                """, (site_id, risk_type, target_year))
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s::text
+                """, (site_id, risk_type, str(target_year)))
 
                 cursor.execute("""
                     INSERT INTO exposure_results
                     (site_id, latitude, longitude, risk_type, target_year, exposure_score)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (site_id, lat, lon, risk_type, target_year, score))
+                    VALUES (%s, %s, %s, %s, %s::text, %s)
+                """, (site_id, lat, lon, risk_type, str(target_year), score))
 
     @staticmethod
     def save_vulnerability_results(results: List[Dict[str, Any]]) -> None:
@@ -543,6 +754,7 @@ class DatabaseConnection:
 
         Args:
             results: 저장할 결과 리스트
+                - site_id: 사업장 ID (선택, 없으면 좌표 기반 UUID 생성)
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
@@ -557,20 +769,20 @@ class DatabaseConnection:
                 target_year = str(result.get('target_year', 2050))
                 score = result.get('vulnerability_score', 0.0)
 
-                # site_id 조회/생성
-                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+                # site_id: 전달받은 값 사용, 없으면 좌표 기반 UUID 생성
+                site_id = result.get('site_id') or DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
 
                 # 기존 데이터 삭제 후 삽입
                 cursor.execute("""
                     DELETE FROM vulnerability_results
-                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
-                """, (site_id, risk_type, target_year))
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s::text
+                """, (site_id, risk_type, str(target_year)))
 
                 cursor.execute("""
                     INSERT INTO vulnerability_results
                     (site_id, latitude, longitude, risk_type, target_year, vulnerability_score)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (site_id, lat, lon, risk_type, target_year, score))
+                    VALUES (%s, %s, %s, %s, %s::text, %s)
+                """, (site_id, lat, lon, risk_type, str(target_year), score))
 
     @staticmethod
     def save_aal_scaled_results(results: List[Dict[str, Any]]) -> None:
@@ -579,6 +791,7 @@ class DatabaseConnection:
 
         Args:
             results: 저장할 결과 리스트
+                - site_id: 사업장 ID (선택, 없으면 좌표 기반 UUID 생성)
                 - latitude: 위도
                 - longitude: 경도
                 - risk_type: 리스크 타입
@@ -596,20 +809,20 @@ class DatabaseConnection:
                 final_aal = result.get('final_aal', 0.0)
                 aal_column = f"{scenario}_final_aal"
 
-                # site_id 조회/생성
-                site_id = DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
+                # site_id: 전달받은 값 사용, 없으면 좌표 기반 UUID 생성
+                site_id = result.get('site_id') or DatabaseConnection._get_or_create_site_id(cursor, lat, lon)
 
                 # 기존 데이터 삭제 후 삽입
                 cursor.execute("""
                     DELETE FROM aal_scaled_results
-                    WHERE site_id = %s AND risk_type = %s AND target_year = %s
-                """, (site_id, risk_type, target_year))
+                    WHERE site_id = %s AND risk_type = %s AND target_year = %s::text
+                """, (site_id, risk_type, str(target_year)))
 
                 cursor.execute(f"""
                     INSERT INTO aal_scaled_results
                     (site_id, latitude, longitude, risk_type, target_year, {aal_column})
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (site_id, lat, lon, risk_type, target_year, final_aal))
+                    VALUES (%s, %s, %s, %s, %s::text, %s)
+                """, (site_id, lat, lon, risk_type, str(target_year), final_aal))
 
     # ==================== Batch Jobs 관리 메서드 ====================
 
@@ -827,7 +1040,7 @@ class DatabaseConnection:
                 params.append(risk_types)
 
             if target_year:
-                query += " AND target_year = %s"
+                query += " AND target_year = %s::text"
                 params.append(str(target_year))
 
             query += " ORDER BY risk_type, target_year"
@@ -863,7 +1076,7 @@ class DatabaseConnection:
                                  target_year: int = None,
                                  scenario: str = None) -> Dict[str, Dict[str, Any]]:
         """
-        P(H) 조회
+        P(H) 조회 (최근접 격자 기반)
 
         테이블 스키마:
             - latitude, longitude, risk_type, target_year (PK)
@@ -886,13 +1099,16 @@ class DatabaseConnection:
         with DatabaseConnection.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 기본 쿼리 - 시나리오별 컬럼 조회
+            # 최근접 격자 조회 쿼리 (거리 제한 없음)
+            # DISTINCT ON을 사용하여 risk_type, target_year 조합당 가장 가까운 격자 1개만 선택
             query = """
-                SELECT risk_type, target_year,
+                SELECT DISTINCT ON (risk_type, target_year)
+                       risk_type, target_year,
                        ssp126_aal, ssp245_aal, ssp370_aal, ssp585_aal,
-                       ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs
+                       ssp126_bin_probs, ssp245_bin_probs, ssp370_bin_probs, ssp585_bin_probs,
+                       SQRT(POWER(latitude - %s, 2) + POWER(longitude - %s, 2)) AS distance
                 FROM probability_results
-                WHERE latitude = %s AND longitude = %s
+                WHERE 1=1
             """
             params = [latitude, longitude]
 
@@ -901,10 +1117,11 @@ class DatabaseConnection:
                 params.append(risk_types)
 
             if target_year:
-                query += " AND target_year = %s"
+                query += " AND target_year = %s::text"
                 params.append(str(target_year))
 
-            query += " ORDER BY risk_type, target_year"
+            # risk_type, target_year별로 거리순 정렬하여 가장 가까운 것 선택
+            query += " ORDER BY risk_type, target_year, distance"
 
             cursor.execute(query, params)
 
@@ -992,3 +1209,111 @@ class DatabaseConnection:
                 'population_change_2020_2050': 0,
                 'population_change_rate_percent': 0.0
             }
+
+    @staticmethod
+    def save_candidate_site(
+        latitude: float,
+        longitude: float,
+        aal: float = None,
+        aal_by_risk: Dict[str, float] = None,
+        risk_score: int = None,
+        risks: Dict[str, Any] = None,
+        reference_site_id: str = None
+    ) -> str:
+        """
+        후보지 추천 결과 저장 (E, V, AAL 계산 결과 중심)
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            aal: 연평균 손실 평균 (9개 리스크 평균)
+            aal_by_risk: 리스크별 개별 AAL {risk_type: final_aal}
+            risk_score: 종합 리스크 점수 (0-100)
+            risks: 개별 리스크 점수 (JSON)
+            reference_site_id: 참조 사업장 ID (요청에서 전달된 site_id)
+
+        Returns:
+            생성된 후보지 ID (UUID string)
+        """
+        candidate_id = str(uuid.uuid4())
+        # name 필드는 NOT NULL이므로 임시 값을 사용합니다.
+        # 필요하다면 이 로직을 수정하여 실제 이름을 제공해야 합니다.
+        generated_name = f"Candidate Site ({latitude:.4f}, {longitude:.4f})"
+
+        with DatabaseConnection.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO candidate_sites (
+                    id, name, latitude, longitude,
+                    aal, aal_by_risk, risk_score, risks, site_id,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s::jsonb, %s, %s::jsonb, %s,
+                    NOW(), NOW()
+                )
+                RETURNING id
+            """, (
+                candidate_id, generated_name, latitude, longitude,
+                aal, json.dumps(aal_by_risk) if aal_by_risk else None,
+                risk_score, json.dumps(risks) if risks else None,
+                reference_site_id
+            ))
+
+            return candidate_id
+
+    @staticmethod
+    def check_candidate_exists(
+        latitude: float,
+        longitude: float,
+        scenario: str,
+        target_year: int,
+        tolerance: float = 0.0001
+    ) -> bool:
+        """
+        후보지가 이미 평가되었는지 확인
+
+        Args:
+            latitude: 위도
+            longitude: 경도
+            scenario: SSP 시나리오
+            target_year: 목표 연도
+            tolerance: 좌표 허용 오차 (기본 0.0001도 ≈ 11m)
+
+        Returns:
+            True if exists with complete data, False otherwise
+        """
+        try:
+            with DatabaseConnection.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 1. candidate_sites 테이블에서 좌표 매칭
+                cursor.execute("""
+                    SELECT id
+                    FROM candidate_sites
+                    WHERE ABS(latitude - %s) < %s
+                      AND ABS(longitude - %s) < %s
+                """, (latitude, tolerance, longitude, tolerance))
+
+                if not cursor.fetchone():
+                    return False
+
+                # 2. site_id 생성 (deterministic UUID)
+                site_id = DatabaseConnection._get_or_create_site_id(cursor, latitude, longitude)
+
+                # 3. E, V, AAL 데이터 완전성 확인 (9개 리스크 타입 모두 존재해야 함)
+                cursor.execute("""
+                    SELECT
+                        (SELECT COUNT(DISTINCT risk_type) FROM exposure_results
+                         WHERE site_id = %s AND target_year = %s::text) as e_count,
+                        (SELECT COUNT(DISTINCT risk_type) FROM vulnerability_results
+                         WHERE site_id = %s AND target_year = %s::text) as v_count,
+                        (SELECT COUNT(DISTINCT risk_type) FROM aal_scaled_results
+                         WHERE site_id = %s AND target_year = %s::text) as aal_count
+                """, (site_id, str(target_year), site_id, str(target_year), site_id, str(target_year)))
+
+                result = cursor.fetchone()
+                return result['e_count'] == 9 and result['v_count'] == 9 and result['aal_count'] == 9
+        except Exception as e:
+            logger.warning(f"중복 체크 실패 ({latitude}, {longitude}): {e}")
+            return False  # 오류 시 중복 아님으로 간주하여 계산 진행

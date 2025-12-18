@@ -7,10 +7,14 @@ FastAPI 메인 앱
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from modelops.api.routes import health, site_assessment
-from modelops.batch.probability_scheduler import ProbabilityScheduler
-from modelops.batch.hazard_scheduler import HazardScheduler
+from modelops.api.routes import health, site_assessment, batch_trigger
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from modelops.batch.probability_timeseries_batch import run_probability_batch
+from modelops.batch.hazard_timeseries_batch import run_hazard_batch
 import logging
+import sys
+from datetime import datetime
 
 # 로깅 설정
 logging.basicConfig(
@@ -20,9 +24,55 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def probability_batch_job():
+    """
+    P(H) 배치 작업 실행 함수
+    """
+    logger.info("=" * 80)
+    logger.info("P(H) BATCH JOB STARTED")
+    logger.info(f"Execution Time: {datetime.now().isoformat()}")
+    logger.info("=" * 80)
+
+    try:
+        run_probability_batch(
+            grid_points=None,  # 전체 격자점
+            scenarios=None,    # 전체 시나리오
+            years=None,        # 2021-2100
+            risk_types=None,   # 전체 리스크
+            batch_size=100,
+            max_workers=4
+        )
+        logger.info("P(H) BATCH JOB COMPLETED SUCCESSFULLY")
+    except Exception as e:
+        logger.error(f"P(H) BATCH JOB FAILED: {e}", exc_info=True)
+
+
+def hazard_batch_job():
+    """
+    H 배치 작업 실행 함수
+    """
+    logger.info("=" * 80)
+    logger.info("HAZARD SCORE BATCH JOB STARTED")
+    logger.info(f"Execution Time: {datetime.now().isoformat()}")
+    logger.info("=" * 80)
+
+    try:
+        run_hazard_batch(
+            grid_points=None,  # 전체 격자점
+            scenarios=None,    # 전체 시나리오
+            years=None,        # 2021-2100
+            risk_types=None,   # 전체 리스크
+            batch_size=100,
+            max_workers=4
+        )
+        logger.info("HAZARD SCORE BATCH JOB COMPLETED SUCCESSFULLY")
+    except Exception as e:
+        logger.error(f"HAZARD SCORE BATCH JOB FAILED: {e}", exc_info=True)
+
+
 # 스케줄러 인스턴스
-probability_scheduler = None
-hazard_scheduler = None
+scheduler = None
 
 # FastAPI 앱 생성
 app = FastAPI(
@@ -59,8 +109,19 @@ app = FastAPI(
 
     ## API Endpoints
     ### Site Assessment (사업장 리스크 평가)
-    - POST `/api/v1/site-assessment/calculate`: 사업장 리스크 계산
-    - POST `/api/v1/site-assessment/recommend-locations`: 이전 후보지 추천
+    - POST `/api/site-assessment/calculate`: 사업장 리스크 계산
+    - POST `/api/site-assessment/recommend-locations`: 이전 후보지 추천
+    - GET `/api/site-assessment/task-status/{task_id}`: 작업 상태 조회
+    - GET `/api/site-assessment/tasks`: 모든 작업 조회
+    - DELETE `/api/site-assessment/task/{task_id}`: 작업 삭제
+
+    ### Batch Trigger (배치 작업 관리)
+    - POST `/api/batch-trigger/trigger-custom-schedule`: 커스텀 시간 배치 예약
+    - POST `/api/batch-trigger/run-probability-batch`: P(H) 배치 즉시 실행
+    - POST `/api/batch-trigger/run-hazard-batch`: H 배치 즉시 실행
+    - POST `/api/batch-trigger/run-candidate-locations-batch`: 13개 후보지 배치 계산
+    - POST `/api/batch-trigger/run-regional-locations-batch`: 250개 시군구 배치 계산
+    - GET `/api/batch-trigger/scheduled-jobs`: 스케줄된 작업 조회
 
     ### Health Check
     - GET `/health`: 서버 상태 확인
@@ -83,12 +144,13 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(site_assessment.router)
 app.include_router(health.router)
+app.include_router(batch_trigger.router)
 
 
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 실행"""
-    global probability_scheduler, hazard_scheduler
+    global scheduler
 
     logger.info("=" * 60)
     logger.info("ModelOps Site Assessment API 시작")
@@ -97,33 +159,57 @@ async def startup_event():
     logger.info("Health Check: http://localhost:8001/health")
     logger.info("=" * 60)
 
-    # 스케줄러 시작
+    # BackgroundScheduler 시작
     try:
-        probability_scheduler = ProbabilityScheduler()
-        probability_scheduler.start()
-        logger.info("✓ Probability 배치 스케줄러 시작")
+        scheduler = BackgroundScheduler()
 
-        hazard_scheduler = HazardScheduler()
-        hazard_scheduler.start()
-        logger.info("✓ Hazard 배치 스케줄러 시작")
+        # P(H) 배치 스케줄 등록: 매년 1월 1일 02:00
+        scheduler.add_job(
+            probability_batch_job,
+            trigger=CronTrigger(
+                month=1,      # 1월
+                day=1,        # 1일
+                hour=2,       # 02:00
+                minute=0
+            ),
+            id='probability_batch',
+            name='P(H) Timeseries Batch',
+            replace_existing=True
+        )
+
+        # H 배치 스케줄 등록: 매년 1월 1일 04:00
+        scheduler.add_job(
+            hazard_batch_job,
+            trigger=CronTrigger(
+                month=1,      # 1월
+                day=1,        # 1일
+                hour=4,       # 04:00
+                minute=0
+            ),
+            id='hazard_batch',
+            name='Hazard Score Timeseries Batch',
+            replace_existing=True
+        )
+
+        scheduler.start()
+        logger.info("✓ Background 배치 스케줄러 시작 및 작업 등록 완료")
+        logger.info("  - P(H) 배치: 매년 1월 1일 02:00")
+        logger.info("  - H 배치: 매년 1월 1일 04:00")
+
     except Exception as e:
-        logger.error(f"✗ 스케줄러 시작 실패: {e}")
-        logger.warning("스케줄러 없이 API 서버를 계속 실행합니다")
+        logger.error(f"✗ 배치 스케줄러 시작 실패: {e}", exc_info=True)
+        logger.warning("스케줄러 없이 API 서버를 계속 실행합니다.")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """서버 종료 시 실행"""
-    global probability_scheduler, hazard_scheduler
+    global scheduler
 
     # 스케줄러 종료
-    if probability_scheduler:
-        probability_scheduler.stop()
-        logger.info("Probability 배치 스케줄러 종료")
-
-    if hazard_scheduler:
-        hazard_scheduler.stop()
-        logger.info("Hazard 배치 스케줄러 종료")
+    if scheduler:
+        scheduler.shutdown()
+        logger.info("Background 배치 스케줄러 종료")
 
     logger.info("ModelOps Site Assessment API 종료")
 
@@ -151,10 +237,25 @@ async def root():
             "5_aal": "base_aal × F_vuln × (1 - insurance_rate)"
         },
         "endpoints": {
-            "calculate_site_risk": "POST /api/v1/site-assessment/calculate",
-            "recommend_locations": "POST /api/v1/site-assessment/recommend-locations",
-            "health": "GET /health",
-            "health_db": "GET /health/db"
+            "site_assessment": {
+                "calculate": "POST /api/site-assessment/calculate",
+                "recommend_locations": "POST /api/site-assessment/recommend-locations",
+                "task_status": "GET /api/site-assessment/task-status/{task_id}",
+                "tasks": "GET /api/site-assessment/tasks",
+                "delete_task": "DELETE /api/site-assessment/task/{task_id}"
+            },
+            "batch_trigger": {
+                "custom_schedule": "POST /api/batch-trigger/trigger-custom-schedule",
+                "run_probability": "POST /api/batch-trigger/run-probability-batch",
+                "run_hazard": "POST /api/batch-trigger/run-hazard-batch",
+                "run_candidate_locations": "POST /api/batch-trigger/run-candidate-locations-batch",
+                "run_regional_locations": "POST /api/batch-trigger/run-regional-locations-batch",
+                "scheduled_jobs": "GET /api/batch-trigger/scheduled-jobs"
+            },
+            "health": {
+                "check": "GET /health",
+                "database": "GET /health/db"
+            }
         }
     }
 

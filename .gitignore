@@ -23,6 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.whl
 
 # PyInstaller
 *.manifest
@@ -52,6 +53,8 @@ coverage.xml
 
 # Environments
 .env
+.env.local
+.env.*.local
 .venv
 env/
 venv/
@@ -99,12 +102,24 @@ Thumbs.db
 
 # Local configuration
 *.local
-.env.local
-.env.*.local
 
 # Logs
 logs/
 *.log
+
+# Cache
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# Test
+.tox/
+
+# Temporary files
+*.tmp
+*.bak
 
 # uv
 .uv/

@@ -1,14 +1,14 @@
 [project]
 name = "backend-aiops"
 version = "0.1.0"
-description = "AIops workflow for climate risk batch processing - SKALA Physical Risk AI"
+description = "AIops workflow for climate risk batch processing and ESG trends analysis"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "SKALA Physical Risk AI Team"}
 ]
-keywords = ["aiops", "climate-risk", "batch-processing", "physical-risk", "tcfd"]
+keywords = ["aiops", "climate-risk", "batch-processing", "physical-risk", "tcfd", "esg", "trends-analysis"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,13 +25,16 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "websockets>=12.0",
+    "httpx>=0.25.0",
 
     # Database
     "psycopg2-binary>=2.9.9",
+    
     # Configuration Management
     "python-dotenv>=1.0.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
+    
     # Scientific Computing
     "numpy>=1.24.0,<2.0.0",
     "scipy>=1.11.0",
@@ -43,8 +46,26 @@ dependencies = [
     "geopandas>=1.1.1",
     "xmltodict>=1.0.2",
     "shapely>=2.1.2",
+    
     # Progress Bar
     "tqdm>=4.66.0",
+
+    # ESG Trends Agent - LangGraph / LangChain
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
+
+    # ESG Trends Agent - Web Scraping
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+
+    # ESG Trends Agent - Search
+    "tavily-python>=0.7.12",
+    "duckduckgo-search>=7.0.0",
+
+    # ESG Trends Agent - Slack
+    "slack-sdk>=3.27.0",
 ]
 
 [project.optional-dependencies]
@@ -70,6 +91,8 @@ packages = ["modelops"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/modelops",
+    "/src",
+    "/scripts",
     "/main.py",
     "/README.md",
 ]

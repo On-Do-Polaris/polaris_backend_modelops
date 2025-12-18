@@ -49,8 +49,8 @@ jobs:
             CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
             IMAGE="${REGISTRY}/${PROJECT_ID}/${REPO}/${IMAGE_NAME}:latest"
 
-            # 필요시 네트워크 생성
-            docker network create web || true
+            # 필요시 네트워크 생성 (FastAPI와 동일한 네트워크 사용)
+            docker network create polaris-network || true
 
             # GCP Artifact Registry 인증
             echo "1. GCP Artifact Registry 인증 중..."
@@ -75,7 +75,7 @@ jobs:
             echo "4. 새 컨테이너 실행 중... (이름: ${CONTAINER_NAME})"
             docker run -d \
               --name ${CONTAINER_NAME} \
-              --network web \
+              --network polaris-network \
               --restart unless-stopped \
               -p 8001:8001 \
               -e DATABASE_HOST=${{ secrets.DW_HOST }} \

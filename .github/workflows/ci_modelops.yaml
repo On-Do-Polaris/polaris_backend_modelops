@@ -3,19 +3,9 @@ name: CI - ModelOps Build & Push
 on:
   push:
     branches: [develop, main]
-    paths:
-      - 'modelops/**'
-      - 'main.py'
-      - 'pyproject.toml'
-      - 'Dockerfile'
-      - '.github/workflows/ci_modelops.yaml'
   pull_request:
     branches: [main]
-    paths:
-      - 'modelops/**'
-      - 'main.py'
-      - 'pyproject.toml'
-      - 'Dockerfile'
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: polaris-modelops

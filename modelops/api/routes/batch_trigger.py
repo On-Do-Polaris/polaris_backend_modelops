@@ -18,7 +18,36 @@ class CustomScheduleRequest(BaseModel):
     batch_type: str = Field(..., description="배치 타입: 'probability' 또는 'hazard'")
 
 
-@router.post("/trigger-custom-schedule")
+@router.post(
+    "/trigger-custom-schedule",
+    responses={
+        200: {"description": "배치 작업 예약 성공"},
+        400: {
+            "description": "잘못된 배치 타입",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "batch_type must be 'probability' or 'hazard'"}
+                }
+            }
+        },
+        500: {
+            "description": "배치 트리거 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to trigger batch: Internal error"}
+                }
+            }
+        },
+        503: {
+            "description": "스케줄러가 실행되지 않음",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Scheduler is not running"}
+                }
+            }
+        }
+    }
+)
 async def trigger_custom_schedule(request: CustomScheduleRequest):
     """
     배치 작업을 서버 현재 시각 + 1분 후에 실행
@@ -93,7 +122,28 @@ async def trigger_custom_schedule(request: CustomScheduleRequest):
         raise HTTPException(status_code=500, detail=f"Failed to trigger batch: {str(e)}")
 
 
-@router.post("/run-probability-batch")
+@router.post(
+    "/run-probability-batch",
+    responses={
+        200: {"description": "P(H) 배치 작업 예약 성공"},
+        500: {
+            "description": "배치 트리거 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to trigger P(H) batch: Internal error"}
+                }
+            }
+        },
+        503: {
+            "description": "스케줄러가 실행되지 않음",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Scheduler is not running"}
+                }
+            }
+        }
+    }
+)
 async def trigger_probability_batch():
     """
     P(H) 배치 작업을 1초 후에 강제 실행
@@ -147,7 +197,28 @@ async def trigger_probability_batch():
         raise HTTPException(status_code=500, detail=f"Failed to trigger P(H) batch: {str(e)}")
 
 
-@router.post("/run-hazard-batch")
+@router.post(
+    "/run-hazard-batch",
+    responses={
+        200: {"description": "H 배치 작업 예약 성공"},
+        500: {
+            "description": "배치 트리거 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to trigger H batch: Internal error"}
+                }
+            }
+        },
+        503: {
+            "description": "스케줄러가 실행되지 않음",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Scheduler is not running"}
+                }
+            }
+        }
+    }
+)
 async def trigger_hazard_batch():
     """
     H(Hazard Score) 배치 작업을 1초 후에 강제 실행
@@ -201,7 +272,28 @@ async def trigger_hazard_batch():
         raise HTTPException(status_code=500, detail=f"Failed to trigger H batch: {str(e)}")
 
 
-@router.get("/scheduled-jobs")
+@router.get(
+    "/scheduled-jobs",
+    responses={
+        200: {"description": "스케줄된 작업 목록 조회 성공"},
+        500: {
+            "description": "스케줄 작업 조회 실패",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Failed to get scheduled jobs: Internal error"}
+                }
+            }
+        },
+        503: {
+            "description": "스케줄러가 실행되지 않음",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Scheduler is not running"}
+                }
+            }
+        }
+    }
+)
 async def get_scheduled_jobs():
     """
     현재 스케줄러에 등록된 모든 작업 조회

@@ -7,10 +7,10 @@ try:
     class Settings(BaseSettings):
         # Database (Data Warehouse - Primary DB for climate data)
         database_host: str = "localhost"
-        database_port: int = 5555
+        database_port: int = 5556
         database_name: str = "datawarehouse"
         database_user: str = "skala"
-        database_password: str = "skala1234"
+        database_password: str = "skala_test_1234"
 
         # FastAPI Application (콜백 API)
         fastapi_url: str = "http://localhost:8000"
@@ -39,10 +39,10 @@ except ImportError:
     # pydantic_settings가 없으면 간단한 클래스 사용
     class Settings:
         database_host: str = os.getenv("DATABASE_HOST", "localhost")
-        database_port: int = int(os.getenv("DATABASE_PORT", "5555"))
+        database_port: int = int(os.getenv("DATABASE_PORT", "5556"))
         database_name: str = os.getenv("DATABASE_NAME", "datawarehouse")
         database_user: str = os.getenv("DATABASE_USER", "skala")
-        database_password: str = os.getenv("DATABASE_PASSWORD", "skala1234")
+        database_password: str = os.getenv("DATABASE_PASSWORD", "skala_test_1234")
 
         # FastAPI Application (콜백 API)
         fastapi_url: str = os.getenv("FASTAPI_URL", "http://localhost:8000")

@@ -15,6 +15,7 @@ from modelops.batch.hazard_timeseries_batch import run_hazard_batch
 import logging
 import sys
 from datetime import datetime
+from pathlib import Path
 
 # 로깅 설정
 logging.basicConfig(
@@ -69,6 +70,38 @@ def hazard_batch_job():
         logger.info("HAZARD SCORE BATCH JOB COMPLETED SUCCESSFULLY")
     except Exception as e:
         logger.error(f"HAZARD SCORE BATCH JOB FAILED: {e}", exc_info=True)
+
+
+def emergency_messages_batch_job():
+    """
+    재난안전데이터 긴급재난문자 ETL 배치 작업 실행 함수
+    """
+    logger.info("=" * 80)
+    logger.info("EMERGENCY MESSAGES ETL BATCH JOB STARTED")
+    logger.info(f"Execution Time: {datetime.now().isoformat()}")
+    logger.info("=" * 80)
+
+    try:
+        # ETL 스크립트 경로 추가
+        etl_path = Path(__file__).parent / "ETL" / "etl_base" / "api" / "scripts"
+        if str(etl_path) not in sys.path:
+            sys.path.insert(0, str(etl_path))
+
+        # ETL 스크립트 동적 import
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "load_emergency_messages",
+            etl_path / "02_load_emergency_messages.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # 최근 5년 데이터 수집 (sample_limit 없이 전체 수집)
+        module.load_emergency_messages(sample_limit=None, years=5)
+
+        logger.info("EMERGENCY MESSAGES ETL BATCH JOB COMPLETED SUCCESSFULLY")
+    except Exception as e:
+        logger.error(f"EMERGENCY MESSAGES ETL BATCH JOB FAILED: {e}", exc_info=True)
 
 
 # 스케줄러 인스턴스
@@ -191,10 +224,23 @@ async def startup_event():
             replace_existing=True
         )
 
+        # 재난안전데이터 ETL 배치 스케줄 등록: 매일 09:00
+        scheduler.add_job(
+            emergency_messages_batch_job,
+            trigger=CronTrigger(
+                hour=9,       # 09:00
+                minute=0
+            ),
+            id='emergency_messages_etl',
+            name='Emergency Messages ETL Batch',
+            replace_existing=True
+        )
+
         scheduler.start()
         logger.info("✓ Background 배치 스케줄러 시작 및 작업 등록 완료")
         logger.info("  - P(H) 배치: 매년 1월 1일 02:00")
         logger.info("  - H 배치: 매년 1월 1일 04:00")
+        logger.info("  - 재난안전데이터 ETL: 매일 09:00")
 
     except Exception as e:
         logger.error(f"✗ 배치 스케줄러 시작 실패: {e}", exc_info=True)

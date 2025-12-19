@@ -25,6 +25,8 @@
   - [Hazard (H) 계산 파이프라인](#2-hazard-h-계산-파이프라인)
   - [Exposure (E) & Vulnerability (V) 계산](#3-exposure-e--vulnerability-v-계산)
   - [통합 리스크 평가 API](#4-통합-리스크-평가-api)
+  - [사업장 리스크 평가 API](#5-사업장-리스크-평가-api)
+  - [사업장 이전 후보지 추천 API](#6-사업장-이전-후보지-추천-api)
 - [ESG Trends Agent](#esg-trends-agent)
   - [핵심 기능](#esg-agent-핵심-기능)
   - [아키텍처](#esg-agent-아키텍처)
@@ -523,6 +525,141 @@ WS /api/v1/risk-assessment/ws/{request_id}
 
 GET /api/v1/risk-assessment/results/{lat}/{lon}
 → 최종 결과 조회
+```
+
+### 5. 사업장 리스크 평가 API
+
+**목적**: 여러 사업장에 대한 종합 리스크 계산 (E, V, AAL)
+
+**FastAPI 엔드포인트**:
+
+```
+POST /api/site-assessment/calculate
+→ 사업장 리스크 계산 시작 (백그라운드 처리)
+
+GET /api/site-assessment/task-status/{task_id}
+→ 작업 진행률 조회
+
+GET /api/site-assessment/tasks
+→ 모든 작업 상태 조회
+
+DELETE /api/site-assessment/task/{task_id}
+→ 작업 삭제
+```
+
+**처리 흐름**:
+
+```
+API 요청 (N개 사업장)
+↓
+백그라운드 작업 생성 (task_id)
+↓
+병렬 처리 (ThreadPoolExecutor, max_workers=8)
+├─ 사업장 1 → 4개 시나리오 × 80개 연도 (2021-2100) = 320개 계산
+├─ 사업장 2 → 320개 계산
+└─ 사업장 N → 320개 계산
+↓
+각 계산마다 9개 리스크 타입 평가
+├─ H (Hazard) - DB 조회
+├─ E (Exposure) - 건물 정보 기반
+├─ V (Vulnerability) - 건물 구조 기반
+└─ AAL (Annual Average Loss) - P × DR 계산
+↓
+Application DB 저장 (evaal_results 테이블)
+↓
+진행률 실시간 업데이트
+```
+
+**병렬 처리 전략**:
+
+- **최대 워커 수**: 8개
+- **시나리오**: SSP126, SSP245, SSP370, SSP585 (4개)
+- **연도 범위**: 2021-2100 (80년)
+- **리스크 타입**: 9개 (극한 고온, 극한 한파, 가뭄, 하천홍수, 도시홍수, 해수면상승, 태풍, 산불, 수자원 스트레스)
+- **총 계산 수**: `사업장 수 × 4 × 80 × 9`
+
+**실시간 로깅**:
+
+```
+logs/task_[task_id]/
+├── [site_id]_start.log          # 시작 로그
+├── [site_id]_[year]_[scenario].log  # 연도별 완료 로그
+└── [site_id]_summary.log        # 요약 로그
+```
+
+### 6. 사업장 이전 후보지 추천 API
+
+**목적**: 사업장 이전을 위한 최적 후보지 평가 및 추천
+
+**FastAPI 엔드포인트**:
+
+```
+POST /api/site-assessment/recommend-locations
+→ 후보지 추천 작업 시작 (백그라운드 처리)
+
+GET /api/site-assessment/task-status/{task_id}
+→ 작업 진행률 조회
+```
+
+**처리 흐름**:
+
+```
+API 요청
+├─ N개 사업장 정보
+├─ M개 후보지 좌표 (또는 고정 10개 위치 사용)
+├─ 검색 기준 (시나리오, 목표연도)
+└─ 건물/자산 정보
+↓
+Early Callback 체크
+├─ DB에 후보지 데이터 90% 이상 존재?
+│   ├─ YES → 즉시 FastAPI 서버에 콜백 호출
+│   └─ NO → 계산 진행
+↓
+병렬 처리 (ThreadPoolExecutor, max_workers=8)
+├─ 사업장 1 → M개 후보지 평가
+├─ 사업장 2 → M개 후보지 평가
+└─ 사업장 N → M개 후보지 평가
+↓
+각 후보지마다
+├─ 이미 DB에 존재? → 건너뛰기
+├─ E, V, AAL 온디맨드 계산
+├─ 통합 리스크 점수 계산 (H × E × V / 10000)
+└─ candidate_sites 테이블에 저장
+    ├─ latitude, longitude
+    ├─ risk_score (0-100)
+    ├─ total_aal
+    ├─ aal_by_risk (9개 리스크별)
+    └─ risks (9개 리스크별 점수)
+↓
+계산 완료 후 콜백 호출 (Early Callback 미호출 시)
+↓
+FastAPI 서버에 완료 알림
+```
+
+**병렬 처리 전략**:
+
+- **최대 워커 수**: 8개
+- **후보지 수**: 사용자 제공 또는 고정 10개 위치
+- **시나리오**: 단일 (기본 SSP245)
+- **목표연도**: 단일 (기본 2040)
+- **리스크 타입**: 9개
+- **총 계산 수**: `사업장 수 × 후보지 수 × 9`
+
+**Early Callback 최적화**:
+
+- DB에 후보지 데이터가 90% 이상 존재하면 즉시 콜백 호출
+- 불필요한 재계산 방지
+- 프론트엔드 응답 시간 단축
+
+**고정 후보지 위치** (LOCATION_MAP):
+
+```python
+# 10개 고정 후보지 좌표
+[
+  {"lat": 37.5665, "lng": 126.9780},  # 서울
+  {"lat": 35.1796, "lng": 129.0756},  # 부산
+  # ... 총 10개
+]
 ```
 
 ---

@@ -73,6 +73,16 @@ class HazardDataCollector:
             logger.warning(f"BuildingDataFetcher 초기화 실패: {e}")
             self.building_fetcher = None
 
+        # DatabaseManager 초기화 (DB 캐시 조회용)
+        try:
+            from modelops.utils.database import DatabaseManager
+            db_url = f"postgresql://{os.getenv('DATABASE_USER', 'skala')}:{os.getenv('DATABASE_PASSWORD', 'skala_test_1234')}@localhost:{os.getenv('DATABASE_PORT', '5556')}/{os.getenv('DATABASE_NAME', 'datawarehouse')}"
+            self.db_manager = DatabaseManager(database_url=db_url)
+            logger.info("DatabaseManager 초기화 성공")
+        except Exception as e:
+            logger.warning(f"DatabaseManager 초기화 실패: {e}")
+            self.db_manager = None
+
         # BuildingDataLoader 초기화 (DB 캐시 우선 사용)
         try:
             if BUILDING_LOADER_AVAILABLE and BuildingDataLoader:
@@ -160,12 +170,52 @@ class HazardDataCollector:
 
         # 2. 건물 정보 (DB 캐시 우선, 없으면 API 호출)
         try:
-            # BuildingDataLoader로 DB 캐시 우선 조회
-            # 대덕 좌표 체크 (특별 처리)
+            # 좌표 체크
             is_daedeok = (36.37 < lat < 36.39) and (127.39 < lon < 127.41)
+            is_sk_u_tower = (37.36 < lat < 37.37) and (127.10 < lon < 127.11)
+            is_pangyo = (37.40 < lat < 37.41) and (127.09 < lon < 127.10)
 
-            if self.building_loader:
-                # 좌표로 조회 시도 (API 호출 + DB 저장)
+            # STEP 1: DB 캐시 우선 조회 (좌표 기반)
+            building_cache = None
+            if self.db_manager:
+                building_cache = self.db_manager.fetch_building_cache_by_coords(lat=lat, lon=lon)
+                if building_cache:
+                    logger.info(f"✅ DB 캐시 사용: 지상{building_cache.get('max_ground_floors')}층, 연면적{building_cache.get('total_floor_area_sqm')}m²")
+
+            # STEP 2: DB 캐시 있으면 그걸 사용, 없으면 API 호출
+            if building_cache:
+                # DB 캐시 데이터를 building_data 형식으로 변환
+                structure_types = building_cache.get('structure_types', [])
+                purpose_types = building_cache.get('purpose_types', [])
+
+                # structure_types, purpose_types는 list로 반환됨 (JSONB keys)
+                if isinstance(structure_types, list):
+                    structure = structure_types[0] if structure_types else '철근콘크리트구조'
+                else:
+                    structure = '철근콘크리트구조'
+
+                if isinstance(purpose_types, list):
+                    main_purpose = purpose_types[0] if purpose_types else '업무시설'
+                else:
+                    main_purpose = '업무시설'
+
+                collected_data['building_data'] = {
+                    'floors_below': building_cache.get('max_underground_floors', 0),
+                    'ground_floors': building_cache.get('max_ground_floors', 0),
+                    'total_area_m2': building_cache.get('total_floor_area_sqm', 0),
+                    'building_height': building_cache.get('max_ground_floors', 0) * 4,  # 층당 4m 추정
+                    'building_age': building_cache.get('oldest_building_age_years', 30),
+                    'build_year': 2024 - building_cache.get('oldest_building_age_years', 30),
+                    'structure_type': structure,
+                    'main_purpose': main_purpose,
+                    'has_piloti': False,
+                    'has_water_tank': True,
+                    'distance_to_river_m': 500,
+                }
+                logger.info(f"✅ DB 캐시 → 건물 데이터 변환: age={collected_data['building_data'].get('building_age')}, floors={collected_data['building_data'].get('ground_floors')}, area={collected_data['building_data'].get('total_area_m2')}")
+            elif self.building_loader:
+                # DB 캐시 없으면 API 호출
+                logger.info("⚠️ DB 캐시 없음 - API 호출")
                 building_full_data = self.building_loader.load_and_cache(lat=lat, lon=lon, address=None)
                 # 대덕은 building_count 0이어도 처리
                 if building_full_data and (building_full_data.get('meta', {}).get('building_count', 0) > 0 or is_daedeok):

@@ -29,6 +29,7 @@ os.environ['DW_USER'] = os.getenv('DW_USER', 'skala')
 os.environ['DW_PASSWORD'] = os.getenv('DW_PASSWORD', 'skala_test_1234')
 
 from modelops.batch.hazard_timeseries_batch import run_hazard_batch
+from modelops.batch.probability_timeseries_batch import run_probability_batch
 from modelops.batch.evaal_ondemand_api import calculate_evaal_ondemand
 import asyncio
 import sys
@@ -115,29 +116,54 @@ def main():
     # 3개 사업장 좌표 리스트
     grid_points = [(site['latitude'], site['longitude']) for site in SITES]
 
-    try:
-        h_start = datetime.now()
+    # STEP 1-A: H 계산 (이미 완료됨 - 주석 처리)
+    # logger.info("📍 STEP 1-A: H (Hazard) 계산 - 이미 DB에 있음, 건너뜀")
+    # try:
+    #     h_start = datetime.now()
+    #     run_hazard_batch(
+    #         grid_points=grid_points,
+    #         scenarios=SCENARIOS,
+    #         years=[str(y) for y in TARGET_YEARS],
+    #         risk_types=RISK_TYPES,
+    #         batch_size=100,
+    #         max_workers=2
+    #     )
+    #     h_end = datetime.now()
+    #     h_duration = (h_end - h_start).total_seconds()
+    #     logger.info(f"✅ STEP 1-A 완료: H 계산 ({h_duration:.1f}초)")
+    # except Exception as e:
+    #     logger.error(f"❌ STEP 1-A 실패: {e}", exc_info=True)
+    #     h_duration = 0
 
-        run_hazard_batch(
+    # STEP 1-B: PH 계산 (실행 필요)
+    logger.info("\n📍 STEP 1-B: PH (Probability) 계산 시작")
+    logger.info(f"   → 좌표 {len(grid_points)}개 × 시나리오 {len(SCENARIOS)}개 × 년도 {len(TARGET_YEARS)}개 × 리스크 {len(RISK_TYPES)}개")
+
+    try:
+        ph_start = datetime.now()
+
+        run_probability_batch(
             grid_points=grid_points,
             scenarios=SCENARIOS,
-            years=[str(y) for y in TARGET_YEARS],  # 문자열로 변환
+            years=TARGET_YEARS,  # int 리스트로 전달
             risk_types=RISK_TYPES,
             batch_size=100,
             max_workers=2
         )
 
-        h_end = datetime.now()
-        h_duration = (h_end - h_start).total_seconds()
+        ph_end = datetime.now()
+        ph_duration = (ph_end - ph_start).total_seconds()
 
         logger.info("\n" + "=" * 80)
-        logger.info(f"✅ STEP 1 완료: H, PH 계산 ({h_duration:.1f}초)")
+        logger.info(f"✅ STEP 1-B 완료: PH 계산 ({ph_duration:.1f}초)")
         logger.info("=" * 80)
 
     except Exception as e:
-        logger.error(f"❌ STEP 1 실패: H, PH 계산 중 오류 - {e}", exc_info=True)
-        logger.warning("⚠️  계속 진행 (DB에 기존 H 데이터 있으면 사용)")
-        h_duration = 0
+        logger.error(f"❌ STEP 1-B 실패: PH 계산 중 오류 - {e}", exc_info=True)
+        logger.warning("⚠️  계속 진행")
+        ph_duration = 0
+
+    h_duration = ph_duration  # 전체 STEP 1 시간
 
     # ========== STEP 2: 건물 특성 데이터 적재 ==========
     logger.info("\n")

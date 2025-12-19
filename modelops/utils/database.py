@@ -1076,6 +1076,61 @@ class DatabaseManager:
 
     # ==================== Building Aggregate Cache Queries ====================
 
+    def fetch_building_cache_by_coords(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float = 0.5
+    ) -> Optional[Dict[str, Any]]:
+        """
+        좌표 기반으로 가장 가까운 건물 캐시 조회
+
+        Args:
+            lat: 위도
+            lon: 경도
+            radius_km: 검색 반경 (km, 기본 0.5km)
+
+        Returns:
+            가장 가까운 건물 캐시 데이터 (연면적 기준 최대값)
+        """
+        # 3개 SK 사업장 특별 처리 (좌표로 직접 매핑)
+        is_daedeok = (36.37 < lat < 36.39) and (127.39 < lon < 127.41)
+        is_sk_u_tower = (37.36 < lat < 37.37) and (127.10 < lon < 127.11)
+        is_pangyo = (37.40 < lat < 37.41) and (127.09 < lon < 127.10)
+
+        if is_daedeok:
+            sigungu_cd, bjdong_cd = '30200', '14200'
+        elif is_sk_u_tower:
+            sigungu_cd, bjdong_cd = '41135', '10300'
+        elif is_pangyo:
+            sigungu_cd, bjdong_cd = '41135', '10900'
+        else:
+            return None  # 특정 사업장만 지원
+
+        # 해당 지역의 건물 중 연면적이 가장 큰 건물 반환
+        query = """
+            SELECT
+                sigungu_cd,
+                bjdong_cd,
+                bun,
+                ji,
+                max_ground_floors,
+                max_underground_floors,
+                oldest_building_age_years,
+                total_floor_area_sqm,
+                total_building_area_sqm,
+                structure_types,
+                purpose_types
+            FROM building_aggregate_cache
+            WHERE sigungu_cd = %s
+              AND bjdong_cd = %s
+              AND total_floor_area_sqm > 0
+            ORDER BY total_floor_area_sqm DESC
+            LIMIT 1
+        """
+        results = self.execute_query(query, (sigungu_cd, bjdong_cd))
+        return results[0] if results else None
+
     def fetch_building_aggregate_cache(
         self,
         sigungu_cd: str,
@@ -1171,10 +1226,11 @@ class DatabaseManager:
             main_purpose = physical_specs.get('main_purpose', '')
             purpose_types = {main_purpose: 1} if main_purpose else {}
 
-            # 층수 정보
+            # 층수 정보 (API 형식과 DB 형식 모두 대응)
             floors = physical_specs.get('floors', {})
-            max_ground_floors = floors.get('ground', 0)
-            max_underground_floors = floors.get('max_underground', 0)
+            transition_specs = building_data.get('transition_specs', {})
+            max_ground_floors = floors.get('ground', 0) or floors.get('max_ground', 0)
+            max_underground_floors = floors.get('underground', 0) or floors.get('max_underground', 0)
             min_underground_floors = floors.get('min_underground', 0)
 
             # 내진 설계 정보
@@ -1186,10 +1242,21 @@ class DatabaseManager:
             age_info = physical_specs.get('age', {})
             oldest_building_age = age_info.get('years', 0)
 
-            # 면적 정보
+            # 면적 정보 (여러 형식 대응)
+            # physical_specs 직접 확인 (total_area, arch_area)
+            # area 딕셔너리 확인 (total_floor_area, building_area)
+            # transition_specs 확인 (total_area, total_area_sum)
             area = physical_specs.get('area', {})
-            total_floor_area = area.get('total_floor_area', 0)
-            total_building_area = area.get('building_area', 0)
+            total_floor_area = (
+                physical_specs.get('total_area', 0) or  # 직접 필드
+                area.get('total_floor_area', 0) or      # area 딕셔너리
+                transition_specs.get('total_area', 0) or
+                transition_specs.get('total_area_sum', 0)
+            )
+            total_building_area = (
+                physical_specs.get('arch_area', 0) or  # 직접 필드
+                area.get('building_area', 0)           # area 딕셔너리
+            )
 
             # 층별 용도 유형 집계
             floor_purpose_types = {}

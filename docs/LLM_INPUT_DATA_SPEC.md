@@ -1455,13 +1455,13 @@ def merge_to_llm_format(
                 "explanation": vulnerability_data[risk_type]
             },
             "AAL": {
-                "base_aal": aal_data[risk_type]["base_aal"],
+                "base_aal": aal_data[risk_type]["base_aal"],  # % 단위 (0~100)
                 "vulnerability_scale": aal_data[risk_type]["vulnerability_scale"],
-                "final_aal": aal_data[risk_type]["final_aal"],
+                "final_aal": aal_data[risk_type]["final_aal"],  # % 단위 (0~100)
                 "insurance_rate": aal_data[risk_type]["insurance_rate"],
                 "explanation": {
-                    "base_aal_percentage": f"{aal_data[risk_type]['base_aal']*100:.2f}%",
-                    "final_aal_percentage": f"{aal_data[risk_type]['final_aal']*100:.2f}%",
+                    "base_aal_percentage": f"{aal_data[risk_type]['base_aal']:.2f}%",
+                    "final_aal_percentage": f"{aal_data[risk_type]['final_aal']:.2f}%",
                     "expected_loss_krw": aal_data[risk_type]["expected_loss"],
                     "bin_details": probability_data[risk_type]["bin_data"]
                 }

@@ -206,8 +206,10 @@ class BuildingDataLoader:
                 # 여기서는 sigungu_cd/bjdong_cd만 있어도 저장 시도
                 pass
 
-            # 대덕 데이터센터 특별 처리
+            # 3개 SK 사업장 특별 처리 (좌표 기반 식별)
             is_daedeok = (36.37 < lat < 36.39) and (127.39 < lon < 127.41)
+            is_sk_u_tower = (37.36 < lat < 37.37) and (127.10 < lon < 127.11)
+            is_pangyo = (37.40 < lat < 37.41) and (127.09 < lon < 127.10)
 
             # 3. DB 캐시에 저장 (주소 코드가 있는 경우만)
             if self.db_manager and sigungu_cd and bjdong_cd and bun and ji:
@@ -222,15 +224,27 @@ class BuildingDataLoader:
                     self.logger.info(f"✅ DB 캐시 저장 완료: {sigungu_cd}-{bjdong_cd}-{bun}-{ji}")
                 except Exception as cache_error:
                     self.logger.warning(f"DB 캐시 저장 실패 (계속 진행): {cache_error}")
-            elif is_daedeok and self.db_manager:
-                # 대덕인데 저장 조건 불충분 시 강제 저장
-                self.logger.info(f"🔧 대덕 데이터센터 강제 저장 시도: sigungu={sigungu_cd}, bjdong={bjdong_cd}, bun={bun}, ji={ji}")
+            elif (is_daedeok or is_sk_u_tower or is_pangyo) and self.db_manager:
+                # SK 3개 사업장 강제 저장 (주소 코드 없을 때)
+                site_name = '대덕 데이터센터' if is_daedeok else ('SK u타워' if is_sk_u_tower else '판교 캠퍼스')
+                self.logger.info(f"🔧 {site_name} 강제 저장 시도: sigungu={sigungu_cd}, bjdong={bjdong_cd}, bun={bun}, ji={ji}")
 
-                # 빈 값 채우기
-                if not sigungu_cd: sigungu_cd = '30200'
-                if not bjdong_cd: bjdong_cd = '14200'
-                if not bun: bun = '0140'
-                if not ji: ji = '0009'
+                # 빈 값 채우기 (사업장별 하드코딩)
+                if is_daedeok:
+                    if not sigungu_cd: sigungu_cd = '30200'
+                    if not bjdong_cd: bjdong_cd = '14200'
+                    if not bun: bun = '0140'
+                    if not ji: ji = '0009'
+                elif is_sk_u_tower:
+                    if not sigungu_cd: sigungu_cd = '41135'
+                    if not bjdong_cd: bjdong_cd = '10300'
+                    if not bun: bun = '0025'
+                    if not ji: ji = '0001'
+                elif is_pangyo:
+                    if not sigungu_cd: sigungu_cd = '41135'
+                    if not bjdong_cd: bjdong_cd = '10900'
+                    if not bun: bun = '0612'
+                    if not ji: ji = '0004'
 
                 try:
                     self.db_manager.save_building_aggregate_cache(
@@ -240,9 +254,9 @@ class BuildingDataLoader:
                         ji=ji,
                         building_data=data
                     )
-                    self.logger.info(f"✅ 대덕 데이터센터 강제 저장 완료: {sigungu_cd}-{bjdong_cd}-{bun}-{ji}")
+                    self.logger.info(f"✅ {site_name} 강제 저장 완료: {sigungu_cd}-{bjdong_cd}-{bun}-{ji}")
                 except Exception as cache_error:
-                    self.logger.warning(f"대덕 강제 저장 실패: {cache_error}")
+                    self.logger.warning(f"{site_name} 강제 저장 실패: {cache_error}")
 
             return data
 

@@ -30,19 +30,19 @@ class AALScalingAgent:
 
         공식:
         - F_vuln = 0.9 + (V/100) × 0.2  (범위: 0.9 ~ 1.1)
-        - final_aal = base_aal × F_vuln × (1 - insurance_rate)
+        - final_aal = base_aal × F_vuln × (1 - insurance_rate) × 100 (% 단위로 변환)
 
         Args:
-            base_aal: 기본 AAL (probability_results.aal)
+            base_aal: 기본 AAL (probability_results.aal, 0~1 확률값)
             vulnerability_score: 취약성 점수 (0-100)
             insurance_rate: 보험 보전율 (0-1, 기본값 0.0)
             asset_value: 자산 가치 (원, 선택사항)
 
         Returns:
             {
-                'base_aal': float,
+                'base_aal': float (% 단위, 0~100),
                 'vulnerability_scale': float (F_vuln),
-                'final_aal': float,
+                'final_aal': float (% 단위, 0~100),
                 'insurance_rate': float,
                 'expected_loss': int | None
             }
@@ -51,18 +51,19 @@ class AALScalingAgent:
             # 1. 취약성 스케일 계수 계산 (F_vuln)
             f_vuln = self._calculate_vulnerability_scale(vulnerability_score)
 
-            # 2. 최종 AAL 계산
-            final_aal = base_aal * f_vuln * (1.0 - insurance_rate)
+            # 2. 최종 AAL 계산 (확률값)
+            final_aal_ratio = base_aal * f_vuln * (1.0 - insurance_rate)
 
-            # 3. 예상 손실액 계산 (자산 가치가 있을 경우)
+            # 3. 예상 손실액 계산 (자산 가치가 있을 경우) - 확률값 사용
             expected_loss = None
             if asset_value is not None and asset_value > 0:
-                expected_loss = int(final_aal * asset_value)
+                expected_loss = int(final_aal_ratio * asset_value)
 
+            # 4. % 단위로 변환하여 반환
             return {
-                'base_aal': round(base_aal, 6),
+                'base_aal': round(base_aal * 100, 6),
                 'vulnerability_scale': round(f_vuln, 4),
-                'final_aal': round(final_aal, 6),
+                'final_aal': round(final_aal_ratio * 100, 6),
                 'insurance_rate': round(insurance_rate, 4),
                 'expected_loss': expected_loss
             }
@@ -70,9 +71,9 @@ class AALScalingAgent:
         except Exception as e:
             logger.error(f"AAL 스케일링 실패: {e}")
             return {
-                'base_aal': base_aal,
+                'base_aal': base_aal * 100,
                 'vulnerability_scale': 1.0,
-                'final_aal': base_aal,
+                'final_aal': base_aal * 100,
                 'insurance_rate': 0.0,
                 'expected_loss': None,
                 'error': str(e)
@@ -145,12 +146,12 @@ class AALScalingAgent:
         단일 AAL 값에 대한 등급 분류
 
         Args:
-            final_aal: 최종 스케일링된 AAL (% 단위 또는 확률)
+            final_aal: 최종 스케일링된 AAL (% 단위, 0~100 범위)
 
         Returns:
             등급 문자열 ('-', '0~3%', '~6%', '~10%', '~16%', '~30%', '30%~')
         """
-        # AAL 등급 기준 (% 단위 기준)
+        # AAL 등급 기준 (% 단위, 0~100)
         if final_aal <= 0:  # 0% 이하 (발생 원천 없음)
             return '-'
         elif final_aal < 3.0:  # 0~3%
